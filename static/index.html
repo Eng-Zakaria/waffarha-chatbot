@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
 <title>Waffarha Assistant</title>
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-<link rel="icon" type="image/x-icon" href="/favicon.ico">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -761,6 +761,13 @@ function streamBotMessage(fullText, sources){
 /* ============================================================
    RAG hook — calls the real backend (app.py -> rag_engine.RagEngine)
    ============================================================ */
+// When index.html is served BY app.py (uvicorn), '' + '/api/chat' is
+// same-origin and just works. When it's served separately (e.g. GitHub
+// Pages), the backend lives on a different origin, so point this at your
+// deployed backend's full URL, e.g. 'https://waffarha-api.onrender.com'.
+// Leave it '' for local/same-origin use.
+const API_BASE = '';
+
 const CHAT_API_ERROR = {
   en: "I'm having trouble reaching the assistant backend right now. Please try again in a moment.",
   ar: "في مشكلة في الوصول لسيرفر المساعد دلوقتي. جرب تاني بعد شوية."
@@ -777,7 +784,7 @@ async function getBotResponse(userText){
     .map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }));
 
   try{
-    const res = await fetch('/api/chat', {
+    const res = await fetch(`${API_BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ query: userText, lang, history })

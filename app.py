@@ -23,6 +23,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,6 +33,27 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("waffarha-app")
 
 app = FastAPI(title="Waffarha Assistant")
+
+# ---------------------------------------------------------------------------
+# CORS: only needed because the frontend can be hosted on a different origin
+# than this backend (e.g. GitHub Pages at eng-zakaria.github.io calling a
+# backend on Render/Fly/a VPS). Same-origin setups (app.py serving
+# static/index.html itself, as below) don't need this at all, but it's
+# harmless to leave on. Lock ALLOWED_ORIGINS down to your real Pages URL
+# before going further than local testing -- "*" accepts requests from any
+# website, which is fine for a public read-mostly FAQ/offers bot but worth
+# knowing about.
+ALLOWED_ORIGINS = [
+    "https://eng-zakaria.github.io",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type"],
+)
 
 # ---------------------------------------------------------------------------
 # RagEngine is loaded lazily, on the first request, not at import time --
