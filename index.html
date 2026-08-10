@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>Waffarha Assistant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -24,6 +25,22 @@
     --radius-md:14px;
     --font-display:'Baloo 2', 'Cairo', sans-serif;
     --font-body:'Inter', 'Cairo', sans-serif;
+    color-scheme: light;
+  }
+  [data-theme="dark"]{
+    --orange:#F2661E;
+    --orange-dark:#FF8952;
+    --orange-soft:#B85A2C;
+    --cream:#161210;
+    --surface:#221C17;
+    --peach:#2B231C;
+    --peach-line:#3C3128;
+    --ink:#F3E9DD;
+    --ink-soft:#A6968A;
+    --green:#3FCB63;
+    --green-soft:#173321;
+    --shadow-orange: rgba(242,102,30,0.30);
+    color-scheme: dark;
   }
   *{box-sizing:border-box;}
   html,body{height:100%;}
@@ -33,6 +50,7 @@
     color:var(--ink);
     font-family:var(--font-body);
     -webkit-font-smoothing:antialiased;
+    transition:background .2s ease, color .2s ease;
   }
   html[dir="rtl"] body{ font-family:'Cairo', sans-serif; }
   button{font-family:inherit;}
@@ -85,8 +103,23 @@
   .history-item.active{ background:var(--peach); border-color:var(--peach-line); font-weight:600; }
   .history-item .hi-dot{ width:6px; height:6px; border-radius:50%; background:var(--orange-soft); flex-shrink:0; }
   .history-item .hi-text{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .history-item .hi-delete{
+    opacity:0; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    width:24px; height:24px; border-radius:7px; border:none; background:transparent; color:var(--ink-soft);
+    cursor:pointer; transition:opacity .12s ease, background .12s ease, color .12s ease;
+  }
+  .history-item:hover .hi-delete, .history-item .hi-delete:focus-visible{ opacity:1; }
+  .history-item .hi-delete:hover{ background:rgba(224,72,61,.14); color:#E0483D; }
 
-  .sidebar-bottom{ padding:14px 16px 18px; border-top:1px solid var(--peach-line); display:flex; align-items:center; gap:10px; }
+  .sidebar-bottom{ padding:14px 16px 16px; border-top:1px solid var(--peach-line); display:flex; flex-direction:column; gap:10px; }
+  .sidebar-bottom-row{ display:flex; align-items:center; gap:10px; }
+  .theme-toggle{
+    width:32px; height:32px; border-radius:10px; border:1px solid var(--peach-line); background:var(--peach);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--orange-dark); flex-shrink:0;
+    transition:background .15s ease, transform .12s ease;
+  }
+  .theme-toggle:hover{ transform:translateY(-1px); }
+  .theme-toggle svg{ display:block; }
   .lang-toggle{
     margin-inline-start:auto; display:flex; background:var(--peach); border-radius:20px; padding:3px; gap:2px;
   }
@@ -95,10 +128,50 @@
     color:var(--ink-soft); cursor:pointer;
   }
   .lang-toggle button.active{ background:var(--orange); color:#fff; }
-  .profile-chip{ display:flex; align-items:center; gap:9px; }
-  .profile-avatar{ width:32px; height:32px; border-radius:50%; background:var(--peach); display:flex; align-items:center; justify-content:center; font-size:15px; }
+  .profile-chip{
+    display:flex; align-items:center; gap:9px; border:none; background:transparent; cursor:pointer;
+    padding:6px; margin-inline-start:-6px; border-radius:12px; width:100%; text-align:start;
+    transition:background .15s ease;
+  }
+  .profile-chip:hover{ background:var(--peach); }
+  .profile-avatar{ width:32px; height:32px; border-radius:50%; background:var(--peach); display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0; }
   .profile-name{ font-size:13px; font-weight:600; }
   .profile-status{ font-size:11px; color:var(--ink-soft); }
+
+  /* ---------- User modal ---------- */
+  .modal-backdrop{
+    display:none; position:fixed; inset:0; background:rgba(22,18,16,0.45); z-index:20;
+    align-items:center; justify-content:center; padding:16px;
+  }
+  .modal-backdrop.show{ display:flex; }
+  .modal-card{
+    width:100%; max-width:360px; background:var(--surface); border:1px solid var(--peach-line);
+    border-radius:var(--radius-lg); padding:20px; animation:rise .2s ease both;
+  }
+  .modal-title{ font-family:var(--font-display); font-size:18px; font-weight:700; margin:0 0 4px; }
+  .modal-sub{ font-size:12.5px; color:var(--ink-soft); margin:0 0 16px; }
+  .user-list{ display:flex; flex-direction:column; gap:5px; max-height:180px; overflow-y:auto; margin-bottom:14px; }
+  .user-item{
+    display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:11px; border:1px solid transparent;
+    background:var(--peach); cursor:pointer; font-size:13.5px; font-weight:600; color:var(--ink);
+  }
+  .user-item:hover{ border-color:var(--orange-soft); }
+  .user-item.active{ border-color:var(--orange); }
+  .user-item .ua{ width:26px; height:26px; border-radius:50%; background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
+  .new-user-row{ display:flex; gap:8px; }
+  .new-user-row input{
+    flex:1; border:1.5px solid var(--peach-line); border-radius:11px; padding:9px 12px; font-size:13.5px;
+    font-family:inherit; background:var(--cream); color:var(--ink); outline:none;
+  }
+  .new-user-row input:focus{ border-color:var(--orange-soft); }
+  .new-user-row button{
+    background:var(--orange); color:#fff; border:none; border-radius:11px; padding:0 14px; font-weight:700;
+    font-size:13px; cursor:pointer; flex-shrink:0;
+  }
+  .modal-close{
+    margin-top:14px; width:100%; background:transparent; border:1px solid var(--peach-line); color:var(--ink-soft);
+    border-radius:11px; padding:9px; font-size:13px; font-weight:600; cursor:pointer;
+  }
 
   /* ---------- Main ---------- */
   .main{ flex:1; display:flex; flex-direction:column; min-width:0; position:relative; }
@@ -246,6 +319,19 @@
 
 <div class="backdrop" id="backdrop"></div>
 
+<div class="modal-backdrop" id="userModalBackdrop">
+  <div class="modal-card">
+    <h2 class="modal-title" id="userModalTitle">Switch user</h2>
+    <p class="modal-sub" id="userModalSub">Each user's chats are saved on this device.</p>
+    <div class="user-list" id="userList"></div>
+    <div class="new-user-row">
+      <input type="text" id="newUserInput" maxlength="24" />
+      <button id="addUserBtn">＋</button>
+    </div>
+    <button class="modal-close" id="userModalClose">Close</button>
+  </div>
+</div>
+
 <div class="shell">
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-top">
@@ -264,16 +350,21 @@
     <div class="history-label" id="historyLabel">Recent</div>
     <div class="history-list" id="historyList"></div>
     <div class="sidebar-bottom">
-      <div class="profile-chip">
-        <div class="profile-avatar">🙂</div>
-        <div>
-          <div class="profile-name" id="profileName">Guest</div>
-          <div class="profile-status" id="profileStatus">Not signed in</div>
-        </div>
+      <div class="sidebar-bottom-row">
+        <button class="profile-chip" id="profileChip">
+          <div class="profile-avatar" id="profileAvatar">🙂</div>
+          <div>
+            <div class="profile-name" id="profileName">Guest</div>
+            <div class="profile-status" id="profileStatus">Not signed in</div>
+          </div>
+        </button>
       </div>
-      <div class="lang-toggle">
-        <button id="btnEn" class="active">EN</button>
-        <button id="btnAr">AR</button>
+      <div class="sidebar-bottom-row">
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode"></button>
+        <div class="lang-toggle">
+          <button id="btnEn" class="active">EN</button>
+          <button id="btnAr">AR</button>
+        </div>
       </div>
     </div>
   </aside>
@@ -319,7 +410,10 @@ const STRINGS = {
       {icon:"↩️", text:"Return & refund policy"}
     ],
     greeting:"Hey there! I'm the Waffarha Assistant. I can help with orders, cashback, deals, returns, and payments — what do you need?",
-    source:"Source", newConvo:"New conversation"
+    source:"Source", newConvo:"New conversation",
+    deleteChat:"Delete chat", deleteConfirm:"Delete this conversation? This can't be undone.",
+    switchUser:"Switch user", switchUserSub:"Each user's chats are saved on this device.",
+    newUserPlaceholder:"Name a new user…", close:"Close", guestChats:"Guest", thisDevice:"On this device"
   },
   ar: {
     tagline:"مساعد العملاء", newChat:"محادثة جديدة", recent:"الأخيرة", guest:"زائر", notSignedIn:"لم يتم تسجيل الدخول",
@@ -332,7 +426,10 @@ const STRINGS = {
       {icon:"↩️", text:"سياسة الاسترجاع"}
     ],
     greeting:"أهلاً بيك! أنا مساعد وفرها. أقدر أساعدك في الطلبات، الكاش باك، العروض، الاسترجاع، والدفع — تحب تسأل عن إيه؟",
-    source:"المصدر", newConvo:"محادثة جديدة"
+    source:"المصدر", newConvo:"محادثة جديدة",
+    deleteChat:"حذف المحادثة", deleteConfirm:"تحذف المحادثة دي؟ مش هتقدر ترجعها.",
+    switchUser:"تبديل المستخدم", switchUserSub:"محادثات كل مستخدم بتتحفظ على الجهاز ده.",
+    newUserPlaceholder:"اسم مستخدم جديد…", close:"إغلاق", guestChats:"زائر", thisDevice:"على هذا الجهاز"
   }
 };
 
@@ -392,6 +489,65 @@ const FALLBACK = {
   en:{ answer:"I couldn't find an exact match for that in the help center, but I can connect you with a specific topic — order tracking, cashback, returns, payment methods, or coupon codes. Which one would help?", sources:[] },
   ar:{ answer:"معنديش إجابة دقيقة لسؤالك ده، بس أقدر أساعدك في: تتبع الطلبات، الكاش باك، الاسترجاع، طرق الدفع، أو أكواد الخصم. تحب تسأل عن إيه؟", sources:[] }
 };
+
+/* ============================================================
+   Local persistence (theme, users, chat history)
+   All data below lives in this browser only (localStorage).
+   Swap chatsKey()/saveChats()/loadChatsForUser() for real API
+   calls to persist chats server-side per account.
+   ============================================================ */
+const THEME_KEY = 'waffarha_theme';
+const USERS_KEY = 'waffarha_users';
+const ACTIVE_USER_KEY = 'waffarha_active_user';
+const chatsKey = (userId) => 'waffarha_chats_' + userId;
+
+function getSystemTheme(){
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = document.getElementById('themeToggle');
+  if(btn){
+    btn.innerHTML = theme === 'dark'
+      ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 12.5A8.5 8.5 0 1 1 11.5 3a7 7 0 0 0 9.5 9.5z" fill="currentColor"/></svg>`
+      : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="4.2" fill="currentColor"/><path d="M12 2.5v2.4M12 19.1v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.5 12h2.4M19.1 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+  }
+}
+function initTheme(){
+  const saved = localStorage.getItem(THEME_KEY);
+  applyTheme(saved || getSystemTheme());
+  if(window.matchMedia){
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e)=>{
+      if(!localStorage.getItem(THEME_KEY)) applyTheme(e.matches ? 'dark' : 'light');
+    });
+  }
+}
+function toggleTheme(){
+  const current = document.documentElement.getAttribute('data-theme') || 'light';
+  const next = current === 'dark' ? 'light' : 'dark';
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+}
+
+function loadUsers(){
+  try{ return JSON.parse(localStorage.getItem(USERS_KEY)) || []; } catch(e){ return []; }
+}
+function saveUsers(users){ localStorage.setItem(USERS_KEY, JSON.stringify(users)); }
+function getActiveUserId(){ return localStorage.getItem(ACTIVE_USER_KEY) || 'guest'; }
+function setActiveUserId(id){ localStorage.setItem(ACTIVE_USER_KEY, id); }
+
+function loadChatsForUser(userId){
+  try{
+    const raw = localStorage.getItem(chatsKey(userId));
+    return raw ? JSON.parse(raw) : null;
+  } catch(e){ return null; }
+}
+function saveChats(){
+  try{ localStorage.setItem(chatsKey(getActiveUserId()), JSON.stringify(chats)); } catch(e){}
+}
+function defaultChatsForUser(userId){
+  return userId === 'guest' ? seedChats() : [];
+}
 
 /* ============================================================
    State
@@ -496,7 +652,7 @@ function avatarUser(){
   return `<div class="avatar user">🙂</div>`;
 }
 
-function appendMessage(role, text, sources, animate){
+function appendMessage(role, text, sources, persist=true){
   const row = document.createElement('div');
   row.className = `msg-row ${role}`;
   const bubbleId = 'b' + Math.random().toString(36).slice(2,9);
@@ -531,6 +687,14 @@ function appendMessage(role, text, sources, animate){
     });
   }
   chatScroll.scrollTop = chatScroll.scrollHeight;
+
+  if(persist){
+    const chat = chats.find(c=>c.id===activeChatId);
+    if(chat){
+      chat.messages.push({ role, text, sources: sources || [] });
+      saveChats();
+    }
+  }
 }
 
 function appendTyping(){
@@ -580,6 +744,11 @@ function streamBotMessage(fullText, sources){
           row.querySelector('.bubble-wrap').insertBefore(srcRow, row.querySelector('.bubble-wrap').children[1]);
         }
         chatScroll.scrollTop = chatScroll.scrollHeight;
+        const chat = chats.find(c=>c.id===activeChatId);
+        if(chat){
+          chat.messages.push({ role:'bot', text: fullText, sources: sources || [] });
+          saveChats();
+        }
         resolve();
       }
     }, 35);
@@ -633,8 +802,18 @@ function renderHistory(){
   chats.forEach(chat=>{
     const item = document.createElement('button');
     item.className = 'history-item' + (chat.id === activeChatId ? ' active' : '');
-    item.innerHTML = `<div class="hi-dot"></div><div class="hi-text">${chat.title}</div>`;
+    item.innerHTML = `
+      <div class="hi-dot"></div>
+      <div class="hi-text">${chat.title}</div>
+      <span class="hi-delete" role="button" tabindex="0" title="${STRINGS[lang].deleteChat}" aria-label="${STRINGS[lang].deleteChat}">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h10l1-13" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>`;
     item.addEventListener('click', ()=> loadChat(chat.id));
+    const delBtn = item.querySelector('.hi-delete');
+    delBtn.addEventListener('click', (e)=>{ e.stopPropagation(); deleteChat(chat.id); });
+    delBtn.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); e.stopPropagation(); deleteChat(chat.id); }
+    });
     historyList.appendChild(item);
   });
 }
@@ -642,24 +821,53 @@ function renderHistory(){
 function loadChat(id){
   activeChatId = id;
   const chat = chats.find(c=>c.id===id);
-  chatInner.innerHTML = '';
-  chat.messages.forEach(m => appendMessage(m.role, m.text, m.sources));
+  if(!chat) return;
+  if(chat.messages.length === 0){
+    renderWelcome();
+  } else {
+    chatInner.innerHTML = '';
+    chat.messages.forEach(m => appendMessage(m.role, m.text, m.sources, false));
+  }
   renderHistory();
   closeSidebarMobile();
+}
+
+function deleteChat(id){
+  if(!confirm(STRINGS[lang].deleteConfirm)) return;
+  chats = chats.filter(c=>c.id!==id);
+  saveChats();
+  if(activeChatId === id){
+    activeChatId = null;
+    if(chats.length){
+      loadChat(chats[0].id);
+    } else {
+      renderWelcome();
+      renderHistory();
+    }
+  } else {
+    renderHistory();
+  }
 }
 
 function updateChatTitle(text){
   const chat = chats.find(c=>c.id===activeChatId);
   if(chat && chat.title === STRINGS[lang].newConvo){
     chat.title = text.length > 34 ? text.slice(0,34)+'…' : text;
+    saveChats();
     renderHistory();
   }
 }
 
 function startNewChat(render=true){
-  const id = 'c' + Date.now();
-  chats.unshift({ id, title: STRINGS[lang].newConvo, messages:[] });
-  activeChatId = id;
+  // Reuse the most recent chat if it's already empty, instead of piling up blanks
+  if(chats.length && chats[0].messages.length === 0){
+    activeChatId = chats[0].id;
+  } else {
+    const id = 'c' + Date.now();
+    chats.unshift({ id, title: STRINGS[lang].newConvo, messages:[] });
+    activeChatId = id;
+    saveChats();
+  }
   if(render){
     renderWelcome();
     renderHistory();
@@ -699,6 +907,92 @@ function closeSidebarMobile(){
 }
 
 /* ============================================================
+   Dark mode toggle
+   ============================================================ */
+document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+
+/* ============================================================
+   User account switcher
+   ============================================================ */
+const profileChip = document.getElementById('profileChip');
+const userModalBackdrop = document.getElementById('userModalBackdrop');
+const userList = document.getElementById('userList');
+const newUserInput = document.getElementById('newUserInput');
+
+function updateProfileUI(){
+  const s = STRINGS[lang];
+  const userId = getActiveUserId();
+  const users = loadUsers();
+  const user = users.find(u=>u.id===userId);
+  document.getElementById('profileName').textContent = user ? user.name : s.guestChats;
+  document.getElementById('profileStatus').textContent = s.thisDevice;
+  document.getElementById('profileAvatar').textContent = user ? user.name.trim().charAt(0).toUpperCase() : '🙂';
+}
+
+function renderUserModal(){
+  const s = STRINGS[lang];
+  document.getElementById('userModalTitle').textContent = s.switchUser;
+  document.getElementById('userModalSub').textContent = s.switchUserSub;
+  newUserInput.placeholder = s.newUserPlaceholder;
+  document.getElementById('userModalClose').textContent = s.close;
+
+  const users = loadUsers();
+  const activeId = getActiveUserId();
+  userList.innerHTML = '';
+
+  const guestItem = document.createElement('button');
+  guestItem.className = 'user-item' + (activeId === 'guest' ? ' active' : '');
+  guestItem.innerHTML = `<div class="ua">🙂</div><div>${s.guestChats}</div>`;
+  guestItem.addEventListener('click', ()=> switchUser('guest'));
+  userList.appendChild(guestItem);
+
+  users.forEach(u=>{
+    const item = document.createElement('button');
+    item.className = 'user-item' + (activeId === u.id ? ' active' : '');
+    item.innerHTML = `<div class="ua">${u.name.trim().charAt(0).toUpperCase()}</div><div>${u.name}</div>`;
+    item.addEventListener('click', ()=> switchUser(u.id));
+    userList.appendChild(item);
+  });
+}
+
+function openUserModal(){
+  renderUserModal();
+  newUserInput.value = '';
+  userModalBackdrop.classList.add('show');
+}
+function closeUserModal(){
+  userModalBackdrop.classList.remove('show');
+}
+
+function switchUser(userId){
+  setActiveUserId(userId);
+  const stored = loadChatsForUser(userId);
+  chats = stored !== null ? stored : defaultChatsForUser(userId);
+  if(stored === null) saveChats();
+  activeChatId = null;
+  renderWelcome();
+  renderHistory();
+  updateProfileUI();
+  closeUserModal();
+}
+
+function createUser(){
+  const name = newUserInput.value.trim();
+  if(!name) return;
+  const users = loadUsers();
+  const id = 'u' + Date.now();
+  users.push({ id, name });
+  saveUsers(users);
+  switchUser(id);
+}
+
+profileChip.addEventListener('click', openUserModal);
+document.getElementById('userModalClose').addEventListener('click', closeUserModal);
+userModalBackdrop.addEventListener('click', (e)=>{ if(e.target === userModalBackdrop) closeUserModal(); });
+document.getElementById('addUserBtn').addEventListener('click', createUser);
+newUserInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); createUser(); } });
+
+/* ============================================================
    Language toggle
    ============================================================ */
 document.getElementById('btnEn').addEventListener('click', ()=> setLang('en'));
@@ -715,25 +1009,39 @@ function setLang(l){
   document.getElementById('brandSub').textContent = s.tagline;
   document.getElementById('newChatLabel').textContent = s.newChat;
   document.getElementById('historyLabel').textContent = s.recent;
-  document.getElementById('profileName').textContent = s.guest;
-  document.getElementById('profileStatus').textContent = s.notSignedIn;
   composerInput.placeholder = s.placeholder;
   document.getElementById('composerHint').textContent = s.disclaimer;
+  updateProfileUI();
 
   // refresh titles for still-untitled chats
   chats.forEach(c=>{ if(c.title === STRINGS.en.newConvo || c.title === STRINGS.ar.newConvo) c.title = s.newConvo; });
+  saveChats();
 
   if(chatInner.querySelector('.welcome')) renderWelcome();
   renderHistory();
+  if(userModalBackdrop.classList.contains('show')) renderUserModal();
 }
 
 /* ============================================================
    Init
    ============================================================ */
-chats = seedChats();
-activeChatId = null;
-renderWelcome();
-renderHistory();
+initTheme();
+
+(function initApp(){
+  let activeUserId = getActiveUserId();
+  const knownUsers = loadUsers();
+  if(activeUserId !== 'guest' && !knownUsers.find(u=>u.id===activeUserId)){
+    activeUserId = 'guest';
+    setActiveUserId('guest');
+  }
+  const stored = loadChatsForUser(activeUserId);
+  chats = stored !== null ? stored : defaultChatsForUser(activeUserId);
+  if(stored === null) saveChats();
+  activeChatId = null;
+  renderWelcome();
+  renderHistory();
+  updateProfileUI();
+})();
 </script>
 </body>
 </html>
