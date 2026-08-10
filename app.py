@@ -27,7 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from rag_engine import RagEngine
+from rag_engine import RagEngine, detect_lang
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("waffarha-app")
@@ -94,6 +94,7 @@ class SourceCard(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceCard]
+    suggestions: List[str] = []
 
 
 def _source_card(doc: dict) -> dict:
@@ -116,6 +117,43 @@ def _source_card(doc: dict) -> dict:
         "title": meta.get("title") or meta.get("merchant") or "Offer",
         "snippet": " • ".join(bits) or (meta.get("merchant") or ""),
     }
+
+
+# ---------------------------------------------------------------------------
+# Follow-up suggestions: cheap and template-based on purpose -- these are
+# derived from what RagEngine actually retrieved for THIS turn (not a second
+# LLM call), so they stay fast and never suggest something unrelated to what
+# was just discussed. Capped at 3, deduped, language-matched to the reply.
+# ---------------------------------------------------------------------------
+def _build_suggestions(raw_sources: list, reply_lang: str) -> List[str]:
+    offer_docs = [d for d in raw_sources if d.get("metadata", {}).get("source") == "offer"]
+    faq_docs = [d for d in raw_sources if d.get("metadata", {}).get("source") == "faq"]
+
+    suggestions: List[str] = []
+
+    if len(offer_docs) >= 2:
+        suggestions.append("Compare these offers" if reply_lang == "en" else "قارن بين العروض دي")
+
+    if offer_docs:
+        merchant = offer_docs[0].get("metadata", {}).get("merchant")
+        if merchant:
+            suggestions.append(
+                f"More offers from {merchant}" if reply_lang == "en" else f"في عروض تانية من {merchant}؟"
+            )
+        suggestions.append(
+            "Any offers under 200 EGP?" if reply_lang == "en" else "في عروض تحت 200 جنيه؟"
+        )
+
+    if faq_docs:
+        suggestions.append("How do I redeem this?" if reply_lang == "en" else "أستخدم العرض ده إزاي؟")
+
+    seen = set()
+    deduped = []
+    for s in suggestions:
+        if s not in seen:
+            seen.add(s)
+            deduped.append(s)
+    return deduped[:3]
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -143,8 +181,10 @@ def chat(req: ChatRequest):
         log.exception("chat() failed for query=%r", query)
         raise HTTPException(500, "The assistant hit an internal error. Please try again.")
 
-    sources = [_source_card(d) for d in result.get("sources", [])[:3]]
-    return {"answer": result["answer"], "sources": sources}
+    raw_sources = result.get("sources", [])
+    sources = [_source_card(d) for d in raw_sources[:3]]
+    suggestions = _build_suggestions(raw_sources, detect_lang(query))
+    return {"answer": result["answer"], "sources": sources, "suggestions": suggestions}
 
 
 @app.get("/api/health")

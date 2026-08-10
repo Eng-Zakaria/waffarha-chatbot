@@ -261,6 +261,14 @@
   .typing span:nth-child(3){ animation-delay:.3s; }
   @keyframes blink{ 0%,80%,100%{ opacity:.25; transform:scale(.85);} 40%{ opacity:1; transform:scale(1);} }
 
+  .msg-time{ font-size:10.5px; color:var(--ink-soft); padding:0 3px; user-select:none; }
+  .suggest-chips{ display:flex; flex-wrap:wrap; gap:6px; }
+  .suggest-chip{
+    border:1.5px solid var(--orange-soft); background:transparent; color:var(--orange-dark);
+    border-radius:16px; padding:6px 12px; font-size:12.5px; font-weight:600; cursor:pointer;
+    transition:background .12s ease, color .12s ease;
+  }
+  .suggest-chip:hover{ background:var(--orange); color:#fff; border-color:var(--orange); }
   .sources-row{ display:flex; flex-wrap:wrap; gap:6px; }
   .source-chip{
     display:flex; align-items:center; gap:5px; background:var(--peach); border:1px solid var(--peach-line);
@@ -627,6 +635,11 @@ function formatMessage(raw){
   return out;
 }
 
+function formatTime(ts){
+  const d = new Date(ts);
+  return d.toLocaleTimeString(lang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
 function renderWelcome(){
   const s = STRINGS[lang];
   chatInner.innerHTML = `
@@ -655,7 +668,8 @@ function avatarUser(){
   return `<div class="avatar user">🙂</div>`;
 }
 
-function appendMessage(role, text, sources, persist=true){
+function appendMessage(role, text, sources, persist=true, time=null){
+  time = time || Date.now();
   const row = document.createElement('div');
   row.className = `msg-row ${role}`;
   const bubbleId = 'b' + Math.random().toString(36).slice(2,9);
@@ -664,6 +678,7 @@ function appendMessage(role, text, sources, persist=true){
     <div class="bubble-wrap">
       <div class="bubble" id="${bubbleId}"></div>
       ${sources && sources.length ? `<div class="sources-row" id="${bubbleId}-src"></div>` : ''}
+      <div class="msg-time">${formatTime(time)}</div>
     </div>`;
   chatInner.appendChild(row);
   chatScroll.scrollTop = chatScroll.scrollHeight;
@@ -694,7 +709,7 @@ function appendMessage(role, text, sources, persist=true){
   if(persist){
     const chat = chats.find(c=>c.id===activeChatId);
     if(chat){
-      chat.messages.push({ role, text, sources: sources || [] });
+      chat.messages.push({ role, text, sources: sources || [], time });
       saveChats();
     }
   }
@@ -713,8 +728,9 @@ function removeTyping(){
   if(el) el.remove();
 }
 
-function streamBotMessage(fullText, sources){
+function streamBotMessage(fullText, sources, suggestions){
   return new Promise(resolve=>{
+    const time = Date.now();
     const row = document.createElement('div');
     row.className = 'msg-row bot';
     const bubbleId = 'b' + Math.random().toString(36).slice(2,9);
@@ -730,6 +746,7 @@ function streamBotMessage(fullText, sources){
       if(i >= words.length){
         clearInterval(interval);
         bubbleEl.innerHTML = formatMessage(fullText);
+        const wrap = row.querySelector('.bubble-wrap');
         if(sources && sources.length){
           const srcRow = document.createElement('div');
           srcRow.className = 'sources-row';
@@ -742,14 +759,33 @@ function streamBotMessage(fullText, sources){
             panel.innerHTML = `<b>${STRINGS[lang].source}</b>${src.snippet}`;
             chip.addEventListener('click', ()=> panel.classList.toggle('open'));
             srcRow.appendChild(chip);
-            row.querySelector('.bubble-wrap').appendChild(panel);
+            wrap.appendChild(panel);
           });
-          row.querySelector('.bubble-wrap').insertBefore(srcRow, row.querySelector('.bubble-wrap').children[1]);
+          wrap.insertBefore(srcRow, wrap.children[1]);
         }
+        if(suggestions && suggestions.length){
+          const suggRow = document.createElement('div');
+          suggRow.className = 'suggest-chips';
+          suggestions.forEach(text=>{
+            const chip = document.createElement('button');
+            chip.className = 'suggest-chip';
+            chip.textContent = text;
+            chip.addEventListener('click', ()=>{
+              suggRow.remove();
+              submitMessage(text);
+            });
+            suggRow.appendChild(chip);
+          });
+          wrap.appendChild(suggRow);
+        }
+        const timeEl = document.createElement('div');
+        timeEl.className = 'msg-time';
+        timeEl.textContent = formatTime(time);
+        wrap.appendChild(timeEl);
         chatScroll.scrollTop = chatScroll.scrollHeight;
         const chat = chats.find(c=>c.id===activeChatId);
         if(chat){
-          chat.messages.push({ role:'bot', text: fullText, sources: sources || [] });
+          chat.messages.push({ role:'bot', text: fullText, sources: sources || [], time });
           saveChats();
         }
         resolve();
@@ -762,9 +798,12 @@ function streamBotMessage(fullText, sources){
    RAG hook — calls the real backend (app.py -> rag_engine.RagEngine)
    ============================================================ */
 // When index.html is served BY app.py (uvicorn), '' + '/api/chat' is
-// same-origin and just works. When it's served separately (e.g. GitHub
-// Pages), the backend lives on a different origin, so point this at your
-// deployed backend's full URL, e.g. 'https://waffarha-api.onrender.com'.
+// same-origin and just works. When it's served separately (e.g. from
+// eng-zakaria.github.io/waffarha-chatbot/), the backend lives on a
+// different origin -- point this at wherever your laptop's backend is
+// publicly reachable, e.g. a Cloudflare Tunnel / ngrok URL like
+// 'https://random-words-1234.trycloudflare.com'. That URL must also be
+// added to ALLOWED_ORIGINS in app.py (github.io is already there).
 // Leave it '' for local/same-origin use.
 const API_BASE = '';
 
@@ -794,10 +833,10 @@ async function getBotResponse(userText){
       throw new Error(detail && detail.detail ? detail.detail : `HTTP ${res.status}`);
     }
     const data = await res.json();
-    return { answer: data.answer, sources: data.sources || [] };
+    return { answer: data.answer, sources: data.sources || [], suggestions: data.suggestions || [] };
   } catch(err){
     console.error('Chat API error:', err);
-    return { answer: CHAT_API_ERROR[lang] || CHAT_API_ERROR.en, sources: [] };
+    return { answer: CHAT_API_ERROR[lang] || CHAT_API_ERROR.en, sources: [], suggestions: [] };
   }
 }
 
@@ -817,9 +856,9 @@ async function submitMessage(text){
   toggleSend();
 
   appendTyping();
-  const { answer, sources } = await getBotResponse(text);
+  const { answer, sources, suggestions } = await getBotResponse(text);
   removeTyping();
-  await streamBotMessage(answer, sources);
+  await streamBotMessage(answer, sources, suggestions);
 }
 
 /* ============================================================
@@ -854,7 +893,7 @@ function loadChat(id){
     renderWelcome();
   } else {
     chatInner.innerHTML = '';
-    chat.messages.forEach(m => appendMessage(m.role, m.text, m.sources, false));
+    chat.messages.forEach(m => appendMessage(m.role, m.text, m.sources, false, m.time));
   }
   renderHistory();
   closeSidebarMobile();

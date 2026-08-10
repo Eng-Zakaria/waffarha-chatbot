@@ -57,6 +57,15 @@ TOP_K = 3
 CANDIDATE_K = 15 
 LEXICAL_BONUS_WEIGHT = 0.4 
 
+# NEW: used instead of TOP_K / CANDIDATE_K when a query is detected as
+# "multi-offer" -- either comparison-phrased ("compare X and Y") or naming
+# 2+ known merchants by name. A single-offer TOP_K=3 / CANDIDATE_K=15 is
+# often too tight to guarantee both named offers survive dedup + ranking,
+# especially if one merchant scores lower than unrelated but closer-matching
+# candidates. See rag_engine._detect_multi_item.
+TOP_K_MULTI = 6
+CANDIDATE_K_MULTI = 30
+
 
 MIN_RELEVANCE_SCORE = 0.35  
 

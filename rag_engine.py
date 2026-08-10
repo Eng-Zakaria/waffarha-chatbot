@@ -226,6 +226,21 @@ def _looks_like_comparison(query: str) -> bool:
     return any(w in q for w in _COMPARISON_WORDS)
 
 
+def _mentioned_merchants(query: str, merchants: list) -> list:
+    """Returns the known merchant names (from the index) that appear
+    literally in the query. `merchants` should be sorted longest-first so a
+    longer name matches before a shorter one that happens to be a substring
+    of it (e.g. "Pizza Hut Express" before "Pizza Hut")."""
+    q = (query or "").lower()
+    found = []
+    for m in merchants:
+        if len(m) < 3:
+            continue
+        if m.lower() in q:
+            found.append(m)
+    return found
+
+
 def _same_entity_family(top_meta: dict, second_meta: dict) -> bool:
     """True when the top-2 candidates are two different items from the SAME
     underlying source (a merchant's own two offers, or two FAQs in the same
@@ -301,6 +316,21 @@ class RagEngine:
         with open(docs_path, "rb") as f:
             self.docs = pickle.load(f)
 
+        # NEW: known merchant names, longest-first, used to detect queries
+        # that name 2+ merchants at once ("what's the deal at X and Y") so
+        # retrieval and the direct-answer shortcuts both treat it as
+        # multi-offer even without an explicit "compare" word. See
+        # _mentioned_merchants / _detect_multi_item.
+        self._offer_merchants = sorted(
+            {
+                (d["metadata"].get("merchant") or "").strip()
+                for d in self.docs
+                if d["metadata"].get("source") == "offer" and d["metadata"].get("merchant")
+            },
+            key=len,
+            reverse=True,
+        )
+
         self.client = ollama.Client(host=config.OLLAMA_HOST)
         try:
             self.client.list()
@@ -311,11 +341,30 @@ class RagEngine:
                 f"Original error: {e}"
             )
 
+    def _detect_multi_item(self, query: str):
+        """Returns (multi_item: bool, mentioned_merchants: list). multi_item
+        is True either for explicit comparison phrasing ("compare X and Y")
+        or when the query literally names 2+ merchants from the index --
+        the latter catches "what's the deal for KFC and Pizza Hut" style
+        questions that ask about several offers without using a comparison
+        word at all."""
+        mentioned = _mentioned_merchants(query, self._offer_merchants)
+        multi_item = _looks_like_comparison(query) or len(mentioned) >= 2
+        return multi_item, mentioned
+
     def retrieve(self, query: str, top_k: int = None) -> list:
         top_k = top_k or config.TOP_K
+        multi_item, mentioned_merchants = self._detect_multi_item(query)
+        if multi_item:
+            # NEW: a single-offer top_k/candidate pool is too tight to
+            # reliably keep every named offer past dedup + ranking -- widen
+            # both when the query is asking about more than one thing.
+            top_k = max(top_k, config.TOP_K_MULTI)
+        candidate_k = config.CANDIDATE_K_MULTI if multi_item else config.CANDIDATE_K
+
         q_emb = self.embed_model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
  
-        raw_results = self.store.search(q_emb, config.CANDIDATE_K)[0]
+        raw_results = self.store.search(q_emb, candidate_k)[0]
  
         # CHANGED: filter out common function words (see _LEXICAL_STOPWORDS)
         # before computing lexical overlap -- previously ANY word >=2 chars
@@ -371,7 +420,24 @@ class RagEngine:
             seen_ids.add(did)
             deduped.append(c)
  
-        return deduped[:top_k]
+        selected = deduped[:top_k]
+
+        if multi_item and mentioned_merchants:
+            # A merchant named explicitly in the query must not get dropped
+            # just because some unrelated candidate scored higher -- pull in
+            # that merchant's best-scoring doc from the full candidate pool
+            # (not just the slice) if it isn't already selected.
+            selected_merchants = {r["metadata"].get("merchant") for r in selected}
+            for m in mentioned_merchants:
+                if m in selected_merchants:
+                    continue
+                best = next((c for c in deduped if c["metadata"].get("merchant") == m), None)
+                if best is not None:
+                    selected.append(best)
+                    selected_merchants.add(m)
+            selected.sort(key=lambda r: r["combined_score"], reverse=True)
+
+        return selected
 
  
 
@@ -392,7 +458,7 @@ class RagEngine:
         header = "MUST STATE (copy these exactly):" if lang == "en" else "لازم تذكر (انسخها بالظبط):"
         return header + "\n" + "\n".join(lines)
 
-    def _get_faq_direct_answer(self, retrieved: list, reply_lang: str, query: str = ""):
+    def _get_faq_direct_answer(self, retrieved: list, reply_lang: str, query: str = "", multi_item: bool = None):
         if not retrieved:
             return None
         top = retrieved[0]
@@ -400,8 +466,11 @@ class RagEngine:
             return None
         if top["combined_score"] < config.FAQ_DIRECT_ANSWER_SCORE:
             return None
-        if _looks_like_comparison(query):
-            return None  # user wants multiple items compared -- never safe to shortcut to one
+        # CHANGED: multi_item now covers both explicit comparison wording AND
+        # queries that literally name 2+ merchants -- either way the user
+        # wants more than one item back, never safe to shortcut to one.
+        if multi_item if multi_item is not None else _looks_like_comparison(query):
+            return None
         if len(retrieved) > 1:
             second = retrieved[1]
             margin = top["combined_score"] - second["combined_score"]
@@ -437,7 +506,7 @@ class RagEngine:
             sibling = top
         return sibling["metadata"].get("answer")
 
-    def _get_offer_direct_answer(self, retrieved: list, reply_lang: str, query: str = ""):
+    def _get_offer_direct_answer(self, retrieved: list, reply_lang: str, query: str = "", multi_item: bool = None):
         if not retrieved:
             return None
         top = retrieved[0]
@@ -445,8 +514,10 @@ class RagEngine:
             return None
         if top["combined_score"] < config.OFFER_DIRECT_ANSWER_SCORE:
             return None
-        if _looks_like_comparison(query):
-            return None  # "compare the two Sedra offers" must never collapse to one offer
+        # CHANGED: see _get_faq_direct_answer -- multi_item also fires for
+        # "what's the deal at X and Y" (named merchants), not just "compare".
+        if multi_item if multi_item is not None else _looks_like_comparison(query):
+            return None
         if len(retrieved) > 1:
             second = retrieved[1]
             margin = top["combined_score"] - second["combined_score"]
@@ -517,14 +588,15 @@ class RagEngine:
             return
 
         reply_lang = detect_lang(query)
+        multi_item, _ = self._detect_multi_item(query)
 
-        direct_answer = self._get_faq_direct_answer(retrieved, reply_lang, query)
+        direct_answer = self._get_faq_direct_answer(retrieved, reply_lang, query, multi_item=multi_item)
         if direct_answer is not None:
             yield direct_answer
             return
 
         if note is None:
-            direct_answer = self._get_offer_direct_answer(retrieved, reply_lang, query)
+            direct_answer = self._get_offer_direct_answer(retrieved, reply_lang, query, multi_item=multi_item)
             if direct_answer is not None:
                 yield direct_answer
                 return
