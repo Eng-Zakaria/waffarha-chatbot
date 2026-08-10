@@ -5,6 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="light dark">
 <title>Waffarha Assistant</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -756,21 +759,39 @@ function streamBotMessage(fullText, sources){
 }
 
 /* ============================================================
-   RAG hook — swap getBotResponse() for your real pipeline
+   RAG hook — calls the real backend (app.py -> rag_engine.RagEngine)
    ============================================================ */
-async function getBotResponse(userText){
-  // TODO: replace this mock with a real call to your RAG backend, e.g.
-  //
-  // const res = await fetch('/api/chat', {
-  //   method: 'POST',
-  //   headers: { 'Content-Type': 'application/json' },
-  //   body: JSON.stringify({ query: userText, lang, sessionId: activeChatId })
-  // });
-  // const data = await res.json();
-  // return { answer: data.answer, sources: data.sources };
+const CHAT_API_ERROR = {
+  en: "I'm having trouble reaching the assistant backend right now. Please try again in a moment.",
+  ar: "في مشكلة في الوصول لسيرفر المساعد دلوقتي. جرب تاني بعد شوية."
+};
 
-  await new Promise(r => setTimeout(r, 500 + Math.random()*400));
-  return findAnswer(userText, lang);
+async function getBotResponse(userText){
+  const chat = chats.find(c=>c.id===activeChatId);
+  // Send prior turns only — the message just typed is passed separately as
+  // `query`, and it's already the last entry in chat.messages by this point
+  // (appendMessage() persisted it before submitMessage() called us).
+  const priorMessages = chat ? chat.messages.slice(0, -1) : [];
+  const history = priorMessages
+    .filter(m => m.role === 'user' || m.role === 'bot')
+    .map(m => ({ role: m.role === 'bot' ? 'assistant' : 'user', content: m.text }));
+
+  try{
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: userText, lang, history })
+    });
+    if(!res.ok){
+      const detail = await res.json().catch(()=>null);
+      throw new Error(detail && detail.detail ? detail.detail : `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return { answer: data.answer, sources: data.sources || [] };
+  } catch(err){
+    console.error('Chat API error:', err);
+    return { answer: CHAT_API_ERROR[lang] || CHAT_API_ERROR.en, sources: [] };
+  }
 }
 
 async function submitMessage(text){
