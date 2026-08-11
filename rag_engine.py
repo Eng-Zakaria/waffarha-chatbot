@@ -175,11 +175,27 @@ def _has_value(v) -> bool:
 # makes its position explicit instead of guessed. These are invisible
 # control characters -- no visible text changes, and English replies are
 # untouched (lang == "en" is a no-op passthrough).
-_LRI, _PDI = "\u2066", "\u2069"
+#
+# CHANGED: LRI-isolating only the embedded number wasn't enough -- with
+# several Arabic segments in a row (each containing its own isolated
+# number) the bidi algorithm can still misjudge how the SEGMENTS nest
+# relative to EACH OTHER, which is what the eval screenshot showed: the
+# discount and expiry segments swapping visual order even though each
+# number read correctly on its own. _iso (LRI) isolates a number within
+# its segment; _iso_segment (RLI, right-to-left isolate) now additionally
+# wraps each whole segment before it's joined with " — ", fixing each
+# segment's position to its actual document order instead of leaving that
+# to be guessed too. Isolates nest cleanly, so a segment built with _iso
+# inside can safely be wrapped again with _iso_segment.
+_LRI, _RLI, _PDI = "\u2066", "\u2067", "\u2069"
 
 
 def _iso(fragment: str, lang: str) -> str:
     return f"{_LRI}{fragment}{_PDI}" if lang == "ar" else fragment
+
+
+def _iso_segment(fragment: str, lang: str) -> str:
+    return f"{_RLI}{fragment}{_PDI}" if lang == "ar" else fragment
 
 
 def _format_offer_facts(meta: dict, lang: str):
@@ -201,11 +217,13 @@ def _format_offer_facts(meta: dict, lang: str):
         if _has_value(old_price):
             old_part = _iso(f"{old_price} {currency}", lang)
             line += f" ({'was' if lang == 'en' else 'كانت'} {old_part})"
-        parts.append(line)
+        parts.append(_iso_segment(line, lang))
     if _has_value(discount):
-        parts.append(f"{discount}% off" if lang == "en" else f"خصم {_iso(f'{discount}%', lang)}")
+        discount_line = f"{discount}% off" if lang == "en" else f"خصم {_iso(f'{discount}%', lang)}"
+        parts.append(_iso_segment(discount_line, lang))
     if _has_value(expiry):
-        parts.append(f"{'valid until' if lang == 'en' else 'صالح حتى'} {_iso(expiry, lang)}")
+        expiry_line = f"{'valid until' if lang == 'en' else 'صالح حتى'} {_iso(expiry, lang)}"
+        parts.append(_iso_segment(expiry_line, lang))
 
     return " — ".join(parts) if parts else None
 
@@ -290,6 +308,32 @@ def _mentioned_merchants(query: str, merchants: list) -> list:
         if m.lower() in q:
             found.append(m)
     return found
+
+
+# NEW: a follow-up like "اشرحلي العرض ده" ("explain this offer to me") or
+# "tell me more about it" carries no identifying content of its own --
+# embedding IT alone retrieves whatever's semantically closest to "explain
+# an offer" in general across the whole corpus, which is how a completely
+# unrelated offer (or FAQ) can win over the one actually being discussed.
+# These words flag that the query is *referring back* to something rather
+# than describing something new.
+_ANAPHORA_WORDS = {
+    "this", "that", "it", "ده", "دي", "دة", "هذا", "هذه", "ذلك", "دول",
+}
+
+
+def _looks_like_followup(query: str, merchants: list) -> bool:
+    """True when the query leans on an anaphoric reference and doesn't
+    itself name a known merchant -- i.e. it can't stand on its own and
+    needs the previous turn to know what it's about. A query that DOES
+    name a merchant ("عندكم عروض تانية من كوفتا؟") is self-contained even
+    if it also contains "ده" somewhere, so that case is excluded."""
+    q = (query or "")
+    words = re.split(r"[\s؟?!.,،]+", q.lower())
+    has_anaphora = any(w in _ANAPHORA_WORDS for w in words if w)
+    if not has_anaphora:
+        return False
+    return not _mentioned_merchants(query, merchants)
 
 
 def _same_entity_family(top_meta: dict, second_meta: dict) -> bool:
@@ -403,9 +447,31 @@ class RagEngine:
         multi_item = _looks_like_comparison(query) or len(mentioned) >= 2
         return multi_item, mentioned
 
-    def retrieve(self, query: str, top_k: int = None) -> list:
+    def _build_retrieval_query(self, query: str, history: list = None) -> str:
+        """Returns the text actually used for embedding + lexical scoring.
+        For a self-contained query this is just `query`, unchanged. For a
+        follow-up (see _looks_like_followup) it's the previous user turn's
+        text prepended to the current one, so retrieval is anchored on
+        whatever offer/FAQ that turn was about instead of free-floating on
+        the follow-up's own (mostly empty) semantic content.
+
+        Only the single most recent user turn is used -- not the whole
+        history -- so a genuinely new question a few turns later isn't
+        dragged back toward an older topic."""
+        if not history or not _looks_like_followup(query, self._offer_merchants):
+            return query
+        last_user_turn = next(
+            (t.get("content") for t in reversed(history) if t.get("role") == "user"),
+            None,
+        )
+        if not last_user_turn:
+            return query
+        return f"{last_user_turn}. {query}"
+
+    def retrieve(self, query: str, top_k: int = None, history: list = None) -> list:
         top_k = top_k or config.TOP_K
-        multi_item, mentioned_merchants = self._detect_multi_item(query)
+        retrieval_query = self._build_retrieval_query(query, history)
+        multi_item, mentioned_merchants = self._detect_multi_item(retrieval_query)
         if multi_item:
             # NEW: a single-offer top_k/candidate pool is too tight to
             # reliably keep every named offer past dedup + ranking -- widen
@@ -413,7 +479,9 @@ class RagEngine:
             top_k = max(top_k, config.TOP_K_MULTI)
         candidate_k = config.CANDIDATE_K_MULTI if multi_item else config.CANDIDATE_K
 
-        q_emb = self.embed_model.encode([query], normalize_embeddings=True, convert_to_numpy=True).astype("float32")
+        q_emb = self.embed_model.encode(
+            [retrieval_query], normalize_embeddings=True, convert_to_numpy=True
+        ).astype("float32")
  
         raw_results = self.store.search(q_emb, candidate_k)[0]
  
@@ -423,11 +491,13 @@ class RagEngine:
         # a single incidental hit on a document that's actually irrelevant
         # to the query's real intent (merchant, product, category) inflate
         # combined_score enough to outrank the genuinely relevant document.
+        # CHANGED: built from retrieval_query (not the raw follow-up query)
+        # for the same reason as q_emb above -- see _build_retrieval_query.
         query_words = [
-            w for w in query.replace("؟", " ").replace("?", " ").split()
+            w for w in retrieval_query.replace("؟", " ").replace("?", " ").split()
             if len(w) >= 2 and not _is_lexical_stopword(w)
         ]
-        intent = _classify_intent(query)
+        intent = _classify_intent(retrieval_query)
  
         candidates = []
         for score, idx in raw_results:
@@ -634,7 +704,11 @@ class RagEngine:
         return "\n".join(lines)
 
     def answer_stream(self, query: str, history: list = None):
-        retrieved = self.retrieve(query)
+        # CHANGED: history is now passed through -- retrieve() uses it to
+        # anchor follow-up queries ("explain this offer") on the previous
+        # turn's topic instead of retrieving on the follow-up's own,
+        # mostly context-free wording. See _build_retrieval_query.
+        retrieved = self.retrieve(query, history=history)
         price_range = extract_price_range(query)
         note = None
 
