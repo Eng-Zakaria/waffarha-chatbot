@@ -66,7 +66,7 @@ ingest/
 
 ## Already wired up
 
-- Your uploaded `docs.pkl` + `index.faiss` are placed at
+-  `docs.pkl` + `index.faiss` are placed at
   `data/index/intfloat__multilingual-e5-base/faiss/` -- the exact path
   `RagEngine()` looks for by default (matches `config.EMBEDDING_MODEL` +
   `backend="faiss"`). No extra config needed to use them as-is.
