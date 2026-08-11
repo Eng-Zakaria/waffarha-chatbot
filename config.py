@@ -44,7 +44,11 @@ OFFER_FIELD_CANDIDATES = {
     "expiry": ["offer_expire_date", "end_date", "expiry"],
 }
 
-CURRENCY = "EGP"
+# CHANGED: was a single string "EGP" used verbatim in every reply, including
+# Arabic ones -- e.g. "كانت 300 EGP", English inside an Arabic sentence. Now
+# keyed by reply language so Arabic replies show جنيه instead. English replies
+# are unaffected (config.CURRENCY["en"] == the old "EGP" value).
+CURRENCY = {"en": "EGP", "ar": "جنيه"}
 
 OFFER_STATUS_FIELD = "offer_status"
 OFFER_ACTIVE_VALUES = ["active"]
@@ -126,4 +130,4 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b-instruct")
 MAX_TOKENS = 500         
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "1536"))  
 
-HISTORY_TURNS_KEPT = 3  
+HISTORY_TURNS_KEPT = 3

@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import pickle
+import re
 import sys
 
 from sentence_transformers import SentenceTransformer
@@ -58,6 +59,55 @@ def pick_field(offer: dict, candidates: list, default=""):
     return default
 
 
+# NEW: offer_special_display carries real, varied signal (1652/1652/306/38/8/70
+# offers tagged hot_deals/limited_time/ramadan/feast/valentine_offers/
+# delivery_section respectively) that was previously discarded at ingest --
+# neither stored in metadata nor embedded in the text, so a query like "any
+# Ramadan deals?" had nothing to match against beyond generic embedding
+# proximity. Translating each tag into a natural-language phrase and adding
+# it to the embedded text (see load_offers below) means retrieve()'s existing
+# lexical-bonus mechanism picks these up for free -- no changes needed to
+# rag_engine.py or any of the tuned thresholds in config.py.
+_TAG_PHRASES = {
+    "hot_deals": ("Hot deal", "عرض ساخن"),
+    "limited_time": ("Limited-time offer", "عرض لفترة محدودة"),
+    "ramadan": ("Ramadan offer", "عرض رمضان"),
+    "feast": ("Eid / feast offer", "عرض العيد"),
+    "valentine_offers": ("Valentine's offer", "عرض فالنتاين"),
+    "delivery_section": ("Delivery available", "متاح توصيل"),
+}
+
+
+def _tag_line(special_display: str, lang: str) -> str:
+    if not special_display:
+        return ""
+    seen = []
+    for raw in special_display.split(","):
+        tag = raw.strip()
+        if tag and tag not in seen:
+            seen.append(tag)
+    phrases = [_TAG_PHRASES[t][0 if lang == "en" else 1] for t in seen if t in _TAG_PHRASES]
+    if not phrases:
+        return ""
+    label = "Tags" if lang == "en" else "الوسوم"
+    sep = ", " if lang == "en" else "، "
+    return f"{label}: {sep.join(phrases)}"
+
+
+# NEW: sold_coupons_count (e.g. "18086 sold coupons") is real, varying data --
+# unlike remaining_coupons_count, which is "0" for all 1664 records in the
+# current feed and therefore not extracted at all. Pulled out as an int so
+# rag_engine.py can answer "how many sold" / "is this popular" questions and
+# give a real number instead of silence when someone asks about stock and
+# there's no remaining-count to give them.
+def _extract_sold_count(offer: dict):
+    raw = offer.get("sold_coupons_count")
+    if not raw:
+        return None
+    m = re.match(r"\s*(\d+)", str(raw))
+    return int(m.group(1)) if m else None
+
+
 def load_offers() -> list:
     path = os.path.join(config.INDEX_DIR, "offers_raw.json")
     if not os.path.exists(path):
@@ -88,6 +138,15 @@ def load_offers() -> list:
         old_price = pick_field(offer, fc["old_price"])
         discount = pick_field(offer, fc["discount"])
         expiry = pick_field(offer, fc["expiry"])
+        # NEW: raw expiry is "YYYY-MM-DD HH:MM:SS" (confirmed consistent across
+        # all 1664 records) but the time-of-day is never meaningful here --
+        # every offer expires at midnight or some arbitrary batch-job time, not
+        # a real cutoff hour a user would care about. Truncated once here, at
+        # the metadata source, so the shorter date flows consistently into the
+        # embedded text, the fact checklist, and the direct-answer card
+        # without needing to touch rag_engine.py at all.
+        if expiry and " " in str(expiry):
+            expiry = str(expiry).split(" ", 1)[0]
         offer_id = pick_field(offer, fc["id"])
         lang = offer.get("_lang", "en")
 
@@ -103,14 +162,22 @@ def load_offers() -> list:
         if description and description != title:
             text_parts.append(f"Description: {description}")
         if price:
-            price_line = f"Price: {price} {config.CURRENCY}"
+            currency = config.CURRENCY.get(lang, config.CURRENCY.get("en", "EGP")) \
+                if isinstance(config.CURRENCY, dict) else config.CURRENCY
+            price_line = f"Price: {price} {currency}"
             if show_old_price:
-                price_line += f" (was {old_price} {config.CURRENCY})"
+                price_line += f" (was {old_price} {currency})"
             if show_discount:
                 price_line += f", {discount}% off"
             text_parts.append(price_line)
         if expiry:
             text_parts.append(f"Valid until: {expiry}")
+
+        tag_line = _tag_line(offer.get("offer_special_display", ""), lang)
+        if tag_line:
+            text_parts.append(tag_line)
+
+        sold_count = _extract_sold_count(offer)
 
         docs.append({
             "text": "\n".join(text_parts),
@@ -119,6 +186,7 @@ def load_offers() -> list:
                 "price": price, "old_price": old_price if show_old_price else None,
                 "discount": discount if show_discount else None, "expiry": expiry,
                 "lang": lang, "section_id": offer.get("_section_id"),
+                "sold_count": sold_count,  # NEW -- see _extract_sold_count
             },
         })
 

@@ -35,6 +35,18 @@ FALLBACK_MESSAGE = {
     "ar": "للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.",
 }
 
+# NEW: used by _get_stock_direct_answer. sold_count is filled in per-offer when
+# available; the "not tracked" half is constant since it's true for every offer
+# in the current feed, not just the one being asked about.
+_STOCK_NO_DATA = {
+    "en": "I don't have a live remaining-stock count for this offer.",
+    "ar": "للأسف مفيش عندي عدد الكوبونات المتبقية لحظيًا للعرض ده.",
+}
+_STOCK_SOLD_SO_FAR = {
+    "en": "{n} coupon(s) purchased so far.",
+    "ar": "اتباع {n} كوبون لحد دلوقتي.",
+}
+
 
 # Internal scaffolding labels that must never reach the user -- kept in sync
 # with eval/common.py's _SCAFFOLDING_MARKERS. Centralized here since this is
@@ -76,6 +88,25 @@ _FAQ_INTENT_WORDS = {
     "حساب", "دخول", "تسجيل", "دفع", "فاتورة", "استرداد", "الغاء", "إلغاء",
     "طلباتي", "حالة الطلب",
 }
+
+# NEW: "how many left / is this sold out" style questions. remaining_coupons_count
+# is "0" for every single offer in the current feed (confirmed against the full
+# 1664-record dataset) and was never part of OFFER_FIELD_CANDIDATES to begin
+# with, so these questions previously fell through to the generic offer card
+# with no acknowledgement that stock isn't tracked -- reads as a non-answer to
+# a question the user asked directly. Detected separately from _OFFER_INTENT_WORDS
+# so it can short-circuit with an honest answer before the generic offer-facts path.
+_STOCK_INTENT_WORDS = {
+    "remaining", "how many left", "left in stock", "sold out", "in stock",
+    "coupons left", "any left",
+    "متبقي", "فاضل", "باقي", "خلص", "خلصت", "نفدت", "لسه فاضل",
+}
+
+
+def _looks_like_stock_query(query: str) -> bool:
+    q = (query or "").lower()
+    return any(w in q for w in _STOCK_INTENT_WORDS)
+
 
 # NEW: common short function words that shouldn't earn lexical_bonus points.
 # The eval run showed a query about a specific karting merchant/branch
@@ -133,6 +164,24 @@ def _has_value(v) -> bool:
     return v is not None and str(v).strip() != ""
 
 
+# NEW: an Arabic offer-facts line embeds several separate LTR "islands"
+# (price+currency, discount%, date) inside an otherwise RTL sentence, each
+# separated by neutral characters (em dashes, parentheses). Without explicit
+# direction markers, a browser's bidi algorithm has to guess how those
+# islands nest and in what order they sit relative to each other -- with
+# several in a row that guess routinely scrambles the visual reading order
+# (e.g. currency landing on the wrong side of its number). Wrapping each
+# fragment in Unicode directional-isolate marks (U+2066 LRI ... U+2069 PDI)
+# makes its position explicit instead of guessed. These are invisible
+# control characters -- no visible text changes, and English replies are
+# untouched (lang == "en" is a no-op passthrough).
+_LRI, _PDI = "\u2066", "\u2069"
+
+
+def _iso(fragment: str, lang: str) -> str:
+    return f"{_LRI}{fragment}{_PDI}" if lang == "ar" else fragment
+
+
 def _format_offer_facts(meta: dict, lang: str):
     title = meta.get("title") or ""
     price = meta.get("price")
@@ -147,14 +196,16 @@ def _format_offer_facts(meta: dict, lang: str):
     if title:
         parts.append(f"**{title}**")
     if _has_value(price):
-        line = f"{price} {config.CURRENCY}"
+        currency = config.CURRENCY[lang] if isinstance(config.CURRENCY, dict) else config.CURRENCY
+        line = _iso(f"{price} {currency}", lang)
         if _has_value(old_price):
-            line += f" ({'was' if lang == 'en' else 'كانت'} {old_price} {config.CURRENCY})"
+            old_part = _iso(f"{old_price} {currency}", lang)
+            line += f" ({'was' if lang == 'en' else 'كانت'} {old_part})"
         parts.append(line)
     if _has_value(discount):
-        parts.append(f"{discount}% off" if lang == "en" else f"خصم {discount}%")
+        parts.append(f"{discount}% off" if lang == "en" else f"خصم {_iso(f'{discount}%', lang)}")
     if _has_value(expiry):
-        parts.append(f"{'valid until' if lang == 'en' else 'صالح حتى'} {expiry}")
+        parts.append(f"{'valid until' if lang == 'en' else 'صالح حتى'} {_iso(expiry, lang)}")
 
     return " — ".join(parts) if parts else None
 
@@ -554,6 +605,34 @@ class RagEngine:
         intro = "Here's what I found:" if reply_lang == "en" else "لقيت العرض ده:"
         return f"{intro}\n{fact}"
 
+    def _get_stock_direct_answer(self, retrieved: list, reply_lang: str, query: str):
+        """Handles 'how many left / is it sold out' questions explicitly
+        instead of letting them fall through to the generic offer-facts
+        answer (which says nothing about stock at all) or, worse, to the LLM
+        with no stock field in its context -- either way the user's actual
+        question goes unanswered. Reuses the same top-candidate + grounding
+        checks as _get_offer_direct_answer so this doesn't fire on a weak or
+        ambiguous match; it only replaces WHAT is said once we're already
+        confident WHICH offer is meant."""
+        if not _looks_like_stock_query(query):
+            return None
+        if not retrieved:
+            return None
+        top = retrieved[0]
+        if top["metadata"].get("source") != "offer":
+            return None
+        if top["combined_score"] < config.OFFER_DIRECT_ANSWER_SCORE:
+            return None
+
+        title = top["metadata"].get("title") or ""
+        sold_count = top["metadata"].get("sold_count")
+
+        lines = [f"**{title}**"] if title else []
+        lines.append(_STOCK_NO_DATA[reply_lang])
+        if sold_count is not None:
+            lines.append(_STOCK_SOLD_SO_FAR[reply_lang].format(n=_iso(str(sold_count), reply_lang)))
+        return "\n".join(lines)
+
     def answer_stream(self, query: str, history: list = None):
         retrieved = self.retrieve(query)
         price_range = extract_price_range(query)
@@ -596,6 +675,14 @@ class RagEngine:
             return
 
         if note is None:
+            # NEW: checked before the generic offer-facts shortcut so a stock
+            # question gets an honest stock answer instead of a price/discount
+            # card that doesn't address what was actually asked.
+            direct_answer = self._get_stock_direct_answer(retrieved, reply_lang, query)
+            if direct_answer is not None:
+                yield direct_answer
+                return
+
             direct_answer = self._get_offer_direct_answer(retrieved, reply_lang, query, multi_item=multi_item)
             if direct_answer is not None:
                 yield direct_answer
