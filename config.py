@@ -10,7 +10,7 @@ EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 OFFERS_API_URL = "https://api-test.waffarha.tech/api/sectionOffers"
 
 OFFERS_API_BASE_BODY = {
-    "security_key": os.getenv("WAFFARHA_SECURITY_KEY", "4be8e2a72ca744d2da36782adec01cd9"),
+    "security_key": os.getenv("WAFFARHA_SECURITY_KEY", ""),
     "app_version": "9.1.06",
     "platform": "website",
     "device_token": "6B0D864C-865B-410D-B1BE-E9A43507762F",

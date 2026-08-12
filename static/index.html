@@ -511,6 +511,25 @@ const THEME_KEY = 'waffarha_theme';
 const USERS_KEY = 'waffarha_users';
 const ACTIVE_USER_KEY = 'waffarha_active_user';
 const chatsKey = (userId) => 'waffarha_chats_' + userId;
+// NEW: seed chats (c1/c2/c3, see seedChats() below) use the same hardcoded
+// ids for every guest user, so activeChatId alone isn't unique ACROSS
+// browsers/people -- two different guests both continuing the "Cashback
+// question" seed chat would otherwise collide on session_id "c1" server-
+// side and see each other's remembered offers. BROWSER_ID is a random id
+// generated once per browser and persisted, so the combined
+// `${BROWSER_ID}:${activeChatId}` sent as session_id is unique both per
+// browser AND per chat within that browser.
+const BROWSER_ID_KEY = 'waffarha_browser_id';
+function getBrowserId(){
+  let id = localStorage.getItem(BROWSER_ID_KEY);
+  if(!id){
+    id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+      : 'b' + Date.now() + Math.random().toString(36).slice(2);
+    localStorage.setItem(BROWSER_ID_KEY, id);
+  }
+  return id;
+}
+const BROWSER_ID = getBrowserId();
 
 function getSystemTheme(){
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -826,7 +845,11 @@ async function getBotResponse(userText){
     const res = await fetch(`${API_BASE}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: userText, lang, history })
+      // session_id scopes server-side offer memory (see memory.py) to THIS
+      // conversation in THIS browser -- see BROWSER_ID comment above for
+      // why activeChatId alone isn't safe to use (seed-chat id collisions
+      // across different guests).
+      body: JSON.stringify({ query: userText, lang, history, session_id: `${BROWSER_ID}:${activeChatId}` })
     });
     if(!res.ok){
       const detail = await res.json().catch(()=>null);

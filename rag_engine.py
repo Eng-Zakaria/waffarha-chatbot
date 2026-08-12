@@ -321,19 +321,55 @@ _ANAPHORA_WORDS = {
     "this", "that", "it", "ده", "دي", "دة", "هذا", "هذه", "ذلك", "دول",
 }
 
+# NEW: a follow-up doesn't always use a pronoun -- "how much was the price
+# before the discount" refers back to whatever offer was just shown just as
+# much as "how much was it before the discount" does, but has no word in
+# _ANAPHORA_WORDS for the old check to catch. This surfaced for real: it's
+# exactly the query that got mis-answered with an unrelated offer (Gravity
+# Code instead of the pizza deal just discussed) because the old anaphora-
+# only check let it fall through as "self-contained" and free-float in the
+# embedding space instead of anchoring on the previous turn.
+_FOLLOWUP_SIGNAL_PHRASES = {
+    "before the discount", "original price", "old price", "how much was",
+    "is it still", "does it still", "still available", "still valid",
+    "how do i redeem", "redeem this", "redeem it",
+    "قبل الخصم", "السعر الاصلي", "السعر الأصلي", "كان بكام",
+    "لسه موجود", "لسه شغال", "استخدمه ازاي", "استخدمه إزاي",
+}
 
-def _looks_like_followup(query: str, merchants: list) -> bool:
-    """True when the query leans on an anaphoric reference and doesn't
-    itself name a known merchant -- i.e. it can't stand on its own and
-    needs the previous turn to know what it's about. A query that DOES
-    name a merchant ("عندكم عروض تانية من كوفتا؟") is self-contained even
-    if it also contains "ده" somewhere, so that case is excluded."""
-    q = (query or "")
-    words = re.split(r"[\s؟?!.,،]+", q.lower())
+# NEW: "the first one" / "the second one" / "التاني" -- lets a follow-up
+# name WHICH of several recently-shown offers it means, instead of always
+# defaulting to the single most recent one. -1 means "the last one".
+_ORDINAL_WORDS = {
+    "first": 0, "1st": 0, "الاول": 0, "الأول": 0,
+    "second": 1, "2nd": 1, "التاني": 1, "الثاني": 1,
+    "third": 2, "3rd": 2, "التالت": 2, "الثالث": 2,
+    "fourth": 3, "4th": 3, "الرابع": 3,
+    "last": -1, "الاخير": -1, "الأخير": -1,
+}
+
+
+def _extract_ordinals(query: str) -> list:
+    q = (query or "").lower()
+    found = []
+    for word, idx in _ORDINAL_WORDS.items():
+        if word in q and idx not in found:
+            found.append(idx)
+    return found
+
+
+def _looks_like_followup_text(query: str) -> bool:
+    """True when the query's own wording suggests it's referring back to
+    something already discussed -- either a pronoun (_ANAPHORA_WORDS) or one
+    of the common referring phrasings that carry no pronoun at all
+    (_FOLLOWUP_SIGNAL_PHRASES). Does NOT check merchant-naming itself --
+    callers combine this with _mentioned_merchants so a query that both
+    contains "ده" AND names a merchant is still treated as self-contained."""
+    q = (query or "").lower()
+    words = re.split(r"[\s؟?!.,،]+", q)
     has_anaphora = any(w in _ANAPHORA_WORDS for w in words if w)
-    if not has_anaphora:
-        return False
-    return not _mentioned_merchants(query, merchants)
+    has_signal_phrase = any(p in q for p in _FOLLOWUP_SIGNAL_PHRASES)
+    return has_anaphora or has_signal_phrase
 
 
 def _same_entity_family(top_meta: dict, second_meta: dict) -> bool:
@@ -447,31 +483,120 @@ class RagEngine:
         multi_item = _looks_like_comparison(query) or len(mentioned) >= 2
         return multi_item, mentioned
 
-    def _build_retrieval_query(self, query: str, history: list = None) -> str:
+    def _resolve_followup_targets(self, query: str, recent_offers: list) -> list:
+        """Decides whether `query` refers back to something already shown
+        earlier in THIS session, and if so, exactly which cached offer(s)/
+        FAQ(s). Returns a list of entries from `recent_offers` (each in
+        {"metadata": {...}} shape) -- empty if this looks like a fresh,
+        self-contained question.
+
+        `recent_offers` is expected to come from memory.SessionMemory.recent(),
+        most-recent-first, capped at MAX_OFFERS_PER_SESSION (see memory.py).
+        """
+        if not recent_offers:
+            return []
+
+        # A query that names a known merchant is self-contained UNLESS that
+        # merchant is one we already discussed -- in which case treat it as
+        # "tell me more about the X I just asked about" rather than
+        # re-retrieving from scratch, so slightly different phrasing of the
+        # same merchant name doesn't drift onto a different item of theirs.
+        mentioned = _mentioned_merchants(query, self._offer_merchants)
+        if mentioned:
+            return [o for o in recent_offers if o["metadata"].get("merchant") in mentioned]
+
+        # An ordinal reference ("the first one", "التاني") is itself a
+        # follow-up signal, independent of _looks_like_followup_text --
+        # "what about the first one" has no anaphora word ("this/that/it")
+        # and no signal phrase, but "first"/"one" is unambiguously pointing
+        # back at something from earlier in the list.
+        ordinals = _extract_ordinals(query)
+        if ordinals:
+            targets = []
+            for idx in ordinals:
+                try:
+                    targets.append(recent_offers[idx])
+                except IndexError:
+                    continue
+            if targets:
+                return targets
+
+        if not _looks_like_followup_text(query):
+            return []
+
+        # Anaphora/signal-phrase follow-up with no ordinal named -> assume
+        # it's about the most recently shown item.
+        return [recent_offers[0]]
+
+    def _lookup_doc(self, source: str, doc_id, lang_hint: str = None):
+        """Finds the full doc (text + metadata) for a remembered offer/FAQ
+        by (source, id) -- memory.py only caches metadata, not the full
+        indexed chunk text, so this re-fetches it from self.docs. Prefers
+        the lang_hint variant (e.g. an Arabic reply pulls the Arabic chunk)
+        the same way _get_faq_direct_answer's sibling lookup does."""
+        doc_id = str(doc_id)
+        candidates = [
+            d for d in self.docs
+            if d["metadata"].get("source") == source
+            and str(d["metadata"].get("id")) == doc_id
+        ]
+        if not candidates:
+            return None
+        if lang_hint:
+            match = next((d for d in candidates if d["metadata"].get("lang") == lang_hint), None)
+            if match:
+                return match
+        return candidates[0]
+
+    def _build_retrieval_query(self, query: str, history: list = None,
+                                followup_targets: list = None) -> str:
         """Returns the text actually used for embedding + lexical scoring.
-        For a self-contained query this is just `query`, unchanged. For a
-        follow-up (see _looks_like_followup) it's the previous user turn's
-        text prepended to the current one, so retrieval is anchored on
-        whatever offer/FAQ that turn was about instead of free-floating on
-        the follow-up's own (mostly empty) semantic content.
 
-        Only the single most recent user turn is used -- not the whole
-        history -- so a genuinely new question a few turns later isn't
-        dragged back toward an older topic."""
-        if not history or not _looks_like_followup(query, self._offer_merchants):
-            return query
-        last_user_turn = next(
-            (t.get("content") for t in reversed(history) if t.get("role") == "user"),
-            None,
-        )
-        if not last_user_turn:
-            return query
-        return f"{last_user_turn}. {query}"
+        For a self-contained query this is just `query`, unchanged.
 
-    def retrieve(self, query: str, top_k: int = None, history: list = None) -> list:
+        For a follow-up resolved against session memory (followup_targets
+        non-empty), the anchor is built from the ACTUAL cached offer's
+        title/merchant -- not the previous raw question -- since the
+        previous question is often itself generic ("do you have pizza
+        offers?") and doesn't carry the specific offer's identity the way
+        its title does.
+
+        Falls back to the old previous-turn-text anchoring only when memory
+        wasn't passed in at all (e.g. a caller not wired up to memory.py
+        yet), so this degrades gracefully rather than breaking outright.
+        """
+        if followup_targets:
+            bits = []
+            for t in followup_targets:
+                meta = t["metadata"]
+                label = meta.get("title") or meta.get("question") or ""
+                merchant = meta.get("merchant") or ""
+                bit = " ".join(b for b in (label, merchant) if b)
+                if bit:
+                    bits.append(bit)
+            anchor = ". ".join(bits)
+            if anchor:
+                return f"{anchor}. {query}"
+
+        if (history and _looks_like_followup_text(query)
+                and not _mentioned_merchants(query, self._offer_merchants)):
+            last_user_turn = next(
+                (t.get("content") for t in reversed(history) if t.get("role") == "user"),
+                None,
+            )
+            if last_user_turn:
+                return f"{last_user_turn}. {query}"
+
+        return query
+
+    def retrieve(self, query: str, top_k: int = None, history: list = None,
+                 recent_offers: list = None) -> list:
         top_k = top_k or config.TOP_K
-        retrieval_query = self._build_retrieval_query(query, history)
+        followup_targets = self._resolve_followup_targets(query, recent_offers)
+        retrieval_query = self._build_retrieval_query(query, history, followup_targets)
         multi_item, mentioned_merchants = self._detect_multi_item(retrieval_query)
+        if len(followup_targets) >= 2:
+            multi_item = True  # e.g. "compare the first and second one"
         if multi_item:
             # NEW: a single-offer top_k/candidate pool is too tight to
             # reliably keep every named offer past dedup + ranking -- widen
@@ -557,6 +682,39 @@ class RagEngine:
                     selected.append(best)
                     selected_merchants.add(m)
             selected.sort(key=lambda r: r["combined_score"], reverse=True)
+
+        # NEW: pin every resolved follow-up target into the result even if
+        # the anchor-text search above didn't happen to re-surface it. The
+        # anchor text is a strong hint but still goes through embedding +
+        # lexical scoring like anything else, so it's not guaranteed to
+        # win -- this makes the memory feature deterministic instead of
+        # "probably works": if the user is asking about an offer we KNOW
+        # was already shown to them, that exact offer is always available
+        # to the direct-answer shortcuts and the LLM context below,
+        # regardless of how the scoring landed.
+        if followup_targets:
+            lang_hint = detect_lang(query)
+            present_ids = {
+                (r["metadata"].get("source"), str(r["metadata"].get("id")))
+                for r in selected
+            }
+            for target in followup_targets:
+                tmeta = target["metadata"]
+                key = (tmeta.get("source"), str(tmeta.get("id")))
+                if key in present_ids:
+                    continue
+                pinned = self._lookup_doc(tmeta.get("source"), tmeta.get("id"), lang_hint=lang_hint)
+                if pinned is None:
+                    continue
+                selected.insert(0, {
+                    "score": 1.0,
+                    "combined_score": 1.0,
+                    "lexical_hits": 1,
+                    **pinned,
+                })
+                present_ids.add(key)
+            selected.sort(key=lambda r: r["combined_score"], reverse=True)
+            selected = selected[: max(top_k, len(followup_targets))]
 
         return selected
 
@@ -703,12 +861,16 @@ class RagEngine:
             lines.append(_STOCK_SOLD_SO_FAR[reply_lang].format(n=_iso(str(sold_count), reply_lang)))
         return "\n".join(lines)
 
-    def answer_stream(self, query: str, history: list = None):
+    def answer_stream(self, query: str, history: list = None, recent_offers: list = None):
         # CHANGED: history is now passed through -- retrieve() uses it to
         # anchor follow-up queries ("explain this offer") on the previous
         # turn's topic instead of retrieving on the follow-up's own,
         # mostly context-free wording. See _build_retrieval_query.
-        retrieved = self.retrieve(query, history=history)
+        # NEW: recent_offers is structured session memory (see memory.py) --
+        # the last few offers/FAQs actually shown to this user, most-recent-
+        # first. Preferred over history text for follow-up anchoring since
+        # it carries the offer's actual identity, not just what was asked.
+        retrieved = self.retrieve(query, history=history, recent_offers=recent_offers)
         price_range = extract_price_range(query)
         note = None
 
@@ -833,8 +995,8 @@ class RagEngine:
             header = "\n\n📋 " + ("Details: " if lang == "en" else "التفاصيل: ")
             yield header + " | ".join(missing_facts)
 
-    def answer(self, query: str, history: list = None) -> dict:
-        chunks = list(self.answer_stream(query, history))
+    def answer(self, query: str, history: list = None, recent_offers: list = None) -> dict:
+        chunks = list(self.answer_stream(query, history, recent_offers))
         full = "".join(chunks)
         # NEW: defense-in-depth. The system prompt now tells the model not to
         # copy the REQUIRED FACTS block's own header/label, but a model can

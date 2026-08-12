@@ -28,11 +28,28 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rag_engine import RagEngine, detect_lang
+from memory import MemoryStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("waffarha-app")
 
 app = FastAPI(title="Waffarha Assistant")
+
+# ---------------------------------------------------------------------------
+# Session memory: the last few offers/FAQs actually shown to each
+# session_id, most-recent-first (see memory.py for why this is structured
+# data rather than just relying on chat history text). One process-wide
+# store, one SessionMemory ring-buffer per session_id.
+#
+# The frontend needs to generate a session_id once per browser tab/user
+# (e.g. crypto.randomUUID(), persisted in localStorage) and send it with
+# every /api/chat request. Requests with no session_id all share the
+# "default" bucket below, which is fine for local single-user testing but
+# means two different real users would see each other's "remembered"
+# offers -- wire up a real per-user session_id before more than one person
+# uses this at once.
+# ---------------------------------------------------------------------------
+_memory = MemoryStore()
 
 # ---------------------------------------------------------------------------
 # CORS: only needed because the frontend can be hosted on a different origin
@@ -84,6 +101,7 @@ class ChatRequest(BaseModel):
     query: str
     lang: str = "en"  # informational only -- RagEngine detects reply language itself
     history: List[ChatTurn] = []
+    session_id: str = "default"  # see _memory comment above -- frontend should send a real per-user id
 
 
 class SourceCard(BaseModel):
@@ -174,14 +192,28 @@ def chat(req: ChatRequest):
         log.error("Ollama unreachable: %s", e)
         raise HTTPException(503, str(e))
 
+    session = _memory.get(req.session_id)
+
     try:
         history = [{"role": t.role, "content": t.content} for t in req.history]
-        result = engine.answer(query, history=history)
+        # NEW: recent_offers is what this session was actually shown before
+        # (see memory.py) -- RagEngine uses it to resolve follow-ups like
+        # "how much was it before the discount" back to the exact offer,
+        # deterministically, instead of hoping embedding similarity alone
+        # lands on the right one.
+        result = engine.answer(query, history=history, recent_offers=session.recent())
     except Exception:
         log.exception("chat() failed for query=%r", query)
         raise HTTPException(500, "The assistant hit an internal error. Please try again.")
 
     raw_sources = result.get("sources", [])
+
+    # NEW: remember only what was actually shown in THIS answer (the top few
+    # sources returned to the widget), not the full internal candidate pool
+    # -- so memory reflects what the user saw, not everything the retriever
+    # merely scored along the way.
+    session.remember(raw_sources[:3])
+
     sources = [_source_card(d) for d in raw_sources[:3]]
     suggestions = _build_suggestions(raw_sources, detect_lang(query))
     return {"answer": result["answer"], "sources": sources, "suggestions": suggestions}
