@@ -1,8 +1,43 @@
 services:
-  ollama:
-    image: ollama/ollama:latest
+  redis:
+    # Backs memory.py's session memory (which offers/FAQs a session was
+    # already shown -- see memory.py's docstring). Plain redis:alpine is
+    # plenty here: small values, short TTLs (1hr per session key), no need
+    # for persistence tuning -- if it restarts and loses data, sessions
+    # just start with empty memory again, which is a minor UX regression
+    # (a follow-up like "how much before the discount" falls back to
+    # embedding-similarity resolution instead of exact memory), not a
+    # correctness issue.
+    image: redis:7-alpine
     volumes:
-      - ollama_models:/root/.ollama   # persists pulled models across restarts
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  ollama:
+    build:
+      context: ./ollama
+      # The build context's Dockerfile is named ollama-Dockerfile, not the
+      # bare "Dockerfile" Compose looks for by default (there'd be no name
+      # collision either way since it's in its own subfolder, but the repo
+      # keeps it named this way to be unambiguous when you're looking at
+      # two Dockerfiles side by side in an editor's file tree).
+      dockerfile: ollama-Dockerfile
+      args:
+        OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b-instruct}
+    volumes:
+      # Named volume, not baked-in storage, for the *running* container's
+      # model dir. On first start Docker seeds an empty named volume from
+      # the image's /root/.ollama -- so the model baked in at build time
+      # (see ./ollama/Dockerfile) ends up here automatically, and any model
+      # pulled later at runtime (`docker compose exec ollama ollama pull ...`)
+      # persists across container restarts/recreates too.
+      - ollama_models:/root/.ollama
     environment:
       # How many generations Ollama itself will run at once. This is the
       # real concurrency ceiling for the whole system -- app.py's
@@ -12,7 +47,13 @@ services:
       # run at once (set too high). Raise both together, and only after
       # confirming the host has the CPU/RAM to back it -- each parallel
       # generation slot roughly multiplies memory use for the loaded model.
-      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-4}
+      # Default lowered to 2 here vs. the earlier 1.5B-model default of 4 --
+      # qwen2.5:3b-instruct is roughly 2x the params/RAM per slot, so the
+      # same host handles about half as many parallel generations before
+      # swapping/thrashing on CPU. Raise it if your server has the RAM
+      # (rule of thumb: benchmark actual RSS under load before trusting a
+      # guess here).
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
       # Keep only one model resident -- this project only ever asks Ollama
       # for OLLAMA_MODEL, so there's no benefit to Ollama's default of
       # caching multiple loaded models, just wasted RAM if it ever did.
@@ -35,22 +76,6 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # One-shot job: pulls OLLAMA_MODEL into the ollama_models volume, then
-  # exits. `app` waits on this completing successfully (service_completed_successfully)
-  # rather than just on `ollama` being up, so the very first `docker compose up`
-  # doesn't 503 on a model that hasn't finished downloading yet.
-  ollama-pull:
-    image: ollama/ollama:latest
-    depends_on:
-      ollama:
-        condition: service_healthy
-    volumes:
-      - ollama_models:/root/.ollama
-    entrypoint: ["ollama", "pull"]
-    command: ["${OLLAMA_MODEL:-qwen2.5:1.5b-instruct}"]
-    environment:
-      OLLAMA_HOST: http://ollama:11434
-
   app:
     build:
       context: .
@@ -60,8 +85,9 @@ services:
       - "8000:8000"
     environment:
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b-instruct}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b-instruct}
       WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:?set WAFFARHA_SECURITY_KEY in .env}
+      REDIS_URL: redis://redis:6379/0
       EMBEDDING_DEVICE: cpu
       # Must match ollama's OLLAMA_NUM_PARALLEL above -- see app.py's
       # _generation_semaphore comment for why these two are a pair, not
@@ -75,9 +101,10 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
-      ollama-pull:
-        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
   ollama_models:
+  redis_data:

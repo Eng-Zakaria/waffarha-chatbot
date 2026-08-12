@@ -15,45 +15,44 @@ that as structured data instead, so a follow-up like "how much was it
 before the discount" can resolve back to the exact offer deterministically,
 rather than hoping the model infers it from a wall of chat text.
 
-Deliberately NOT persisted anywhere -- pure in-memory, per-process. Fine
-for a single-worker local/dev deployment. If this ever needs to survive
-restarts or run behind multiple workers, swap the dict in MemoryStore for
-a Redis/sqlite-backed equivalent behind the same get() interface; nothing
-above this module needs to change.
+CHANGED: was a process-local dict (fine for a single-worker dev deploy, but
+explicitly NOT safe the moment you run more than one uvicorn worker/replica
+-- each worker would keep its own inconsistent memory of what a session was
+shown, so follow-ups would randomly work depending on which worker handled
+which request; see git history for the original in-process version). Now
+backed by Redis, so memory is shared across workers/replicas and survives
+app restarts/redeploys.
+
+Public interface is unchanged on purpose: MemoryStore().get(session_id)
+still returns an object with .remember(docs) / .recent(n) -- app.py doesn't
+need to change at all.
 """
-import threading
+import json
 import time
-from collections import deque
-from dataclasses import dataclass, field
 from typing import Optional
+
+import redis
+
+import config
 
 MAX_OFFERS_PER_SESSION = 4      # "remember the last 3 or 4 offers"
 SESSION_TTL_SECONDS = 60 * 60   # evict a session after an hour of inactivity
 
 
-@dataclass
-class RememberedOffer:
-    """A trimmed, stable snapshot of one offer/FAQ's metadata at the moment
-    it was shown to the user. Deliberately a copy, not a live reference into
-    RagEngine.docs -- stays correct even if the index gets reloaded/rebuilt
-    later in the process's life, and keeps this module decoupled from
-    RagEngine's internal doc representation."""
-    id: str                 # "offer:1234" / "faq:56" -- source:id, globally unique
-    source: str              # "offer" | "faq"
-    merchant: Optional[str]
-    title: Optional[str]
-    metadata: dict            # full metadata dict, as-is, for downstream use
-    shown_at: float = field(default_factory=time.time)
+def _key(session_id: str) -> str:
+    return f"waffarha:session:{session_id}:offers"
 
 
 class SessionMemory:
-    """Ring buffer of the last MAX_OFFERS_PER_SESSION offers/FAQs shown in
-    one conversation, most-recent-first. One instance per session_id."""
+    """Thin, stateless-in-Python wrapper bound to one session_id -- all
+    actual data lives in Redis under _key(session_id). Cheap to construct
+    per-request; there's nothing here to leak or need eviction for, unlike
+    the old per-session Python object (Redis's own key TTL, refreshed on
+    every write, replaces the old manual eviction loop)."""
 
-    def __init__(self):
-        self._offers: deque = deque(maxlen=MAX_OFFERS_PER_SESSION)
-        self.last_active = time.time()
-        self._lock = threading.Lock()
+    def __init__(self, client: "redis.Redis", session_id: str):
+        self._r = client
+        self._key = _key(session_id)
 
     def remember(self, docs: list):
         """docs: list of retrieved-doc dicts in RagEngine's shape, i.e. each
@@ -62,67 +61,76 @@ class SessionMemory:
         are kept; anything else is ignored. Callers should pass what was
         actually shown/used in the answer (e.g. raw_sources[:3]), not the
         full internal candidate pool, so memory reflects what the user
-        actually saw, not everything the retriever merely considered."""
-        with self._lock:
-            self.last_active = time.time()
-            # Iterate in reverse: each appendleft puts its item at the
-            # front, so processing docs back-to-front means docs[0] (the
-            # highest-relevance source of THIS turn) is appendleft'd last
-            # and ends up frontmost -- i.e. "most relevant this turn" beats
-            # "2nd most relevant this turn", and this turn's items end up
-            # ahead of any earlier turn's, giving an overall order of
-            # most-recent-turn-first, most-relevant-within-turn-first.
-            for doc in reversed(docs):
-                meta = doc.get("metadata", {}) or {}
-                source = meta.get("source")
-                if source not in ("offer", "faq"):
-                    continue
-                offer_id = f"{source}:{meta.get('id')}"
-                # De-dupe: if this exact item is already cached, drop the old
-                # copy so re-appending it moves it to the front (most-recent)
-                # instead of creating a duplicate entry.
-                if any(o.id == offer_id for o in self._offers):
-                    self._offers = deque(
-                        (o for o in self._offers if o.id != offer_id),
-                        maxlen=MAX_OFFERS_PER_SESSION,
-                    )
-                self._offers.appendleft(RememberedOffer(
-                    id=offer_id,
-                    source=source,
-                    merchant=meta.get("merchant"),
-                    title=meta.get("title") or meta.get("question"),
-                    metadata=meta,
-                ))
+        actually saw, not everything the retriever merely considered.
+
+        Stored as a Redis list of JSON strings, most-recent-first, capped
+        at MAX_OFFERS_PER_SESSION. De-dupe + reorder happens in Python
+        (read-modify-write) rather than server-side Redis list ops, since
+        "drop this id wherever it appears, then reinsert at the front" has
+        no single atomic Redis command -- the whole read+rewrite is wrapped
+        in a pipeline so the key is never left half-updated, but note this
+        means two concurrent remember() calls for the *same* session_id
+        (e.g. a user double-submitting) could race; acceptable here since
+        the worst case is one of the two updates winning outright, not
+        corrupted data, and a single browser tab doesn't send concurrent
+        chat requests for the same session in practice.
+        """
+        items = []
+        for doc in docs:
+            meta = doc.get("metadata", {}) or {}
+            source = meta.get("source")
+            if source not in ("offer", "faq"):
+                continue
+            items.append({
+                "id": f"{source}:{meta.get('id')}",
+                "metadata": meta,
+                "shown_at": time.time(),
+            })
+        if not items:
+            return
+
+        existing_raw = self._r.lrange(self._key, 0, -1)
+        existing = [json.loads(x) for x in existing_raw]
+        new_ids = {it["id"] for it in items}
+        # Drop any existing entries that duplicate an id in this turn, so
+        # re-showing an offer moves it to the front instead of creating a
+        # duplicate -- same de-dupe behavior as the original deque version.
+        existing = [e for e in existing if e["id"] not in new_ids]
+        # `items` is already highest-relevance-first for this turn (callers
+        # pass raw_sources[:3] in that order); prepending it ahead of
+        # `existing` gives the same "most-recent-turn-first,
+        # most-relevant-within-turn-first" ordering the original
+        # reversed()+appendleft trick produced.
+        merged = (items + existing)[:MAX_OFFERS_PER_SESSION]
+
+        pipe = self._r.pipeline()
+        pipe.delete(self._key)
+        pipe.rpush(self._key, *[json.dumps(m) for m in merged])
+        pipe.expire(self._key, SESSION_TTL_SECONDS)
+        pipe.execute()
 
     def recent(self, n: int = None) -> list:
         """Returns the last-shown offers/FAQs, most-recent-first, in the
         same {"metadata": {...}} shape RagEngine's retrieved docs use --
         so callers can pass this straight into RagEngine.answer(recent_offers=...)
         without any reshaping."""
-        with self._lock:
-            items = list(self._offers)
-        items = items[:n] if n else items
-        return [{"metadata": o.metadata} for o in items]
+        stop = (n - 1) if n else -1
+        raw = self._r.lrange(self._key, 0, stop)
+        return [{"metadata": json.loads(x)["metadata"]} for x in raw]
 
 
 class MemoryStore:
-    """Process-wide session_id -> SessionMemory map, with lazy eviction of
-    stale sessions so a long-running server doesn't leak memory across
-    thousands of abandoned chat tabs."""
+    """Process-wide handle to a single Redis connection pool. get() is
+    cheap (just wraps the shared client + a session_id), so there's no
+    session_id -> object map to maintain in Python anymore -- Redis is the
+    only place session state actually lives."""
 
-    def __init__(self):
-        self._sessions: dict = {}
-        self._lock = threading.Lock()
+    def __init__(self, redis_url: Optional[str] = None):
+        self._r = redis.from_url(redis_url or config.REDIS_URL, decode_responses=True)
+        # Fail fast if Redis isn't reachable, same spirit as RagEngine's
+        # Ollama check in rag_engine.py -- a clear error at startup beats a
+        # mysterious failure on the first chat request.
+        self._r.ping()
 
     def get(self, session_id: str) -> SessionMemory:
-        with self._lock:
-            self._evict_stale()
-            if session_id not in self._sessions:
-                self._sessions[session_id] = SessionMemory()
-            return self._sessions[session_id]
-
-    def _evict_stale(self):
-        cutoff = time.time() - SESSION_TTL_SECONDS
-        stale = [sid for sid, sess in self._sessions.items() if sess.last_active < cutoff]
-        for sid in stale:
-            del self._sessions[sid]
+        return SessionMemory(self._r, session_id)

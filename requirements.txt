@@ -8,6 +8,9 @@ faiss-cpu>=1.8          # swap for faiss-gpu if EMBEDDING_DEVICE=cuda and you ha
 ollama>=0.2.0
 python-dotenv>=1.0
 
+# --- Session memory (memory.py) ---
+redis>=5.0
+
 # --- Ingest scripts (ingest/build_index.py, ingest/fetch_offers.py) ---
 # Only needed if you plan to re-fetch offers or rebuild the index yourself --
 # not required just to run the chatbot against the prebuilt index.

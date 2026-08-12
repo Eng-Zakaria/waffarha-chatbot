@@ -24,6 +24,7 @@ import logging
 import threading
 from typing import List, Optional
 
+import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -41,18 +42,44 @@ app = FastAPI(title="Waffarha Assistant")
 # ---------------------------------------------------------------------------
 # Session memory: the last few offers/FAQs actually shown to each
 # session_id, most-recent-first (see memory.py for why this is structured
-# data rather than just relying on chat history text). One process-wide
-# store, one SessionMemory ring-buffer per session_id.
+# data rather than just relying on chat history text), now Redis-backed so
+# it's consistent across multiple uvicorn workers/replicas and survives
+# restarts.
 #
 # The frontend needs to generate a session_id once per browser tab/user
 # (e.g. crypto.randomUUID(), persisted in localStorage) and send it with
 # every /api/chat request. Requests with no session_id all share the
-# "default" bucket below, which is fine for local single-user testing but
-# means two different real users would see each other's "remembered"
-# offers -- wire up a real per-user session_id before more than one person
-# uses this at once.
+# "default" bucket, which is fine for local single-user testing but means
+# two different real users would see each other's "remembered" offers --
+# wire up a real per-user session_id before more than one person uses this
+# at once.
+#
+# Lazy-loaded the same way as RagEngine below: connecting to Redis at
+# import time would mean `docker compose up` fails hard the instant uvicorn
+# starts if Redis's healthcheck hasn't passed yet, rather than app.py
+# waiting/retrying. depends_on: condition: service_healthy in
+# docker-compose.yml already sequences this correctly, but staying lazy
+# also means /api/health keeps responding even if Redis is temporarily
+# down, instead of the whole process refusing to start.
 # ---------------------------------------------------------------------------
-_memory = MemoryStore()
+_memory: Optional[MemoryStore] = None
+_memory_lock = threading.Lock()
+
+
+def get_memory_store() -> MemoryStore:
+    global _memory
+    if _memory is not None:
+        return _memory
+    with _memory_lock:
+        if _memory is None:
+            log.info("Connecting to Redis (session memory)...")
+            _memory = MemoryStore()
+            log.info("Redis connected.")
+    return _memory
+
+
+async def get_memory_store_async() -> MemoryStore:
+    return await asyncio.to_thread(get_memory_store)
 
 # ---------------------------------------------------------------------------
 # CORS: only needed because the frontend can be hosted on a different origin
@@ -271,7 +298,17 @@ async def chat(req: ChatRequest):
         log.error("Ollama unreachable: %s", e)
         raise HTTPException(503, str(e))
 
-    session = _memory.get(req.session_id)
+    try:
+        memory_store = await get_memory_store_async()
+    except redis.exceptions.RedisError as e:
+        # Session memory is a nice-to-have (better follow-up resolution),
+        # not required to answer -- so a Redis outage degrades the chat
+        # (follow-ups like "how much before the discount" may not resolve
+        # as precisely) rather than failing the whole request outright.
+        log.warning("Redis unavailable, continuing without session memory: %s", e)
+        memory_store = None
+
+    session = memory_store.get(req.session_id) if memory_store else None
 
     # CONCURRENCY: wait for a generation slot (bounded, with a timeout) before
     # calling into Ollama -- see the _generation_semaphore comment above. If
@@ -299,7 +336,7 @@ async def chat(req: ChatRequest):
         # doesn't block the event loop while it runs, same reasoning as
         # get_engine_async() above.
         result = await asyncio.to_thread(
-            engine.answer, query, history, session.recent()
+            engine.answer, query, history, session.recent() if session else []
         )
     except Exception:
         log.exception("chat() failed for query=%r", query)
@@ -313,7 +350,8 @@ async def chat(req: ChatRequest):
     # sources returned to the widget), not the full internal candidate pool
     # -- so memory reflects what the user saw, not everything the retriever
     # merely scored along the way.
-    session.remember(raw_sources[:3])
+    if session:
+        session.remember(raw_sources[:3])
 
     sources = [_source_card(d) for d in raw_sources[:3]]
     suggestions = _build_suggestions(raw_sources, detect_lang(query))
@@ -331,6 +369,7 @@ def health():
     return {
         "status": "ok",
         "engine_loaded": _engine is not None,
+        "memory_connected": _memory is not None,
         "generation_in_flight": current,
         "generation_capacity": MAX_CONCURRENT_GENERATIONS,
     }

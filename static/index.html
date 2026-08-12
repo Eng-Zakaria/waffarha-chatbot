@@ -816,15 +816,17 @@ function streamBotMessage(fullText, sources, suggestions){
 /* ============================================================
    RAG hook — calls the real backend (app.py -> rag_engine.RagEngine)
    ============================================================ */
-// When index.html is served BY app.py (uvicorn), '' + '/api/chat' is
-// same-origin and just works. When it's served separately (e.g. from
-// eng-zakaria.github.io/waffarha-chatbot/), the backend lives on a
-// different origin -- point this at wherever your laptop's backend is
-// publicly reachable, e.g. a Cloudflare Tunnel / ngrok URL like
-// 'https://random-words-1234.trycloudflare.com'. That URL must also be
-// added to ALLOWED_ORIGINS in app.py (github.io is already there).
-// Leave it '' for local/same-origin use.
-const API_BASE = 'https://perjury-clerk-onset.ngrok-free.dev';
+// This build is served BY app.py (uvicorn/Docker) at the same origin as
+// the API, so '' + '/api/chat' resolves relative to whatever host/port
+// the container is actually reachable on -- localhost:8000 while testing,
+// then whatever domain/IP the real server uses later. Nothing here needs
+// to change when you move from your laptop to the real server.
+//
+// Only set this to an absolute URL if you go back to hosting the widget
+// on a *different* origin than the backend (e.g. a static host instead of
+// letting app.py serve it) -- and if you do, that origin also needs to be
+// added to ALLOWED_ORIGINS in app.py.
+const API_BASE = '';
 
 const CHAT_API_ERROR = {
   en: "I'm having trouble reaching the assistant backend right now. Please try again in a moment.",

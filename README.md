@@ -21,7 +21,17 @@ ollama serve                          # starts the Ollama server (skip if alread
 ollama pull qwen2.5:1.5b-instruct     # the model config.py defaults to
 ```
 
-## 3. Configure (optional)
+## 3. Set up Redis (session memory)
+
+```bash
+docker run -d --name waffarha-redis -p 6379:6379 redis:7-alpine
+# or: install Redis locally and run `redis-server`
+```
+
+Defaults to `redis://localhost:6379/0` (see `config.REDIS_URL`); override
+via `.env` if yours runs elsewhere.
+
+## 4. Configure (optional)
 
 ```bash
 cp .env.example .env
@@ -33,7 +43,7 @@ Defaults work out of the box on a CPU-only machine. Edit `.env` if you:
 - have an NVIDIA GPU and want embeddings on it (`EMBEDDING_DEVICE=cuda`,
   plus a matching `faiss-gpu` / CUDA-enabled `torch` install)
 
-## 4. Run the server
+## 5. Run the server
 
 ```bash
 uvicorn app:app --reload --port 8000
@@ -52,7 +62,11 @@ app.py                  FastAPI server -- POST /api/chat, serves static/
 config.py                All tunable thresholds, model names, paths
 rag_engine.py             Retrieval + generation (RagEngine) -- untouched logic
 vectorstores.py           FAISS/Chroma/Qdrant/LanceDB/pgvector backends
-static/
+memory.py                Session memory (which offers/FAQs were shown), Redis-backed
+static/                 The ONLY copy of the widget -- app.py serves this
+                          directory directly. There should be no index.html
+                          or favicon files at the project root; delete them
+                          if you still have leftover copies there.
   index.html               The chat widget (dark mode, history, users, favicon)
   favicon.svg / .ico / apple-touch-icon.png
 data/
@@ -97,5 +111,9 @@ That writes a new index to the same `data/index/<model>/faiss/` path, so
 - **"Index not found at ..."** -- the `data/index/...` folder got moved or
   `config.EMBEDDING_MODEL` was changed without rebuilding. Either restore
   the folder or run `ingest/build_index.py` with the new model.
+- **Redis connection errors on startup** -- Redis isn't running or
+  `REDIS_URL` doesn't match where it's listening. Start it (see step 3) or
+  fix `.env`. Chat still works without it (session memory just degrades --
+  see `app.py`'s handling in `/api/chat`), but you'll see a warning logged.
 - Slow first response is expected (model + index load once, then stay in
   memory for the life of the server process).

@@ -9,8 +9,20 @@ EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 
 OFFERS_API_URL = "https://api-test.waffarha.tech/api/sectionOffers"
 
+_security_key = os.getenv("WAFFARHA_SECURITY_KEY")
+if not _security_key:
+    # CHANGED: used to silently fall back to a real key hardcoded here --
+    # that value has since leaked into the repo/uploads and should be
+    # treated as compromised. Fail loudly instead of shipping a secret in
+    # source. Set WAFFARHA_SECURITY_KEY in your .env (docker-compose already
+    # enforces this at the compose level; this covers running app.py directly).
+    raise RuntimeError(
+        "WAFFARHA_SECURITY_KEY is not set. Copy env.example to .env and set it "
+        "(get a fresh key -- the old hardcoded one is compromised and must be rotated)."
+    )
+
 OFFERS_API_BASE_BODY = {
-    "security_key": os.getenv("WAFFARHA_SECURITY_KEY", "4be8e2a72ca744d2da36782adec01cd9"),
+    "security_key": _security_key,
     "app_version": "9.1.06",
     "platform": "website",
     "device_token": "6B0D864C-865B-410D-B1BE-E9A43507762F",
@@ -126,7 +138,7 @@ DOCS_PATH = os.path.join(INDEX_DIR, "docs.pkl")
 
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b-instruct")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 MAX_TOKENS = 500         
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "1536"))  
 
@@ -141,3 +153,10 @@ HISTORY_TURNS_KEPT = 3
 # 503 + Retry-After instead of hanging.
 MAX_CONCURRENT_GENERATIONS = int(os.getenv("MAX_CONCURRENT_GENERATIONS", "4"))
 GENERATION_QUEUE_TIMEOUT = float(os.getenv("GENERATION_QUEUE_TIMEOUT", "30"))
+
+# NEW: backs memory.py's session memory (which offers/FAQs were actually
+# shown to each session_id -- see memory.py for why this exists). Defaults
+# to a local Redis for non-Docker dev (`redis-server` or
+# `docker run -p 6379:6379 redis:alpine`); docker-compose.yml overrides
+# this to the `redis` service's in-network address.
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

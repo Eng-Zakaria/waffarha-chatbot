@@ -1,0 +1,37 @@
+# Bakes an Ollama model into the image itself, instead of pulling it at
+# container-start time. Why: on a production server you don't want first
+# startup (or every fresh deploy) depending on that server having reliable
+# outbound access to Ollama's registry -- and you don't want a ~2GB
+# download blocking your first real user. Baking it in means `docker pull`
+# + `docker run` is enough; the model ships as part of the versioned image.
+#
+# Trade-off: the image is now ~2GB+ heavier, and changing OLLAMA_MODEL
+# means rebuilding this image rather than just re-pulling at runtime. For
+# a server deploy that's the right trade; for fast local iteration on
+# different models, the old registry-pull-at-startup approach (see
+# docker-compose.yml git history / DOCKER.md) is more convenient.
+FROM ollama/ollama:latest
+
+ARG OLLAMA_MODEL=qwen2.5:3b-instruct
+ENV OLLAMA_MODEL=${OLLAMA_MODEL}
+
+# Ollama has no "just download, don't serve" mode -- `ollama pull` is a
+# client command that talks to a running `ollama serve` over its local
+# HTTP API. So: start the server in the background, poll until it's
+# actually accepting requests (a fixed `sleep N` is flaky -- cold start
+# time varies with host load), pull the model (this writes the weights to
+# /root/.ollama, which becomes part of this image layer since it happens
+# in a RUN step), then stop the server. At container run time, `ollama
+# serve` just serves what's already on disk -- no network needed.
+RUN ollama serve & \
+    SERVER_PID=$! && \
+    for i in $(seq 1 60); do \
+        ollama list >/dev/null 2>&1 && break; \
+        sleep 1; \
+    done && \
+    ollama pull "${OLLAMA_MODEL}" && \
+    kill "${SERVER_PID}" && \
+    wait "${SERVER_PID}" 2>/dev/null || true
+
+# No CMD/ENTRYPOINT override -- inherited from ollama/ollama, which already
+# runs `ollama serve` as its container entrypoint.
