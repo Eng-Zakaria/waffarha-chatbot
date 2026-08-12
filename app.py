@@ -19,7 +19,9 @@ in rag_engine.py exactly as built. This file only exposes it over HTTP and
 shapes RagEngine's output into the {answer, sources:[{title,snippet}]}
 shape the widget already expects.
 """
+import asyncio
 import logging
+import threading
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -27,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import config
 from rag_engine import RagEngine, detect_lang
 from memory import MemoryStore
 
@@ -79,17 +82,93 @@ app.add_middleware(
 # restarts the process on a file save. A single shared instance is then
 # reused for every request (it's read-only after __init__: retrieve() and
 # answer() don't mutate self.docs/self.store).
+#
+# CONCURRENCY: this function itself now runs off the event loop (see
+# get_engine_async below), meaning it can genuinely be entered by two
+# request-handling threads at the same instant on a cold server -- the old
+# `if _engine is None: _engine = RagEngine()` had no lock, so two concurrent
+# first requests would each build a full RagEngine (double model/index load,
+# wasted RAM, last-write-wins race on the global). This is the standard
+# double-checked-locking pattern: the unlocked check keeps the fast path
+# (engine already loaded, the overwhelming majority of requests) lock-free,
+# and only the slow "still None" path pays for the lock -- then re-checks
+# _engine is None once inside it, so only the first thread to arrive
+# actually builds the engine; every other thread that was waiting on the
+# lock sees it's already built and returns it instead of building a second.
 # ---------------------------------------------------------------------------
 _engine: Optional[RagEngine] = None
+_engine_lock = threading.Lock()
 
 
 def get_engine() -> RagEngine:
     global _engine
-    if _engine is None:
-        log.info("Loading RagEngine (embedding model + FAISS index + Ollama check)...")
-        _engine = RagEngine()
-        log.info("RagEngine ready.")
+    if _engine is not None:          # fast path, no lock, the common case
+        return _engine
+    with _engine_lock:
+        if _engine is None:          # re-check: someone else may have built it
+            log.info("Loading RagEngine (embedding model + FAISS index + Ollama check)...")
+            _engine = RagEngine()
+            log.info("RagEngine ready.")
     return _engine
+
+
+async def get_engine_async() -> RagEngine:
+    """get_engine() does blocking I/O (model/index load, a network call to
+    Ollama) -- run it off the event loop via to_thread so a slow cold start
+    doesn't stall every other request's event-loop-bound work (e.g. routing,
+    the /api/health check) while it's happening."""
+    return await asyncio.to_thread(get_engine)
+
+
+# ---------------------------------------------------------------------------
+# Generation concurrency cap.
+#
+# Why this exists: chat() below is async and offloads engine.answer() to a
+# thread via asyncio.to_thread, so many requests CAN be in flight in this
+# process at once as far as Python/FastAPI is concerned. But every one of
+# those threads ultimately calls the same local Ollama server, and Ollama's
+# own parallelism is capped by OLLAMA_NUM_PARALLEL (default 1) -- requests
+# beyond that just queue *inside Ollama*, invisibly, with no timeout. Left
+# uncapped, a burst of users produces a pile of requests all silently
+# waiting on Ollama, each eventually timing out or hanging the connection
+# with no useful error.
+#
+# Fix: bound how many generations this process will send to Ollama at once
+# (MAX_CONCURRENT_GENERATIONS -- set it to match OLLAMA_NUM_PARALLEL on the
+# Ollama side, see docker-compose.yml) and give requests that can't get a
+# slot within GENERATION_QUEUE_TIMEOUT seconds a fast, honest 503 with
+# Retry-After instead of leaving them to hang indefinitely. A user retrying
+# a 503 is a much better experience than a spinner that never resolves.
+# ---------------------------------------------------------------------------
+MAX_CONCURRENT_GENERATIONS = config.MAX_CONCURRENT_GENERATIONS
+GENERATION_QUEUE_TIMEOUT = config.GENERATION_QUEUE_TIMEOUT
+
+_generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
+_in_flight = 0                      # for /api/health visibility only
+_in_flight_lock = threading.Lock()
+
+
+class ServerBusyError(Exception):
+    """Raised when a request couldn't get a generation slot in time."""
+
+
+async def _acquire_generation_slot():
+    global _in_flight
+    try:
+        await asyncio.wait_for(
+            _generation_semaphore.acquire(), timeout=GENERATION_QUEUE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        raise ServerBusyError()
+    with _in_flight_lock:
+        _in_flight += 1
+
+
+def _release_generation_slot():
+    global _in_flight
+    with _in_flight_lock:
+        _in_flight -= 1
+    _generation_semaphore.release()
 
 
 class ChatTurn(BaseModel):
@@ -175,13 +254,13 @@ def _build_suggestions(raw_sources: list, reply_lang: str) -> List[str]:
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-def chat(req: ChatRequest):
+async def chat(req: ChatRequest):
     query = (req.query or "").strip()
     if not query:
         raise HTTPException(400, "query is required")
 
     try:
-        engine = get_engine()
+        engine = await get_engine_async()
     except FileNotFoundError as e:
         # Index not found at the expected path -- most likely cause during
         # setup, so surface the real message rather than a generic 500.
@@ -194,6 +273,19 @@ def chat(req: ChatRequest):
 
     session = _memory.get(req.session_id)
 
+    # CONCURRENCY: wait for a generation slot (bounded, with a timeout) before
+    # calling into Ollama -- see the _generation_semaphore comment above. If
+    # the server is genuinely saturated, fail fast with a 503 + Retry-After
+    # rather than let the request hang behind an invisible queue inside Ollama.
+    try:
+        await _acquire_generation_slot()
+    except ServerBusyError:
+        raise HTTPException(
+            503,
+            detail="The assistant is handling a lot of requests right now. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        )
+
     try:
         history = [{"role": t.role, "content": t.content} for t in req.history]
         # NEW: recent_offers is what this session was actually shown before
@@ -201,10 +293,19 @@ def chat(req: ChatRequest):
         # "how much was it before the discount" back to the exact offer,
         # deterministically, instead of hoping embedding similarity alone
         # lands on the right one.
-        result = engine.answer(query, history=history, recent_offers=session.recent())
+        #
+        # CONCURRENCY: engine.answer() is a blocking call (embeds the query,
+        # searches FAISS, streams from Ollama) -- run it in a thread so it
+        # doesn't block the event loop while it runs, same reasoning as
+        # get_engine_async() above.
+        result = await asyncio.to_thread(
+            engine.answer, query, history, session.recent()
+        )
     except Exception:
         log.exception("chat() failed for query=%r", query)
         raise HTTPException(500, "The assistant hit an internal error. Please try again.")
+    finally:
+        _release_generation_slot()
 
     raw_sources = result.get("sources", [])
 
@@ -222,8 +323,17 @@ def chat(req: ChatRequest):
 @app.get("/api/health")
 def health():
     """Cheap liveness check that does NOT load the engine, so it stays fast
-    even before the model/index/Ollama are ready -- point uptime checks here."""
-    return {"status": "ok"}
+    even before the model/index/Ollama are ready -- point uptime checks here.
+    in_flight/capacity let you see queueing pressure (e.g. in a dashboard or
+    `watch curl`) without needing to grep logs for 503s."""
+    with _in_flight_lock:
+        current = _in_flight
+    return {
+        "status": "ok",
+        "engine_loaded": _engine is not None,
+        "generation_in_flight": current,
+        "generation_capacity": MAX_CONCURRENT_GENERATIONS,
+    }
 
 
 # Serves static/index.html at "/" and static/favicon.* alongside it.

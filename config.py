@@ -10,7 +10,7 @@ EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 OFFERS_API_URL = "https://api-test.waffarha.tech/api/sectionOffers"
 
 OFFERS_API_BASE_BODY = {
-    "security_key": os.getenv("WAFFARHA_SECURITY_KEY", ""),
+    "security_key": os.getenv("WAFFARHA_SECURITY_KEY", "4be8e2a72ca744d2da36782adec01cd9"),
     "app_version": "9.1.06",
     "platform": "website",
     "device_token": "6B0D864C-865B-410D-B1BE-E9A43507762F",
@@ -131,3 +131,13 @@ MAX_TOKENS = 500
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "1536"))  
 
 HISTORY_TURNS_KEPT = 3
+
+# NEW: caps how many /api/chat requests this process will have actively
+# generating with Ollama at once (see app.py's _generation_semaphore for
+# why). Should match (or sit at/under) Ollama's own OLLAMA_NUM_PARALLEL --
+# set higher than Ollama's real parallelism and requests just queue
+# invisibly inside Ollama instead of here, defeating the point. A request
+# that can't get a slot within GENERATION_QUEUE_TIMEOUT seconds gets a fast
+# 503 + Retry-After instead of hanging.
+MAX_CONCURRENT_GENERATIONS = int(os.getenv("MAX_CONCURRENT_GENERATIONS", "4"))
+GENERATION_QUEUE_TIMEOUT = float(os.getenv("GENERATION_QUEUE_TIMEOUT", "30"))

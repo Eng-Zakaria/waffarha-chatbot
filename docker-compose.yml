@@ -1,0 +1,83 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama   # persists pulled models across restarts
+    environment:
+      # How many generations Ollama itself will run at once. This is the
+      # real concurrency ceiling for the whole system -- app.py's
+      # MAX_CONCURRENT_GENERATIONS (below) should match it, or you'll either
+      # bottleneck at the app's semaphore for no reason (set too low) or let
+      # requests pile up invisibly inside Ollama past what it can actually
+      # run at once (set too high). Raise both together, and only after
+      # confirming the host has the CPU/RAM to back it -- each parallel
+      # generation slot roughly multiplies memory use for the loaded model.
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-4}
+      # Keep only one model resident -- this project only ever asks Ollama
+      # for OLLAMA_MODEL, so there's no benefit to Ollama's default of
+      # caching multiple loaded models, just wasted RAM if it ever did.
+      OLLAMA_MAX_LOADED_MODELS: 1
+    # Uncomment to give Ollama your GPU (requires nvidia-container-toolkit
+    # on the host). Without this, Ollama runs on CPU inside the container,
+    # same as the app's EMBEDDING_DEVICE=cpu default.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  # One-shot job: pulls OLLAMA_MODEL into the ollama_models volume, then
+  # exits. `app` waits on this completing successfully (service_completed_successfully)
+  # rather than just on `ollama` being up, so the very first `docker compose up`
+  # doesn't 503 on a model that hasn't finished downloading yet.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    volumes:
+      - ollama_models:/root/.ollama
+    entrypoint: ["ollama", "pull"]
+    command: ["${OLLAMA_MODEL:-qwen2.5:1.5b-instruct}"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+
+  app:
+    build:
+      context: .
+      args:
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-base}
+    ports:
+      - "8000:8000"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:1.5b-instruct}
+      WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:?set WAFFARHA_SECURITY_KEY in .env}
+      EMBEDDING_DEVICE: cpu
+      # Must match ollama's OLLAMA_NUM_PARALLEL above -- see app.py's
+      # _generation_semaphore comment for why these two are a pair, not
+      # independent settings.
+      MAX_CONCURRENT_GENERATIONS: ${OLLAMA_NUM_PARALLEL:-4}
+      GENERATION_QUEUE_TIMEOUT: ${GENERATION_QUEUE_TIMEOUT:-30}
+    volumes:
+      # Prebuilt index -- mounted read-only so container restarts/rebuilds
+      # never depend on baking a multi-hundred-MB index into the image.
+      - ./data:/app/data:ro
+    depends_on:
+      ollama:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  ollama_models:
