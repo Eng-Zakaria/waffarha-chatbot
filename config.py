@@ -85,6 +85,18 @@ CANDIDATE_K_MULTI = 30
 
 MIN_RELEVANCE_SCORE = 0.35  
 
+# NEW: replaces the old hard offer/faq exclusion in retrieve() (see the
+# CHANGED comment there). _classify_intent's word lists are short and
+# ambiguous -- "coupon"/"discount"/"offer" show up in ordinary FAQ
+# phrasing too -- so guessing wrong and hard-filtering used to silently
+# drop the correct answer's entire source type. This penalty is
+# subtracted from combined_score for a doc whose source doesn't match
+# the guessed intent, instead of excluding it outright: small enough
+# that a strongly-grounded match of the "wrong" guessed intent still
+# surfaces and can still win, big enough that it doesn't casually beat
+# an equally-good same-intent match.
+INTENT_MISMATCH_PENALTY = 0.12
+
 
 
 FAQ_DIRECT_ANSWER_SCORE = 0.75
@@ -153,6 +165,23 @@ HISTORY_TURNS_KEPT = 3
 # 503 + Retry-After instead of hanging.
 MAX_CONCURRENT_GENERATIONS = int(os.getenv("MAX_CONCURRENT_GENERATIONS", "4"))
 GENERATION_QUEUE_TIMEOUT = float(os.getenv("GENERATION_QUEUE_TIMEOUT", "30"))
+
+# NEW: bounds the generation itself, not just the wait for a queue slot.
+# The eval run showed a request that already HAD a slot hang for the
+# client's full 120s with no response at all, because nothing wrapped the
+# actual answer() call -- only the wait to acquire a slot had a timeout.
+# See app.py's chat() and RagEngine's ollama.Client init. Set comfortably
+# above the slowest legitimate query you've observed (16.69s in the eval
+# run) but well under what a user will wait for without giving up anyway.
+GENERATION_TIMEOUT = float(os.getenv("GENERATION_TIMEOUT", "45"))
+# NEW: passed straight to ollama.Client so the actual HTTP call to Ollama
+# has its own ceiling -- app.py's asyncio.wait_for(GENERATION_TIMEOUT) can
+# stop waiting on a stuck thread, but can't kill it; this is what makes the
+# underlying request actually fail instead of running forever in the
+# background after the client's already been told it timed out. Kept
+# slightly above GENERATION_TIMEOUT so app.py's timeout is what the user
+# sees first in the normal case.
+OLLAMA_REQUEST_TIMEOUT = float(os.getenv("OLLAMA_REQUEST_TIMEOUT", "60"))
 
 # NEW: backs memory.py's session memory (which offers/FAQs were actually
 # shown to each session_id -- see memory.py for why this exists). Defaults

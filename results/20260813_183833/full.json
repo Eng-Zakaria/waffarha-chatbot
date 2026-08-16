@@ -1,0 +1,45 @@
+{
+  "run_at": "20260813_183833",
+  "env": {
+    "embedding_model": "intfloat/multilingual-e5-base",
+    "backend": "faiss",
+    "llm_model": "qwen2.5:3b-instruct",
+    "base_url": null
+  },
+  "infra": {
+    "checks": [
+      {
+        "name": "index files present",
+        "ok": true,
+        "detail": "C:\\Users\\devza\\Work\\Waffarha\\waffarha-eval\\data\\index\\intfloat__multilingual-e5-base\\faiss\\docs.pkl"
+      },
+      {
+        "name": "engine load (embedding model + index + Ollama reachable)",
+        "ok": false,
+        "detail": "Ollama unreachable: Can't reach Ollama at http://localhost:11434. Is it installed and running? Download it from https://ollama.com, then run: ollama pull qwen2.5:3b-instruct\nOriginal error: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download"
+      },
+      {
+        "name": "redis reachable",
+        "ok": false,
+        "detail": "ConnectionError: Error 10061 connecting to localhost:6379. No connection could be made because the target machine actively refused it. (REDIS_URL=redis://localhost:6379/0)"
+      }
+    ],
+    "all_ok": false
+  },
+  "rag": {
+    "skipped": true,
+    "reason": "engine failed to load, see infra checks above",
+    "records": []
+  },
+  "smoke": null,
+  "concurrency": null,
+  "memory": null,
+  "suites_status": {
+    "1. Infrastructure": "❌ FAIL",
+    "2. RAG correctness": "⏭️ skipped",
+    "3a. Server smoke": "⏭️ skipped (--skip-http)",
+    "3b. Concurrency": "⏭️ skipped (--skip-http)",
+    "4. Session memory": "⏭️ skipped (--skip-http)"
+  },
+  "overall_ok": false
+}

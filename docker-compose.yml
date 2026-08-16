@@ -9,6 +9,21 @@ services:
     # embedding-similarity resolution instead of exact memory), not a
     # correctness issue.
     image: redis:7-alpine
+    # NEW: without this, redis is only reachable at hostname `redis` from
+    # INSIDE the compose network (that's all app.py ever needed, via
+    # REDIS_URL=redis://redis:6379/0 below) -- there was no host port
+    # mapping at all, so `localhost:6379` from the machine running docker
+    # compose could never reach it, regardless of whether the container
+    # was up. That's the actual cause of report.md's "redis reachable:
+    # FAIL ... Error 10061 ... localhost:6379": run_full_eval.py was run
+    # directly on the host (see the Windows paths in report.md), not
+    # inside the compose network, so it was never going to be able to see
+    # this container's Redis no matter how healthy the container was.
+    # Binding to 127.0.0.1 only (not 0.0.0.0) keeps it off the LAN --
+    # fine for local dev/eval, but reconsider before doing this in any
+    # shared/production environment.
+    ports:
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:

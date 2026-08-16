@@ -1,0 +1,300 @@
+{
+  "run_at": "20260813_184035",
+  "env": {
+    "embedding_model": "intfloat/multilingual-e5-base",
+    "backend": "faiss",
+    "llm_model": "qwen2.5:3b-instruct",
+    "base_url": "http://localhost:8000"
+  },
+  "infra": {
+    "checks": [
+      {
+        "name": "index files present",
+        "ok": true,
+        "detail": "C:\\Users\\devza\\Work\\Waffarha\\waffarha-eval\\data\\index\\intfloat__multilingual-e5-base\\faiss\\docs.pkl"
+      },
+      {
+        "name": "engine load (embedding model + index + Ollama reachable)",
+        "ok": false,
+        "detail": "Ollama unreachable: Can't reach Ollama at http://localhost:11434. Is it installed and running? Download it from https://ollama.com, then run: ollama pull qwen2.5:3b-instruct\nOriginal error: Failed to connect to Ollama. Please check that Ollama is downloaded, running and accessible. https://ollama.com/download"
+      },
+      {
+        "name": "redis reachable",
+        "ok": false,
+        "detail": "ConnectionError: Error 10061 connecting to localhost:6379. No connection could be made because the target machine actively refused it. (REDIS_URL=redis://localhost:6379/0)"
+      }
+    ],
+    "all_ok": false
+  },
+  "rag": {
+    "skipped": true,
+    "reason": "engine failed to load, see infra checks above",
+    "records": []
+  },
+  "smoke": {
+    "results": [
+      {
+        "name": "GET /api/health",
+        "ok": false,
+        "detail": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/health (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948946E0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))",
+        "latency_s": 4.078
+      },
+      {
+        "name": "POST /api/chat rejects empty query (400)",
+        "ok": false,
+        "detail": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6947B3110>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))",
+        "latency_s": 4.054
+      },
+      {
+        "name": "POST /api/chat basic end-to-end answer",
+        "ok": false,
+        "detail": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6947B3610>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))",
+        "latency_s": 4.055
+      }
+    ],
+    "all_ok": false
+  },
+  "concurrency": {
+    "n_requests": 24,
+    "concurrency": 8,
+    "wall_s": 12.296,
+    "throughput_rps": 1.952,
+    "n_ok": 0,
+    "n_503_backpressure": 0,
+    "n_other_error": 24,
+    "latency_stats_successful": {
+      "count": 0
+    },
+    "outcomes": [
+      {
+        "i": 0,
+        "query": "How much is the KFC offer?",
+        "status": null,
+        "latency_s": 4.077,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6947E3100>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 1,
+        "query": "What's the discount on McDonald's right now?",
+        "status": null,
+        "latency_s": 4.107,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6947E3360>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 2,
+        "query": "Tell me about the Asian Wok offer.",
+        "status": null,
+        "latency_s": 4.103,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948A8050>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 3,
+        "query": "What's the discount on the Hilton Cairo Zamalek Residences night stay offer?",
+        "status": null,
+        "latency_s": 4.084,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694874E20>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 4,
+        "query": "How do I register / create an account?",
+        "status": null,
+        "latency_s": 4.096,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948746B0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 5,
+        "query": "How do I purchase from the Waffarha app?",
+        "status": null,
+        "latency_s": 4.108,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948747C0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 6,
+        "query": "What payment methods are available on the app?",
+        "status": null,
+        "latency_s": 4.105,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948745A0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 7,
+        "query": "How do I use my purchased coupon?",
+        "status": null,
+        "latency_s": 4.103,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694874270>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 8,
+        "query": "Can I pay my electricity bill through the app?",
+        "status": null,
+        "latency_s": 4.129,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694874490>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 9,
+        "query": "What payment methods can I use to pay bills?",
+        "status": null,
+        "latency_s": 4.112,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694875040>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 10,
+        "query": "How do I check if my bill payment went through?",
+        "status": null,
+        "latency_s": 4.1,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694875480>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 11,
+        "query": "How do I get a refund for a coupon I bought?",
+        "status": null,
+        "latency_s": 4.095,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948756A0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 12,
+        "query": "How do I remove a saved bank card from my account?",
+        "status": null,
+        "latency_s": 4.098,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694875590>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 13,
+        "query": "How do I buy a gift voucher for a friend?",
+        "status": null,
+        "latency_s": 4.111,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694875BF0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 14,
+        "query": "How does the cashback policy work?",
+        "status": null,
+        "latency_s": 4.083,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694875D00>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 15,
+        "query": "What is Waffarha and how does it offer such big discounts?",
+        "status": null,
+        "latency_s": 4.082,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694875AE0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 16,
+        "query": "What information does Waffarha collect about me?",
+        "status": null,
+        "latency_s": 4.071,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694876580>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 17,
+        "query": "كيفية انشاء حساب على وفرها؟",
+        "status": null,
+        "latency_s": 4.069,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694876690>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 18,
+        "query": "ايه المعلومات اللي بتجمعوها عني؟",
+        "status": null,
+        "latency_s": 4.083,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948767A0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 19,
+        "query": "ازاي استرجع فلوس كوبون اشتريته؟",
+        "status": null,
+        "latency_s": 4.083,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948768B0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 20,
+        "query": "How do I reset my password?",
+        "status": null,
+        "latency_s": 4.067,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F6948769C0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 21,
+        "query": "ازاي احذف حسابي؟",
+        "status": null,
+        "latency_s": 4.067,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694876BE0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 22,
+        "query": "What's the Hilton Cairo Zamalek Residences deal for the day-use option specifically?",
+        "status": null,
+        "latency_s": 4.067,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694876AD0>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      },
+      {
+        "i": 23,
+        "query": "How much is the night stay offer at Hilton Cairo Zamalek Residences?",
+        "status": null,
+        "latency_s": 4.055,
+        "retry_after": null,
+        "ok": false,
+        "error": "ConnectionError: HTTPConnectionPool(host='localhost', port=8000): Max retries exceeded with url: /api/chat (Caused by NewConnectionError('<urllib3.connection.HTTPConnection object at 0x000001F694876E00>: Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it'))"
+      }
+    ],
+    "all_ok": false
+  },
+  "memory": {
+    "skipped": true,
+    "reason": "engine did not load (needed to pick a target offer)"
+  },
+  "suites_status": {
+    "1. Infrastructure": "❌ FAIL",
+    "2. RAG correctness": "⏭️ skipped",
+    "3a. Server smoke": "❌ FAIL",
+    "3b. Concurrency": "❌ FAIL",
+    "4. Session memory": "⏭️ skipped (engine did not load (needed to pick a target offer))"
+  },
+  "overall_ok": false
+}

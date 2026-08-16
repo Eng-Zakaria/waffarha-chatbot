@@ -21,7 +21,9 @@ shape the widget already expects.
 """
 import asyncio
 import logging
+import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
 import redis
@@ -173,6 +175,53 @@ GENERATION_QUEUE_TIMEOUT = config.GENERATION_QUEUE_TIMEOUT
 _generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
 _in_flight = 0                      # for /api/health visibility only
 _in_flight_lock = threading.Lock()
+
+# NEW: caps how many OS threads asyncio.to_thread() can hand out at once.
+# Without this, Python's default executor sizes itself off CPU count and
+# is shared by every asyncio.to_thread() call in the process. That matters
+# because asyncio.wait_for(asyncio.to_thread(...), timeout=...) can only
+# make the *awaiting coroutine* give up -- it cannot cancel a
+# concurrent.futures thread that's already running. A generation that
+# blows past GENERATION_TIMEOUT keeps its real OS thread (and whatever
+# Ollama slot it's holding) occupied until OLLAMA_REQUEST_TIMEOUT finally
+# kills the underlying HTTP call, well after the app has told the client
+# it gave up. Under load those "zombie" threads pile up behind the live
+# ones, which is what produced the 120s hangs with no response at all in
+# the concurrency test (see report.md suite 3b) -- the pileup wasn't
+# purely inside Ollama, it was also queuing inside this process, invisibly,
+# the same way the semaphore was built to prevent for Ollama itself.
+# Sizing the executor to MAX_CONCURRENT_GENERATIONS (+2 headroom for
+# get_engine_async/get_memory_store_async's own to_thread calls) makes
+# that queuing bounded and visible instead of unbounded and silent -- it
+# does NOT make a stuck generation cancellable, so MAX_CONCURRENT_GENERATIONS
+# still needs to genuinely match the Ollama instance's real parallelism
+# (see the warning below) or requests will still queue, just predictably.
+asyncio.get_event_loop().set_default_executor(
+    ThreadPoolExecutor(max_workers=MAX_CONCURRENT_GENERATIONS + 2)
+)
+
+# NEW: MAX_CONCURRENT_GENERATIONS only protects Ollama if Ollama's own
+# OLLAMA_NUM_PARALLEL is set to (at least) the same value -- see
+# docker-compose.yml's comment on that pairing. That's automatic when
+# running via docker-compose (app's env is derived from it), but nothing
+# enforces it when Ollama is started separately (e.g. a bare local
+# `ollama serve` for dev/eval work, which defaults to its own internal
+# parallelism regardless of this app's setting). A mismatch there is
+# silent from this process's point of view -- Ollama just queues the
+# excess internally -- and is a likely contributor to the slow/timed-out
+# requests in report.md's suite 3b. This can't be verified via Ollama's
+# HTTP API, so just make sure it isn't missed.
+if not os.getenv("OLLAMA_NUM_PARALLEL"):
+    log.warning(
+        "OLLAMA_NUM_PARALLEL is not set in this process's environment. "
+        "MAX_CONCURRENT_GENERATIONS=%s only bounds load correctly if the "
+        "Ollama server you're pointing at (OLLAMA_HOST=%s) is actually "
+        "configured to run that many generations in parallel -- set "
+        "OLLAMA_NUM_PARALLEL=%s before starting `ollama serve` (or check "
+        "it in docker-compose.yml if Ollama runs there) or requests will "
+        "queue inside Ollama with no visibility from this app.",
+        MAX_CONCURRENT_GENERATIONS, config.OLLAMA_HOST, MAX_CONCURRENT_GENERATIONS,
+    )
 
 
 class ServerBusyError(Exception):
@@ -335,9 +384,33 @@ async def chat(req: ChatRequest):
         # searches FAISS, streams from Ollama) -- run it in a thread so it
         # doesn't block the event loop while it runs, same reasoning as
         # get_engine_async() above.
-        result = await asyncio.to_thread(
-            engine.answer, query, history, session.recent() if session else []
-        )
+        #
+        # NEW: _acquire_generation_slot only bounds the WAIT for a slot --
+        # once a request has one, nothing previously bounded the generation
+        # itself. A slow query (the eval run showed one hitting 16.69s even
+        # with zero contention) that grabs a slot in the first wave then just
+        # hangs past that: no 503, no response, client eventually times out
+        # on its own, and the slot stays held the entire time, starving
+        # every other queued request behind it. That's the 3 requests in the
+        # concurrency test that hung the full 120s instead of getting a
+        # clean 503 like the ones still waiting for a slot did. Bound the
+        # generation call itself so a stuck/slow request fails fast and
+        # frees its slot instead of quietly blocking the whole queue.
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    engine.answer, query, history, session.recent() if session else []
+                ),
+                timeout=config.GENERATION_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            log.warning("Generation exceeded %ss for query=%r", config.GENERATION_TIMEOUT, query)
+            raise HTTPException(
+                504,
+                detail="That took too long to answer. Please try again or rephrase your question.",
+            )
+    except HTTPException:
+        raise
     except Exception:
         log.exception("chat() failed for query=%r", query)
         raise HTTPException(500, "The assistant hit an internal error. Please try again.")

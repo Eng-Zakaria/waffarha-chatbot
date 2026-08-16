@@ -135,6 +135,28 @@ def _is_lexical_stopword(word: str) -> bool:
     return word.strip("؟?!.,،").lower() in _LEXICAL_STOPWORDS
 
 
+# NEW: a stricter filter used ONLY by the out-of-scope/injection safety net
+# in answer_stream (see there), not by retrieve()'s scoring. _LEXICAL_STOPWORDS
+# excludes generic function words but still lets "offer"/"discount"/"Egypt"
+# count as a grounding signal -- and those are exactly the words that made
+# the naive version of this check useless: "offer" is boilerplate-common
+# across nearly every offer doc in this corpus (any offer-intent query
+# trivially "overlaps" some offer), and "Egypt" appears in most merchant
+# names/locations regardless of which merchant is meant. Neither indicates
+# the retrieved doc is actually about what was asked -- excluding the
+# intent-classifier word sets plus these corpus-ubiquitous terms is what
+# makes "not one real word overlaps" a meaningful signal instead of one
+# that only fires on total gibberish.
+_GROUNDING_STOPWORDS = (
+    _LEXICAL_STOPWORDS | _OFFER_INTENT_WORDS | _FAQ_INTENT_WORDS
+    | {"egypt", "مصر", "off", "offer", "offers"}
+)
+
+
+def _is_grounding_stopword(word: str) -> bool:
+    return word.strip("؟?!.,،").lower() in _GROUNDING_STOPWORDS
+
+
 def _classify_intent(query: str) -> str:
     q = query.lower()
     is_offer = any(w in q for w in _OFFER_INTENT_WORDS)
@@ -238,23 +260,58 @@ def _fact_check_offer(doc: dict, answer_text: str):
     if not _has_value(price) and not _has_value(discount):
         return None
 
-    # CHANGED: _normalize_num strips everything but digits, so a real
-    # discount=0 normalizes to "" (bool(price_norm) below is False) and
-    # correctly gets skipped rather than false-flagged as "missing" --
-    # _has_value() above is still needed first so we don't bail out of the
-    # whole fact-check just because this particular offer's discount is 0.
-    price_norm = _normalize_num(price)
-    discount_norm = _normalize_num(discount)
-    answer_norm = _normalize_num(answer_text)
+    # CHANGED: the old version reduced both the fact and the whole answer
+    # to concatenated-digits strings and checked substring containment
+    # (`price_norm in answer_norm`). Two bugs: (1) despite the comment
+    # claiming otherwise, _normalize_num(0) is "0", not "" -- str(0) has
+    # a digit in it -- so the "skip a real zero" case this was meant to
+    # handle never actually skipped; and (2) single-or-few-digit facts
+    # like a "0" or "5" trivially appear as a substring inside almost any
+    # longer number in the answer (e.g. "0" is "in" "7240"), so the check
+    # could report a fact as present when it wasn't actually stated. This
+    # is exactly how "no discount mentioned" (never says 0%, or 0)
+    # slipped past the fact-checker for offer_direct_answer_zero_discount.
+    #
+    # Now: pull out the answer's actual number TOKENS (not a mashed-
+    # together digit string) and require an exact token match. A fact is
+    # only "present" if that literal number appears as its own number in
+    # the answer, not merely as a substring of some unrelated bigger one.
+    answer_tokens = set(re.findall(r"\d+", answer_text))
 
-    price_missing = bool(price_norm) and price_norm not in answer_norm
-    discount_missing = bool(discount_norm) and discount_norm not in answer_norm
+    def _token_present(value) -> bool:
+        norm = _normalize_num(value)
+        return bool(norm) and norm in answer_tokens
+
+    price_missing = _has_value(price) and not _token_present(price)
+    discount_missing = _has_value(discount) and not _token_present(discount)
 
     if not price_missing and not discount_missing:
         return None
 
     lang = "ar" if any("\u0600" <= ch <= "\u06FF" for ch in answer_text) else "en"
     return _format_offer_facts(meta, lang)
+
+
+_CHEAPEST_WORDS = {
+    "cheapest", "lowest price", "least expensive", "أرخص", "ارخص", "اقل سعر", "أقل سعر",
+}
+_PRICIEST_WORDS = {
+    "most expensive", "highest price", "priciest", "أغلى", "اغلى", "اعلى سعر", "أعلى سعر",
+}
+
+
+def _looks_like_superlative_price(query: str) -> str:
+    """Returns 'cheapest', 'priciest', or None. These need an actual min/max
+    scan over real offer prices -- embedding similarity to the phrase
+    "cheapest offer" finds offers that TALK about being a good deal, not the
+    numerically lowest-priced one, which is what the user actually asked
+    for. See RagEngine._superlative_offer."""
+    q = (query or "").lower()
+    if any(w in q for w in _CHEAPEST_WORDS):
+        return "cheapest"
+    if any(w in q for w in _PRICIEST_WORDS):
+        return "priciest"
+    return None
 
 
 _RANGE_RE = re.compile(
@@ -295,17 +352,40 @@ def _looks_like_comparison(query: str) -> bool:
     return any(w in q for w in _COMPARISON_WORDS)
 
 
+_BRANCH_SUFFIXES = (" branches", " فروع")
+
+
+def _strip_branch_suffix(name: str) -> str:
+    n = name.strip()
+    for suf in _BRANCH_SUFFIXES:
+        if n.lower().endswith(suf.strip().lower()) or n.endswith(suf):
+            return n[: -len(suf)].strip()
+    return n
+
+
 def _mentioned_merchants(query: str, merchants: list) -> list:
     """Returns the known merchant names (from the index) that appear
     literally in the query. `merchants` should be sorted longest-first so a
     longer name matches before a shorter one that happens to be a substring
-    of it (e.g. "Pizza Hut Express" before "Pizza Hut")."""
+    of it (e.g. "Pizza Hut Express" before "Pizza Hut").
+
+    CHANGED: also matches when the query names the merchant WITHOUT a
+    " branches"/" فروع" suffix that's baked into the stored name (e.g.
+    stored merchant is "KFC branches" but the user just said "KFC") --
+    that's exactly how "عايز اعرف الـ discount بتاع KFC كام؟" lost its own
+    merchant's offer: the substring check required the literal word
+    "branches" to appear in a query that never said it.
+    """
     q = (query or "").lower()
     found = []
     for m in merchants:
         if len(m) < 3:
             continue
         if m.lower() in q:
+            found.append(m)
+            continue
+        stripped = _strip_branch_suffix(m)
+        if stripped != m and len(stripped) >= 3 and stripped.lower() in q:
             found.append(m)
     return found
 
@@ -462,7 +542,35 @@ class RagEngine:
             reverse=True,
         )
 
-        self.client = ollama.Client(host=config.OLLAMA_HOST)
+        # NEW: merchant name -> list of that merchant's offer docs, sorted
+        # best-language-first isn't meaningful here (no query yet) so just
+        # insertion order; used by retrieve()'s "pull in the mentioned
+        # merchant's own offer" step as a full-corpus fallback. Before this,
+        # that step only searched inside the ANN top-candidate_k pool
+        # (`deduped`) -- if the named merchant's offer wasn't one of the
+        # nearest neighbors to begin with (easily happens with short/mixed-
+        # language/code-switched queries, e.g. "KFC" embedded inside an
+        # Arabic sentence), the "must not get dropped" guarantee silently
+        # did nothing. This index makes the guarantee actually hold: a
+        # literally-named merchant is *always* findable, regardless of how
+        # its embedding score happened to land in this particular query.
+        self._docs_by_merchant = {}
+        for d in self.docs:
+            if d["metadata"].get("source") != "offer":
+                continue
+            m = d["metadata"].get("merchant")
+            if m:
+                self._docs_by_merchant.setdefault(m, []).append(d)
+
+        # NEW: without a timeout here, app.py's asyncio.wait_for around the
+        # answer() call can stop WAITING on a stuck generation and free up
+        # the concurrency slot, but the underlying thread + HTTP call to
+        # Ollama keeps running to completion regardless -- wait_for cancels
+        # the coroutine, not the blocking thread inside it. Giving the
+        # client its own ceiling means a stuck request actually errors out
+        # (surfaces as an exception in answer_stream, caught by app.py's
+        # generic except) instead of running forever in the background.
+        self.client = ollama.Client(host=config.OLLAMA_HOST, timeout=config.OLLAMA_REQUEST_TIMEOUT)
         try:
             self.client.list()
         except Exception as e:
@@ -512,6 +620,15 @@ class RagEngine:
         # back at something from earlier in the list.
         ordinals = _extract_ordinals(query)
         if ordinals:
+            # REVERTED: an earlier version of this reversed to "display
+            # order" on the theory that recent_offers[0] (most-recent-ADDED)
+            # meant last-DISPLAYED. A re-run showed that broke
+            # followup_ordinal_first, which passed before the change --
+            # app.py's session.remember(raw_sources[:3]) stores the turn's
+            # offers in their already-ranked display order, so
+            # recent_offers[0] is first-shown, not last-shown. Direct
+            # indexing was correct; see followup_third_of_three below for
+            # what's actually still wrong with that case.
             targets = []
             for idx in ordinals:
                 try:
@@ -628,14 +745,37 @@ class RagEngine:
         for score, idx in raw_results:
             doc = self.docs[idx]
  
-            if intent == "offer" and doc["metadata"]["source"] != "offer":
-                continue
-            if intent == "faq" and doc["metadata"]["source"] != "faq":
-                continue
+            # CHANGED: was a hard `continue` that dropped every doc of the
+            # "wrong" source outright whenever _classify_intent guessed
+            # offer-vs-faq. That guess is unreliable because the intent
+            # word lists (_OFFER_INTENT_WORDS / _FAQ_INTENT_WORDS) are
+            # necessarily short and overlap with ordinary FAQ phrasing --
+            # "coupon", "discount", "offer" all appear constantly in FAQ
+            # text about USING offers/coupons, not just in offer lookups.
+            # The eval run showed this hard-exclude losing real FAQ
+            # answers outright: "How do I use my purchased coupon?" (has
+            # "coupon" -> classified "offer") returned zero candidates
+            # because every FAQ doc, including the one that actually
+            # answers it, was filtered out before scoring ever got a
+            # chance to rank it. Same failure mode for "...how does it
+            # offer such big discounts?" and the Arabic refund query
+            # (both contain offer-intent words with no matching FAQ-intent
+            # word for this exact phrasing).
+            #
+            # Now: intent is a soft signal (a small score penalty for the
+            # source that doesn't match), not an exclusion. A same-intent
+            # doc keeps a slight edge on ties, but a strongly-matching doc
+            # of the "wrong" guessed intent can still win and still gets
+            # ranked, instead of never being considered at all.
+            intent_mismatch = (
+                (intent == "offer" and doc["metadata"]["source"] != "offer")
+                or (intent == "faq" and doc["metadata"]["source"] != "faq")
+            )
+            intent_penalty = config.INTENT_MISMATCH_PENALTY if intent_mismatch else 0.0
  
             lexical_hits = sum(1 for w in query_words if w.lower() in doc["text"].lower())
             lexical_bonus = (lexical_hits / len(query_words)) * config.LEXICAL_BONUS_WEIGHT if query_words else 0.0
-            combined_score = float(score) + lexical_bonus
+            combined_score = float(score) + lexical_bonus - intent_penalty
  
             if combined_score < config.MIN_RELEVANCE_SCORE:
                 continue
@@ -668,16 +808,42 @@ class RagEngine:
  
         selected = deduped[:top_k]
 
-        if multi_item and mentioned_merchants:
+        if mentioned_merchants:
             # A merchant named explicitly in the query must not get dropped
             # just because some unrelated candidate scored higher -- pull in
             # that merchant's best-scoring doc from the full candidate pool
-            # (not just the slice) if it isn't already selected.
+            # (not just the slice) if it isn't already selected. Applies any
+            # time a known merchant is literally named, not just multi_item
+            # queries -- a single mixed-language/code-switched mention (e.g.
+            # Arabic sentence naming "KFC") is just as vulnerable to losing
+            # its own merchant's offer to an unrelated higher-embedding-score
+            # candidate as a multi-merchant query is.
             selected_merchants = {r["metadata"].get("merchant") for r in selected}
             for m in mentioned_merchants:
                 if m in selected_merchants:
                     continue
                 best = next((c for c in deduped if c["metadata"].get("merchant") == m), None)
+                if best is None:
+                    # CHANGED: `deduped` only covers the ANN top-candidate_k
+                    # neighbors -- if this merchant's offer wasn't one of
+                    # them (short/mixed-language queries routinely miss it
+                    # on pure embedding distance), fall back to a direct
+                    # lookup across the FULL corpus instead of silently
+                    # giving up. lang_hint keeps the reply in the query's
+                    # language when the merchant has both ar/en chunks.
+                    docs_for_m = self._docs_by_merchant.get(m) or []
+                    if docs_for_m:
+                        lang_hint = detect_lang(retrieval_query)
+                        fallback_doc = next(
+                            (d for d in docs_for_m if d["metadata"].get("lang") == lang_hint),
+                            docs_for_m[0],
+                        )
+                        best = {
+                            "score": config.MIN_RELEVANCE_SCORE,
+                            "combined_score": config.MIN_RELEVANCE_SCORE,
+                            "lexical_hits": 1,
+                            **fallback_doc,
+                        }
                 if best is not None:
                     selected.append(best)
                     selected_merchants.add(m)
@@ -694,25 +860,44 @@ class RagEngine:
         # regardless of how the scoring landed.
         if followup_targets:
             lang_hint = detect_lang(query)
-            present_ids = {
-                (r["metadata"].get("source"), str(r["metadata"].get("id")))
+            # CHANGED: a resolved follow-up target used to only get forced
+            # to the top (combined_score=1.0) when it was ABSENT from
+            # `selected`. But the "pull in the mentioned merchant" step
+            # above can independently add that exact same offer with its
+            # own, much lower natural score (e.g. it wasn't in the ANN
+            # top-K on its own merits) -- so it's already "present" and
+            # this block used to just `continue`, leaving it ranked under
+            # whatever unrelated doc scored higher (the eval run showed a
+            # payment FAQ outranking the actual target offer this way).
+            # Being *present* isn't the guarantee we need -- being
+            # *ranked first* is, since retrieved[0] is what the direct-
+            # answer shortcuts and "top_source/top_id" actually use. Now
+            # any existing entry for a resolved target gets its score
+            # boosted in place instead of being left alone, and a missing
+            # one is still inserted as before.
+            by_key = {
+                (r["metadata"].get("source"), str(r["metadata"].get("id"))): r
                 for r in selected
             }
             for target in followup_targets:
                 tmeta = target["metadata"]
                 key = (tmeta.get("source"), str(tmeta.get("id")))
-                if key in present_ids:
+                existing = by_key.get(key)
+                if existing is not None:
+                    existing["score"] = 1.0
+                    existing["combined_score"] = 1.0
                     continue
-                pinned = self._lookup_doc(tmeta.get("source"), tmeta.get("id"), lang_hint=lang_hint)
-                if pinned is None:
+                pinned_doc = self._lookup_doc(tmeta.get("source"), tmeta.get("id"), lang_hint=lang_hint)
+                if pinned_doc is None:
                     continue
-                selected.insert(0, {
+                pinned = {
                     "score": 1.0,
                     "combined_score": 1.0,
                     "lexical_hits": 1,
-                    **pinned,
-                })
-                present_ids.add(key)
+                    **pinned_doc,
+                }
+                selected.insert(0, pinned)
+                by_key[key] = pinned
             selected.sort(key=lambda r: r["combined_score"], reverse=True)
             selected = selected[: max(top_k, len(followup_targets))]
 
@@ -861,6 +1046,50 @@ class RagEngine:
             lines.append(_STOCK_SOLD_SO_FAR[reply_lang].format(n=_iso(str(sold_count), reply_lang)))
         return "\n".join(lines)
 
+    def _superlative_offer(self, kind: str):
+        """Scans the FULL offer corpus (not just retrieved candidates) for
+        the actual min/max-priced active offer. Retrieval-based ranking
+        can't answer "cheapest"/"most expensive" correctly -- embedding
+        similarity to that phrasing finds offers that read as a good deal,
+        not the numerically lowest/highest price, so this bypasses
+        retrieve() entirely and does a direct scan instead.
+
+        CHANGED: also excludes inactive offers via config.OFFER_STATUS_FIELD/
+        OFFER_ACTIVE_VALUES -- those constants existed in config.py already
+        but nothing in this file actually read them, so a "cheapest offer
+        AVAILABLE" query could surface the numerically lowest price even if
+        that specific offer's status made it not actually available. Only
+        filters when the status field is present on a given doc, so this
+        stays a no-op (matching prior behavior) if this dataset doesn't
+        populate that field at all rather than silently excluding
+        everything.
+        """
+        status_field = getattr(config, "OFFER_STATUS_FIELD", None)
+        active_values = getattr(config, "OFFER_ACTIVE_VALUES", None)
+        priced = []
+        for d in self.docs:
+            if d["metadata"].get("source") != "offer":
+                continue
+            if status_field and active_values:
+                status = d["metadata"].get(status_field)
+                if status is not None and status not in active_values:
+                    continue
+            try:
+                p = float(re.sub(r"[^\d.]", "", str(d["metadata"].get("price", ""))))
+            except ValueError:
+                continue
+            priced.append((p, d))
+        if not priced:
+            return None
+        priced.sort(key=lambda t: t[0])
+        chosen = priced[0][1] if kind == "cheapest" else priced[-1][1]
+        return {
+            "score": 1.0,
+            "combined_score": 1.0,
+            "lexical_hits": 1,
+            **chosen,
+        }
+
     def answer_stream(self, query: str, history: list = None, recent_offers: list = None):
         # CHANGED: history is now passed through -- retrieve() uses it to
         # anchor follow-up queries ("explain this offer") on the previous
@@ -870,11 +1099,27 @@ class RagEngine:
         # the last few offers/FAQs actually shown to this user, most-recent-
         # first. Preferred over history text for follow-up anchoring since
         # it carries the offer's actual identity, not just what was asked.
+        # NEW: an empty/whitespace query was reaching the embedder and
+        # retrieving 3 plausible-looking offers purely from FAISS's
+        # nearest-neighbor-of-nothing behavior, which the model then
+        # presented as "what you requested." Nothing downstream should ever
+        # see an empty query -- short-circuit before embed/retrieve happen.
+        if not (query or "").strip():
+            yield FALLBACK_MESSAGE[detect_lang(query)]
+            return
+
         retrieved = self.retrieve(query, history=history, recent_offers=recent_offers)
-        price_range = extract_price_range(query)
         note = None
 
-        if price_range:
+        superlative = _looks_like_superlative_price(query)
+        if superlative:
+            best = self._superlative_offer(superlative)
+            if best is not None:
+                retrieved = [best]
+
+        price_range = extract_price_range(query)
+
+        if not superlative and price_range:
             lo, hi = price_range
 
             def _price(d):
@@ -901,6 +1146,45 @@ class RagEngine:
         if best_score < config.MIN_RELEVANCE_SCORE:
             yield FALLBACK_MESSAGE[detect_lang(query)]
             return
+
+        # NEW: embedding score alone doesn't separate genuine matches from
+        # confidently-wrong ones -- e.g. "what's the capital of France?" and
+        # a prompt-injection payload both scored 0.77-0.83 against retrieved
+        # docs, comfortably above MIN_RELEVANCE_SCORE, same range as
+        # legitimate matches (see eval run 20260813_185301). What those two
+        # DO lack that legitimate matches have: not one real, non-boilerplate
+        # query word appears anywhere in what got retrieved -- the match is
+        # pure embedding-space proximity with zero lexical grounding.
+        #
+        # CHANGED: an earlier version of this used retrieve()'s lenient
+        # lexical_hits (stopwords only), which still let "Egypt" (in nearly
+        # every merchant name/location in this corpus) and "offer" (intent-
+        # classifier boilerplate, present in ~every offer doc) count as
+        # grounding -- so "What's the discount at Starbucks Egypt?" trivially
+        # "matched" Sparky's Egypt on the word "Egypt" alone, and the
+        # injection payload matched on the word "offer". Recomputed here
+        # against actual doc text using _GROUNDING_STOPWORDS, which also
+        # excludes those domain-ubiquitous terms. Skipped when a follow-up
+        # target was resolved (anaphora/ordinal references like "the last
+        # one" legitimately carry no domain words of their own -- their
+        # grounding comes entirely from the anchor, not the raw query text).
+        # CAUTION: only validated against the known adversarial/out-of-scope
+        # eval cases so far -- re-run suite 2 after this change to confirm no
+        # false positives on legitimately thin-overlap queries.
+        followup_targets = self._resolve_followup_targets(query, recent_offers)
+        if not followup_targets and not superlative:
+            grounding_words = [
+                w for w in re.split(r"[\s؟?!.,،]+", query)
+                if len(w) >= 2 and not _is_grounding_stopword(w)
+            ]
+            if grounding_words and retrieved:
+                grounded = any(
+                    any(w.lower() in r.get("text", "").lower() for w in grounding_words)
+                    for r in retrieved
+                )
+                if not grounded:
+                    yield FALLBACK_MESSAGE[detect_lang(query)]
+                    return
 
         reply_lang = detect_lang(query)
         multi_item, _ = self._detect_multi_item(query)
