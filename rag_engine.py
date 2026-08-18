@@ -665,6 +665,16 @@ class RagEngine:
             if targets:
                 return targets
 
+        # NEW: "compare / what's the difference" with no merchant or ordinal
+        # named implicitly means "between the things you just showed me".
+        # This is exactly the "شوف الفرق بين العروضين" case: _looks_like_
+        # comparison is True (it's in _COMPARISON_WORDS), but that's a
+        # separate list from _FOLLOWUP_SIGNAL_PHRASES below, so this fell
+        # through with zero anchoring and free-floated onto an unrelated
+        # offer instead of comparing the two Degla Camp offers just shown.
+        if _looks_like_comparison(query):
+            return recent_offers[:2]
+
         if not _looks_like_followup_text(query):
             return []
 
