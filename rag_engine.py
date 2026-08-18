@@ -10,6 +10,7 @@ a VectorStore instead of talking to FAISS directly. All business logic
 """
 import os
 import pickle
+import random
 import re
 
 import ollama
@@ -101,6 +102,31 @@ _STOCK_INTENT_WORDS = {
     "coupons left", "any left",
     "متبقي", "فاضل", "باقي", "خلص", "خلصت", "نفدت", "لسه فاضل",
 }
+
+# NEW: greetings/small talk with no real content ("hi", "اهلا بك", "شكرا")
+# were going straight into embedding search like any other question -- and
+# a short, mostly-generic phrase can still score above MIN_RELEVANCE_SCORE
+# against some unrelated FAQ purely by chance (this is exactly what happened
+# with "اهلا بك" matching a billing-status FAQ). Matched by exact/near-exact
+# phrase, not substring, so a real question that happens to start with "hi"
+# ("hi, kofta offers?") is untouched -- only a message that IS just a
+# greeting short-circuits before retrieval runs at all.
+_GREETING_PHRASES = {
+    "hi", "hello", "hey", "hiya", "yo", "good morning", "good evening",
+    "thanks", "thank you", "thanks!", "ok thanks", "okay thanks",
+    "مرحبا", "مرحباً", "اهلا", "أهلا", "اهلا بك", "أهلا بك", "أهلا بيك",
+    "اهلا بيك", "هاي", "هلا", "صباح الخير", "مساء الخير", "السلام عليكم",
+    "شكرا", "شكراً", "تسلم", "تسلملي", "متشكر", "متشكرين",
+}
+_GREETING_REPLY = {
+    "en": "Hey there! I can help with offers, orders, cashback, and returns — what are you looking for?",
+    "ar": "أهلاً بيك! أقدر أساعدك في العروض، طلباتك، الكاش باك، أو الاسترجاع — تحب تعرف إيه؟",
+}
+
+
+def _looks_like_greeting(query: str) -> bool:
+    q = re.sub(r"[؟?!.,،]+$", "", (query or "").strip().lower()).strip()
+    return q in _GREETING_PHRASES
 
 
 def _looks_like_stock_query(query: str) -> bool:
@@ -223,7 +249,56 @@ def _extract_numbers(text: str) -> set:
     return numbers
 
 
-def _format_offer_facts(meta: dict, lang: str):
+# NEW: phrasing variants for the offer-facts line. Kept separate from the
+# values themselves -- every variant below still surfaces the exact price/
+# discount/expiry digits, just worded differently, so _fact_check_offer's
+# number-matching (and any eval that greps for the raw digits) stays valid
+# no matter which variant gets picked. Only the DECORATIVE wording rotates.
+#
+# variety=False (used by _build_fact_checklist, see below) always falls back
+# to variant index 0 of each list -- the LLM's REQUIRED FACTS block should
+# stay a plain, predictable "value: X" style line that's easy for a small
+# model to lift values from, not a rotating natural-language sentence it's
+# told to copy verbatim.
+_PRICE_TEMPLATES = {
+    "en": {
+        "with_old": [
+            "{price} ({was} {old})",
+            "now just {price} instead of {old}",
+            "grab it for {price}, down from {old}",
+            "{price} — was {old}",
+        ],
+        "no_old": [
+            "{price}",
+            "priced at {price}",
+            "yours for {price}",
+        ],
+    },
+    "ar": {
+        "with_old": [
+            "{price} ({was} {old})",
+            "دلوقتي بـ {price} بدل {old}",
+            "وفر وهاته بـ {price} بدل {old}",
+            "{price} — كانت {old}",
+        ],
+        "no_old": [
+            "{price}",
+            "بسعر {price}",
+            "متاح دلوقتي بـ {price}",
+        ],
+    },
+}
+_DISCOUNT_TEMPLATES = {
+    "en": ["{d} off", "save {d}", "{d} discount"],
+    "ar": ["خصم {d}", "توفير {d}"],
+}
+_EXPIRY_TEMPLATES = {
+    "en": ["valid until {e}", "available till {e}", "offer runs through {e}"],
+    "ar": ["صالح حتى {e}", "متاح لحد {e}"],
+}
+
+
+def _format_offer_facts(meta: dict, lang: str, variety: bool = True):
     title = meta.get("title") or ""
     price = meta.get("price")
     discount = meta.get("discount")
@@ -233,22 +308,31 @@ def _format_offer_facts(meta: dict, lang: str):
     if not _has_value(price) and not _has_value(discount):
         return None
 
+    def pick(options):
+        return options[0] if not variety else random.choice(options)
+
     parts = []
     if title:
         parts.append(f"**{title}**")
     if _has_value(price):
         currency = config.CURRENCY.get(lang, config.CURRENCY.get("en", "EGP")) if isinstance(config.CURRENCY, dict) else config.CURRENCY
-        line = _iso(f"{price} {currency}", lang)
+        price_num = _iso(f"{price} {currency}", lang)
         if _has_value(old_price):
-            old_part = _iso(f"{old_price} {currency}", lang)
-            line += f" ({'was' if lang == 'en' else 'كانت'} {old_part})"
+            old_num = _iso(f"{old_price} {currency}", lang)
+            template = pick(_PRICE_TEMPLATES[lang]["with_old"])
+            line = template.format(price=price_num, old=old_num, was=("was" if lang == "en" else "كانت"))
+        else:
+            template = pick(_PRICE_TEMPLATES[lang]["no_old"])
+            line = template.format(price=price_num)
         parts.append(_iso_segment(line, lang))
     if _has_value(discount):
-        discount_line = f"{discount}% off" if lang == "en" else f"خصم {_iso(f'{discount}%', lang)}"
-        parts.append(_iso_segment(discount_line, lang))
+        d = _iso(f"{discount}%", lang)
+        template = pick(_DISCOUNT_TEMPLATES[lang])
+        parts.append(_iso_segment(template.format(d=d), lang))
     if _has_value(expiry):
-        expiry_line = f"{'valid until' if lang == 'en' else 'صالح حتى'} {_iso(expiry, lang)}"
-        parts.append(_iso_segment(expiry_line, lang))
+        e = _iso(expiry, lang)
+        template = pick(_EXPIRY_TEMPLATES[lang])
+        parts.append(_iso_segment(template.format(e=e), lang))
 
     return " — ".join(parts) if parts else None
 
@@ -282,7 +366,13 @@ def _fact_check_offer(doc: dict, answer_text: str):
         return None
 
     lang = "ar" if any("\u0600" <= ch <= "\u06FF" for ch in answer_text) else "en"
-    return _format_offer_facts(meta, lang)
+    # CHANGED: variety=False -- this block can concatenate facts from
+    # several offers with " | " (see answer_stream's missing_facts loop). A
+    # rotating, sentence-style phrasing per offer makes an already-dense
+    # multi-offer line harder to parse ("which price goes with which
+    # title?"); a plain, consistent format is what this corrective block
+    # needs, not friendliness.
+    return _format_offer_facts(meta, lang, variety=False)
 
 
 _CURRENCY_PATTERN = r"(?:\s*(?:egp|le|l\.e|ج\.م|جنيه|جنية))?"
@@ -378,6 +468,17 @@ _FOLLOWUP_SIGNAL_PHRASES = {
     "how do i redeem", "redeem this", "redeem it",
     "قبل الخصم", "السعر الاصلي", "السعر الأصلي", "كان بكام",
     "لسه موجود", "لسه شغال", "استخدمه ازاي", "استخدمه إزاي",
+    # NEW: "similar/same type" follow-ups -- same failure mode as above
+    # (query names no merchant/pronoun, so it free-floated onto an
+    # unrelated category instead of anchoring on the offer just discussed).
+    # See the "طب فيه عروض مشابهة؟" case: with no signal here it matched a
+    # clinic offer right after a camping-offer turn.
+    # NOTE: deliberately does NOT include "another one" / "غيره" -- those
+    # mean "something DIFFERENT from what you just showed me", so anchoring
+    # them on the previous offer would push the search the wrong way.
+    "similar offers", "similar offer", "something similar", "anything similar",
+    "same type", "something else like",
+    "عروض مشابهة", "حاجة مشابهة", "حاجة زي كده", "زي كده", "زي ده", "نفس النوع",
 }
 
 # NEW: "the first one" / "the second one" / "التاني" -- lets a follow-up
@@ -772,7 +873,7 @@ class RagEngine:
             meta = doc.get("metadata", {})
             if meta.get("source") != "offer":
                 continue
-            fact = _format_offer_facts(meta, lang)
+            fact = _format_offer_facts(meta, lang, variety=False)
             if fact:
                 lines.append(f"- {fact}")
         if not lines:
@@ -873,8 +974,43 @@ class RagEngine:
         if fact is None:
             return None
 
-        intro = "Here's what I found:" if reply_lang == "en" else "لقيت العرض ده:"
-        return f"{intro}\n{fact}"
+        intro_options = {
+            "en": ["Here's what I found:", "Found this one for you:", "Check this out:"],
+            "ar": ["لقيت العرض ده:", "شوف العرض ده:", "لقيتلك العرض ده:"],
+        }
+        intro = random.choice(intro_options[reply_lang])
+        answer = f"{intro}\n{fact}"
+
+        cross_sell = self._maybe_cross_sell_line(top["metadata"], reply_lang)
+        if cross_sell:
+            answer += f"\n{cross_sell}"
+        return answer
+
+    def _maybe_cross_sell_line(self, meta: dict, lang: str):
+        """Occasionally mentions that the same merchant has other active
+        offers, using the count already sitting in the loaded index (no
+        extra retrieval/LLM call, so this stays as fast as the rest of the
+        direct-answer path). Fires about half the time -- every single
+        answer mentioning it would be just as repetitive as never mentioning
+        it at all."""
+        merchant = meta.get("merchant")
+        if not merchant or random.random() >= 0.5:
+            return None
+        this_id = meta.get("id")
+        others = {
+            d["metadata"].get("id")
+            for d in self.docs
+            if d["metadata"].get("source") == "offer"
+            and d["metadata"].get("merchant") == merchant
+            and d["metadata"].get("id") != this_id
+        }
+        count = len(others)
+        if count == 0:
+            return None
+        if lang == "en":
+            noun = "other deal" if count == 1 else "other deals"
+            return f"💡 {merchant} also has {count} {noun} right now."
+        return f"💡 {merchant} عندها كمان {_iso(str(count), lang)} عروض تانية دلوقتي."
 
     def _get_stock_direct_answer(self, retrieved: list, reply_lang: str, query: str):
         """Handles 'how many left / is it sold out' questions explicitly
@@ -913,6 +1049,13 @@ class RagEngine:
         # the last few offers/FAQs actually shown to this user, most-recent-
         # first. Preferred over history text for follow-up anchoring since
         # it carries the offer's actual identity, not just what was asked.
+        # NEW: greetings/small talk skip retrieval entirely -- no embedding
+        # search, no chance of matching an unrelated FAQ/offer. See
+        # _looks_like_greeting.
+        if _looks_like_greeting(query):
+            yield _GREETING_REPLY[detect_lang(query)]
+            return
+
         retrieved = self.retrieve(query, history=history, recent_offers=recent_offers)
         price_range = extract_price_range(query)
         note = None

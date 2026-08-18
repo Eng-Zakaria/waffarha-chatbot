@@ -22,7 +22,10 @@ shape the widget already expects.
 import asyncio
 import json
 import logging
+import math
 import queue as pyqueue
+import random
+import re
 import threading
 from typing import List, Optional
 
@@ -150,6 +153,20 @@ async def get_engine_async() -> RagEngine:
     return await asyncio.to_thread(get_engine)
 
 
+@app.on_event("startup")
+async def _warm_up_engine():
+    """Loads RagEngine (embedding model + FAISS index + Ollama check) as
+    soon as the container starts, instead of leaving it to the first real
+    request. Restarting the app container doesn't restart Ollama/Redis --
+    they're already warm -- but this process's own memory is empty on every
+    restart, so someone always used to pay for that first load. Now it's
+    paid during startup (visible in orchestration/health-check timing)
+    instead of by whichever customer happens to send the first message."""
+    log.info("Warming up RagEngine at startup...")
+    await get_engine_async()
+    log.info("RagEngine warm and ready.")
+
+
 # ---------------------------------------------------------------------------
 # Generation concurrency cap.
 #
@@ -248,11 +265,37 @@ def _source_card(doc: dict, reply_lang: str = None) -> dict:
     }
 
 
+def _price_ceiling(price_raw) -> Optional[int]:
+    """Rounds a price up to a friendly round number for an 'under X' style
+    suggestion (135 -> 200, 70 -> 100). Returns None if price isn't a
+    parseable number, so callers can skip the price-based suggestion
+    entirely rather than showing a broken one."""
+    if price_raw is None:
+        return None
+    digits = re.sub(r"[^\d.]", "", str(price_raw))
+    if not digits:
+        return None
+    try:
+        value = float(digits)
+    except ValueError:
+        return None
+    if value <= 0:
+        return None
+    return int(math.ceil(value / 100.0) * 100)
+
+
 # ---------------------------------------------------------------------------
 # Follow-up suggestions: cheap and template-based on purpose -- these are
 # derived from what RagEngine actually retrieved for THIS turn (not a second
 # LLM call), so they stay fast and never suggest something unrelated to what
 # was just discussed. Capped at 3, deduped, language-matched to the reply.
+#
+# CHANGED: each slot now has a small pool of phrasings (picked with
+# random.choice) instead of one fixed string, and the price/category slots
+# are built FROM the actual top offer (its real price, its real category)
+# instead of a hardcoded "under 200 EGP" -- so two different offers produce
+# two different, offer-relevant suggestion sets instead of the same three
+# buttons every time.
 # ---------------------------------------------------------------------------
 def _build_suggestions(raw_sources: list, reply_lang: str) -> List[str]:
     offer_docs = [d for d in raw_sources if d.get("metadata", {}).get("source") == "offer"]
@@ -261,20 +304,46 @@ def _build_suggestions(raw_sources: list, reply_lang: str) -> List[str]:
     suggestions: List[str] = []
 
     if len(offer_docs) >= 2:
-        suggestions.append("Compare these offers" if reply_lang == "en" else "قارن بين العروض دي")
+        suggestions.append(random.choice(
+            ["Compare these offers", "See how these two stack up"] if reply_lang == "en"
+            else ["قارن بين العروض دي", "شوف الفرق بين العروضين"]
+        ))
 
     if offer_docs:
-        merchant = offer_docs[0].get("metadata", {}).get("merchant")
-        if merchant:
-            suggestions.append(
-                f"More offers from {merchant}" if reply_lang == "en" else f"في عروض تانية من {merchant}؟"
-            )
-        suggestions.append(
-            "Any offers under 200 EGP?" if reply_lang == "en" else "في عروض تحت 200 جنيه؟"
-        )
+        top_meta = offer_docs[0].get("metadata", {})
+        merchant = top_meta.get("merchant")
+        category = top_meta.get("category")
+
+        if category:
+            suggestions.append(random.choice(
+                [f"More {category} offers?", f"Any other {category} deals?"] if reply_lang == "en"
+                else [f"في عروض {category} تانية؟", f"فيه عروض {category} تانية؟"]
+            ))
+        elif merchant:
+            suggestions.append(random.choice(
+                [f"More offers from {merchant}", f"What else does {merchant} have?"] if reply_lang == "en"
+                else [f"في عروض تانية من {merchant}؟", f"{merchant} عندها عروض تانية؟"]
+            ))
+
+        ceiling = _price_ceiling(top_meta.get("price"))
+        if ceiling:
+            suggestions.append(random.choice(
+                [f"Any offers under {ceiling} EGP?", f"Cheaper options under {ceiling} EGP?"] if reply_lang == "en"
+                else [f"في عروض تحت {ceiling} جنيه؟", f"فيه أرخص من كده تحت {ceiling} جنيه؟"]
+            ))
+        elif merchant and category:
+            # Had a category slot already -- fall back to the merchant one
+            # here so we still offer 2-3 distinct suggestions.
+            suggestions.append(random.choice(
+                [f"More offers from {merchant}", f"What else does {merchant} have?"] if reply_lang == "en"
+                else [f"في عروض تانية من {merchant}؟", f"{merchant} عندها عروض تانية؟"]
+            ))
 
     if faq_docs:
-        suggestions.append("How do I redeem this?" if reply_lang == "en" else "أستخدم العرض ده إزاي؟")
+        suggestions.append(random.choice(
+            ["How do I redeem this?", "How does this work?"] if reply_lang == "en"
+            else ["أستخدم العرض ده إزاي؟", "ده بيشتغل إزاي؟"]
+        ))
 
     seen = set()
     deduped = []
