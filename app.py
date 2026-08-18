@@ -20,21 +20,21 @@ shapes RagEngine's output into the {answer, sources:[{title,snippet}]}
 shape the widget already expects.
 """
 import asyncio
+import json
 import logging
+import queue as pyqueue
 import threading
 from typing import List, Optional
-import queue as pyqueue
-from fastapi.responses import StreamingResponse
-from rag_engine import _strip_scaffolding_leaks
 
 import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import config
-from rag_engine import RagEngine, detect_lang
+from rag_engine import RagEngine, detect_lang, _strip_scaffolding_leaks
 from memory import MemoryStore
 
 logging.basicConfig(level=logging.INFO)
@@ -176,123 +176,6 @@ GENERATION_QUEUE_TIMEOUT = config.GENERATION_QUEUE_TIMEOUT
 _generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
 _in_flight = 0                      # for /api/health visibility only
 _in_flight_lock = threading.Lock()
-
-SSE_HEARTBEAT = "\n\n"  # keeps intermediary proxies from buffering/closing idle connections
-
-
-@app.post("/api/chat/stream")
-async def chat_stream(req: ChatRequest):
-    query = (req.query or "").strip()
-    if not query:
-        raise HTTPException(400, "query is required")
-
-    try:
-        engine = await get_engine_async()
-    except FileNotFoundError as e:
-        raise HTTPException(503, str(e))
-    except RuntimeError as e:
-        raise HTTPException(503, str(e))
-
-    try:
-        memory_store = await get_memory_store_async()
-    except redis.exceptions.RedisError as e:
-        log.warning("Redis unavailable, continuing without session memory: %s", e)
-        memory_store = None
-
-    session = memory_store.get(req.session_id) if memory_store else None
-    try:
-        recent_offers = await asyncio.to_thread(session.recent) if session else []
-    except redis.exceptions.RedisError as e:
-        log.warning("Redis unavailable while reading session memory: %s", e)
-        session = None
-        recent_offers = []
-
-    try:
-        await _acquire_generation_slot()
-    except ServerBusyError:
-        raise HTTPException(
-            503,
-            detail="The assistant is handling a lot of requests right now. Please retry shortly.",
-            headers={"Retry-After": "5"},
-        )
-
-    history = [{"role": t.role, "content": t.content} for t in req.history]
-    reply_lang = detect_lang(query)
-
-    # answer_stream() is a plain blocking generator (does FAISS retrieval,
-    # then iterates Ollama's stream) -- it can't be awaited or iterated
-    # directly on the event loop. Run it in a worker thread and hand tokens
-    # across via a thread-safe queue; the async generator below just drains
-    # the queue and yields SSE frames as items arrive.
-    q: "pyqueue.Queue" = pyqueue.Queue()
-    SENTINEL = object()
-
-    def _run():
-        try:
-            for piece in engine.answer_stream(query, history, recent_offers):
-                q.put(("token", piece))
-                # _last_retrieved is set by answer_stream() before its first
-                # yield, so by the time the first token lands, sources are
-                # already final -- safe to read here.
-        except Exception as e:
-            q.put(("error", str(e)))
-        finally:
-            q.put(("_end", None))
-
-    async def event_gen():
-        loop = asyncio.get_event_loop()
-        thread_task = loop.run_in_executor(None, _run)
-
-        full_text = ""
-        sources_sent = False
-        try:
-            while True:
-                kind, payload = await asyncio.to_thread(q.get)
-
-                # Fire the sources/suggestions event once, right after the
-                # first token proves retrieve() has completed -- avoids a
-                # second blocking wait on something already known.
-                if not sources_sent and kind in ("token", "_end"):
-                    raw_sources = getattr(engine, "_last_retrieved", [])
-                    sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
-                    suggestions = _build_suggestions(raw_sources, reply_lang)
-                    yield f"event: meta\ndata: {json.dumps({'sources': sources, 'suggestions': suggestions})}{SSE_HEARTBEAT}"
-                    sources_sent = True
-
-                if kind == "token":
-                    full_text += payload
-                    yield f"event: token\ndata: {json.dumps({'text': payload})}{SSE_HEARTBEAT}"
-                elif kind == "error":
-                    log.exception("chat_stream failed for query=%r: %s", query, payload)
-                    yield f"event: error\ndata: {json.dumps({'message': 'The assistant hit an internal error.'})}{SSE_HEARTBEAT}"
-                    break
-                elif kind == "_end":
-                    break
-        finally:
-            _release_generation_slot()
-            await thread_task
-
-        # Same defense-in-depth leak-strip app.py's non-streaming answer()
-        # already does -- only possible now, on the full joined text, since
-        # a marker like "REQUIRED FACTS:" could straddle two token chunks.
-        cleaned, leaked = _strip_scaffolding_leaks(full_text)
-        if leaked:
-            log.warning("Scaffolding leak stripped post-stream for query=%r: %r", query, leaked)
-
-        raw_sources = getattr(engine, "_last_retrieved", [])
-        if session:
-            try:
-                await asyncio.to_thread(session.remember, raw_sources[:3])
-            except redis.exceptions.RedisError as e:
-                log.warning("Redis unavailable while saving session memory: %s", e)
-
-        yield f"event: done\ndata: {json.dumps({'answer': cleaned})}{SSE_HEARTBEAT}"
-
-    return StreamingResponse(
-        event_gen(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},  # disables nginx buffering if you're behind it
-    )
 
 
 class ServerBusyError(Exception):
@@ -496,6 +379,154 @@ async def chat(req: ChatRequest):
     sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
     suggestions = _build_suggestions(raw_sources, reply_lang)
     return {"answer": result["answer"], "sources": sources, "suggestions": suggestions}
+
+
+# ---------------------------------------------------------------------------
+# Streaming variant of /api/chat. Same setup/validation/memory/concurrency-
+# slot logic as chat() above, but instead of blocking on engine.answer() and
+# returning one JSON body, it drains engine.answer_stream() (a plain
+# blocking generator -- retrieval, then token-by-token Ollama output) via a
+# background thread + queue, and emits Server-Sent Events as pieces arrive:
+#
+#   event: meta   -- sources + suggestions (sent once, right after the first
+#                     token proves retrieve() has finished -- see
+#                     RagEngine.answer_stream, which sets self._last_retrieved
+#                     before its first yield)
+#   event: token  -- one piece of generated text, repeated many times
+#   event: error  -- generation failed partway through
+#   event: done   -- final cleaned answer (scaffolding-leak-stripped) + saves
+#                     session memory
+#
+# Why the leak-strip can't happen per-token: _strip_scaffolding_leaks() does
+# exact substring matching against markers like "REQUIRED FACTS:", which
+# Ollama's streaming chunks can easily split across two yields. So raw
+# tokens stream for the live typing effect, and the frontend replaces the
+# bubble's content with `done.answer` once it arrives -- identical to what
+# streamed in the overwhelming majority of cases, minus any rare leaked
+# marker.
+# ---------------------------------------------------------------------------
+SSE_HEARTBEAT = "\n\n"
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    query = (req.query or "").strip()
+    if not query:
+        raise HTTPException(400, "query is required")
+
+    try:
+        engine = await get_engine_async()
+    except FileNotFoundError as e:
+        log.error("Index not found: %s", e)
+        raise HTTPException(503, str(e))
+    except RuntimeError as e:
+        log.error("Ollama unreachable: %s", e)
+        raise HTTPException(503, str(e))
+
+    try:
+        memory_store = await get_memory_store_async()
+    except redis.exceptions.RedisError as e:
+        log.warning("Redis unavailable, continuing without session memory: %s", e)
+        memory_store = None
+
+    session = memory_store.get(req.session_id) if memory_store else None
+    try:
+        recent_offers = (
+            await asyncio.to_thread(session.recent) if session else []
+        )
+    except redis.exceptions.RedisError as e:
+        log.warning("Redis unavailable while reading session memory; continuing without it: %s", e)
+        session = None
+        recent_offers = []
+
+    try:
+        await _acquire_generation_slot()
+    except ServerBusyError:
+        raise HTTPException(
+            503,
+            detail="The assistant is handling a lot of requests right now. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        )
+
+    history = [{"role": t.role, "content": t.content} for t in req.history]
+    reply_lang = detect_lang(query)
+
+    # engine.answer_stream() is a plain blocking generator -- it can't be
+    # awaited or iterated directly on the event loop without stalling every
+    # other request. Run it in a worker thread; tokens cross into the async
+    # world via a thread-safe queue that event_gen() drains below.
+    q: "pyqueue.Queue" = pyqueue.Queue()
+
+    def _run():
+        try:
+            for piece in engine.answer_stream(query, history, recent_offers):
+                q.put(("token", piece))
+        except Exception as e:
+            q.put(("error", str(e)))
+        finally:
+            q.put(("_end", None))
+
+    async def event_gen():
+        loop = asyncio.get_event_loop()
+        thread_task = loop.run_in_executor(None, _run)
+
+        full_text = ""
+        sources_sent = False
+        try:
+            while True:
+                kind, payload = await asyncio.to_thread(q.get)
+
+                # Fire the sources/suggestions event once -- as soon as the
+                # first token (or an immediate end/error) proves retrieve()
+                # has already run, since RagEngine sets _last_retrieved
+                # before its first yield.
+                if not sources_sent and kind in ("token", "_end"):
+                    raw_sources = getattr(engine, "_last_retrieved", [])
+                    sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
+                    suggestions = _build_suggestions(raw_sources, reply_lang)
+                    yield f"event: meta\ndata: {json.dumps({'sources': sources, 'suggestions': suggestions})}{SSE_HEARTBEAT}"
+                    sources_sent = True
+
+                if kind == "token":
+                    full_text += payload
+                    yield f"event: token\ndata: {json.dumps({'text': payload})}{SSE_HEARTBEAT}"
+                elif kind == "error":
+                    log.exception("chat_stream failed for query=%r: %s", query, payload)
+                    yield f"event: error\ndata: {json.dumps({'message': 'The assistant hit an internal error. Please try again.'})}{SSE_HEARTBEAT}"
+                    break
+                elif kind == "_end":
+                    break
+        finally:
+            _release_generation_slot()
+            await thread_task
+
+        cleaned, leaked = _strip_scaffolding_leaks(full_text)
+        if leaked:
+            log.warning("Scaffolding leak stripped post-stream for query=%r: %r", query, leaked)
+
+        raw_sources = getattr(engine, "_last_retrieved", [])
+        if session:
+            try:
+                # Same best-effort behavior as chat(): a failed memory write
+                # must not discard an answer that already streamed to the user.
+                await asyncio.to_thread(session.remember, raw_sources[:3])
+            except redis.exceptions.RedisError as e:
+                log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
+
+        yield f"event: done\ndata: {json.dumps({'answer': cleaned})}{SSE_HEARTBEAT}"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            # Only matters if you later put nginx in front of app.py -- your
+            # current docker-compose exposes 8000 directly with no reverse
+            # proxy, so this is a no-op today but keeps SSE from getting
+            # silently buffered into one big chunk if that changes.
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/health")
