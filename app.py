@@ -23,6 +23,9 @@ import asyncio
 import logging
 import threading
 from typing import List, Optional
+import queue as pyqueue
+from fastapi.responses import StreamingResponse
+from rag_engine import _strip_scaffolding_leaks
 
 import redis
 from fastapi import FastAPI, HTTPException
@@ -174,6 +177,123 @@ _generation_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GENERATIONS)
 _in_flight = 0                      # for /api/health visibility only
 _in_flight_lock = threading.Lock()
 
+SSE_HEARTBEAT = "\n\n"  # keeps intermediary proxies from buffering/closing idle connections
+
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    query = (req.query or "").strip()
+    if not query:
+        raise HTTPException(400, "query is required")
+
+    try:
+        engine = await get_engine_async()
+    except FileNotFoundError as e:
+        raise HTTPException(503, str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+
+    try:
+        memory_store = await get_memory_store_async()
+    except redis.exceptions.RedisError as e:
+        log.warning("Redis unavailable, continuing without session memory: %s", e)
+        memory_store = None
+
+    session = memory_store.get(req.session_id) if memory_store else None
+    try:
+        recent_offers = await asyncio.to_thread(session.recent) if session else []
+    except redis.exceptions.RedisError as e:
+        log.warning("Redis unavailable while reading session memory: %s", e)
+        session = None
+        recent_offers = []
+
+    try:
+        await _acquire_generation_slot()
+    except ServerBusyError:
+        raise HTTPException(
+            503,
+            detail="The assistant is handling a lot of requests right now. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        )
+
+    history = [{"role": t.role, "content": t.content} for t in req.history]
+    reply_lang = detect_lang(query)
+
+    # answer_stream() is a plain blocking generator (does FAISS retrieval,
+    # then iterates Ollama's stream) -- it can't be awaited or iterated
+    # directly on the event loop. Run it in a worker thread and hand tokens
+    # across via a thread-safe queue; the async generator below just drains
+    # the queue and yields SSE frames as items arrive.
+    q: "pyqueue.Queue" = pyqueue.Queue()
+    SENTINEL = object()
+
+    def _run():
+        try:
+            for piece in engine.answer_stream(query, history, recent_offers):
+                q.put(("token", piece))
+                # _last_retrieved is set by answer_stream() before its first
+                # yield, so by the time the first token lands, sources are
+                # already final -- safe to read here.
+        except Exception as e:
+            q.put(("error", str(e)))
+        finally:
+            q.put(("_end", None))
+
+    async def event_gen():
+        loop = asyncio.get_event_loop()
+        thread_task = loop.run_in_executor(None, _run)
+
+        full_text = ""
+        sources_sent = False
+        try:
+            while True:
+                kind, payload = await asyncio.to_thread(q.get)
+
+                # Fire the sources/suggestions event once, right after the
+                # first token proves retrieve() has completed -- avoids a
+                # second blocking wait on something already known.
+                if not sources_sent and kind in ("token", "_end"):
+                    raw_sources = getattr(engine, "_last_retrieved", [])
+                    sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
+                    suggestions = _build_suggestions(raw_sources, reply_lang)
+                    yield f"event: meta\ndata: {json.dumps({'sources': sources, 'suggestions': suggestions})}{SSE_HEARTBEAT}"
+                    sources_sent = True
+
+                if kind == "token":
+                    full_text += payload
+                    yield f"event: token\ndata: {json.dumps({'text': payload})}{SSE_HEARTBEAT}"
+                elif kind == "error":
+                    log.exception("chat_stream failed for query=%r: %s", query, payload)
+                    yield f"event: error\ndata: {json.dumps({'message': 'The assistant hit an internal error.'})}{SSE_HEARTBEAT}"
+                    break
+                elif kind == "_end":
+                    break
+        finally:
+            _release_generation_slot()
+            await thread_task
+
+        # Same defense-in-depth leak-strip app.py's non-streaming answer()
+        # already does -- only possible now, on the full joined text, since
+        # a marker like "REQUIRED FACTS:" could straddle two token chunks.
+        cleaned, leaked = _strip_scaffolding_leaks(full_text)
+        if leaked:
+            log.warning("Scaffolding leak stripped post-stream for query=%r: %r", query, leaked)
+
+        raw_sources = getattr(engine, "_last_retrieved", [])
+        if session:
+            try:
+                await asyncio.to_thread(session.remember, raw_sources[:3])
+            except redis.exceptions.RedisError as e:
+                log.warning("Redis unavailable while saving session memory: %s", e)
+
+        yield f"event: done\ndata: {json.dumps({'answer': cleaned})}{SSE_HEARTBEAT}"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},  # disables nginx buffering if you're behind it
+    )
+
 
 class ServerBusyError(Exception):
     """Raised when a request couldn't get a generation slot in time."""
@@ -221,7 +341,7 @@ class ChatResponse(BaseModel):
     suggestions: List[str] = []
 
 
-def _source_card(doc: dict) -> dict:
+def _source_card(doc: dict, reply_lang: str = None) -> dict:
     """Shapes one retrieved doc (RagEngine's internal metadata shape) into
     the {title, snippet} the widget's source chips render."""
     meta = doc.get("metadata", {})
@@ -230,15 +350,17 @@ def _source_card(doc: dict) -> dict:
             "title": meta.get("question") or "FAQ",
             "snippet": meta.get("answer") or "",
         }
+    doc_lang = reply_lang or meta.get("lang") or "en"
+    currency = config.CURRENCY.get(doc_lang, config.CURRENCY.get("en", "EGP")) if isinstance(config.CURRENCY, dict) else config.CURRENCY
     bits = []
     if meta.get("price"):
-        bits.append(f"{meta['price']} EGP")
+        bits.append(f"{meta['price']} {currency}")
     if meta.get("discount"):
-        bits.append(f"{meta['discount']}% off")
+        bits.append(f"{meta['discount']}% off" if doc_lang == "en" else f"خصم {meta['discount']}%")
     if meta.get("expiry"):
-        bits.append(f"valid until {meta['expiry']}")
+        bits.append(f"valid until {meta['expiry']}" if doc_lang == "en" else f"صالح حتى {meta['expiry']}")
     return {
-        "title": meta.get("title") or meta.get("merchant") or "Offer",
+        "title": meta.get("title") or meta.get("merchant") or ("Offer" if doc_lang == "en" else "عرض"),
         "snippet": " • ".join(bits) or (meta.get("merchant") or ""),
     }
 
@@ -309,6 +431,17 @@ async def chat(req: ChatRequest):
         memory_store = None
 
     session = memory_store.get(req.session_id) if memory_store else None
+    try:
+        # SessionMemory.recent() performs a Redis read.  Keep that blocking
+        # network I/O off the event loop and preserve the documented
+        # best-effort behavior when Redis goes away after its initial ping.
+        recent_offers = (
+            await asyncio.to_thread(session.recent) if session else []
+        )
+    except redis.exceptions.RedisError as e:
+        log.warning("Redis unavailable while reading session memory; continuing without it: %s", e)
+        session = None
+        recent_offers = []
 
     # CONCURRENCY: wait for a generation slot (bounded, with a timeout) before
     # calling into Ollama -- see the _generation_semaphore comment above. If
@@ -336,7 +469,7 @@ async def chat(req: ChatRequest):
         # doesn't block the event loop while it runs, same reasoning as
         # get_engine_async() above.
         result = await asyncio.to_thread(
-            engine.answer, query, history, session.recent() if session else []
+            engine.answer, query, history, recent_offers
         )
     except Exception:
         log.exception("chat() failed for query=%r", query)
@@ -351,10 +484,17 @@ async def chat(req: ChatRequest):
     # -- so memory reflects what the user saw, not everything the retriever
     # merely scored along the way.
     if session:
-        session.remember(raw_sources[:3])
+        try:
+            # A failed memory write must not discard an answer that was
+            # already generated successfully.  Redis is an enhancement for
+            # follow-ups, not a dependency for serving a chat response.
+            await asyncio.to_thread(session.remember, raw_sources[:3])
+        except redis.exceptions.RedisError as e:
+            log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
 
-    sources = [_source_card(d) for d in raw_sources[:3]]
-    suggestions = _build_suggestions(raw_sources, detect_lang(query))
+    reply_lang = detect_lang(query)
+    sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
+    suggestions = _build_suggestions(raw_sources, reply_lang)
     return {"answer": result["answer"], "sources": sources, "suggestions": suggestions}
 
 

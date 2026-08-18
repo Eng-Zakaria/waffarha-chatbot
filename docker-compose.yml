@@ -9,6 +9,8 @@ services:
     # embedding-similarity resolution instead of exact memory), not a
     # correctness issue.
     image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"    
     volumes:
       - redis_data:/data
     healthcheck:
@@ -53,7 +55,7 @@ services:
       # swapping/thrashing on CPU. Raise it if your server has the RAM
       # (rule of thumb: benchmark actual RSS under load before trusting a
       # guess here).
-      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-4}
       # Keep only one model resident -- this project only ever asks Ollama
       # for OLLAMA_MODEL, so there's no benefit to Ollama's default of
       # caching multiple loaded models, just wasted RAM if it ever did.
@@ -104,6 +106,28 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
+
+  eval:                          # <- indent this 2 spaces, matching redis/ollama/app
+    build:
+      context: .
+      args:
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-base}
+    volumes:
+      - ./data:/app/data:ro
+      - C:/Users/devza/Work/Waffarha/waffarha-eval:/app/eval
+    working_dir: /app/eval
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b-instruct}
+      WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:?set WAFFARHA_SECURITY_KEY in .env}
+      REDIS_URL: redis://redis:6379/0
+      EMBEDDING_DEVICE: cpu
+    depends_on:
+      ollama:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    profiles: ["eval"]
 
 volumes:
   ollama_models:

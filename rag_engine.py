@@ -198,6 +198,31 @@ def _iso_segment(fragment: str, lang: str) -> str:
     return f"{_RLI}{fragment}{_PDI}" if lang == "ar" else fragment
 
 
+def _convert_arabic_digits(text: str) -> str:
+    arabic_digits = "٠١٢٣٤٥٦٧٨٩"
+    for i, ch in enumerate(arabic_digits):
+        text = text.replace(ch, str(i))
+    return text
+
+
+def _extract_numbers(text: str) -> set:
+    if not text:
+        return set()
+    converted = _convert_arabic_digits(str(text))
+    tokens = re.findall(r"\b\d+(?:\.\d+)?\b", converted)
+    numbers = set()
+    for t in tokens:
+        try:
+            val = float(t)
+            if val.is_integer():
+                numbers.add(str(int(val)))
+            numbers.add(str(val))
+            numbers.add(t)
+        except ValueError:
+            numbers.add(t)
+    return numbers
+
+
 def _format_offer_facts(meta: dict, lang: str):
     title = meta.get("title") or ""
     price = meta.get("price")
@@ -212,7 +237,7 @@ def _format_offer_facts(meta: dict, lang: str):
     if title:
         parts.append(f"**{title}**")
     if _has_value(price):
-        currency = config.CURRENCY[lang] if isinstance(config.CURRENCY, dict) else config.CURRENCY
+        currency = config.CURRENCY.get(lang, config.CURRENCY.get("en", "EGP")) if isinstance(config.CURRENCY, dict) else config.CURRENCY
         line = _iso(f"{price} {currency}", lang)
         if _has_value(old_price):
             old_part = _iso(f"{old_price} {currency}", lang)
@@ -238,17 +263,20 @@ def _fact_check_offer(doc: dict, answer_text: str):
     if not _has_value(price) and not _has_value(discount):
         return None
 
-    # CHANGED: _normalize_num strips everything but digits, so a real
-    # discount=0 normalizes to "" (bool(price_norm) below is False) and
-    # correctly gets skipped rather than false-flagged as "missing" --
-    # _has_value() above is still needed first so we don't bail out of the
-    # whole fact-check just because this particular offer's discount is 0.
-    price_norm = _normalize_num(price)
-    discount_norm = _normalize_num(discount)
-    answer_norm = _normalize_num(answer_text)
+    answer_numbers = _extract_numbers(answer_text)
 
-    price_missing = bool(price_norm) and price_norm not in answer_norm
-    discount_missing = bool(discount_norm) and discount_norm not in answer_norm
+    price_missing = False
+    if _has_value(price):
+        price_target = _extract_numbers(str(price))
+        if price_target and not (price_target & answer_numbers):
+            price_missing = True
+
+    discount_missing = False
+    if _has_value(discount):
+        discount_target = _extract_numbers(str(discount))
+        # Ignore 0 or 0.0 discount from required checklist if absent
+        if discount_target and discount_target != {"0", "0.0"} and not (discount_target & answer_numbers):
+            discount_missing = True
 
     if not price_missing and not discount_missing:
         return None
@@ -257,25 +285,36 @@ def _fact_check_offer(doc: dict, answer_text: str):
     return _format_offer_facts(meta, lang)
 
 
+_CURRENCY_PATTERN = r"(?:\s*(?:egp|le|l\.e|ج\.م|جنيه|جنية))?"
 _RANGE_RE = re.compile(
-    r"(?:between|from|range)\s*(\d+)\s*(?:to|and|-)\s*(\d+)|بين\s*(\d+)\s*و\s*(\d+)",
+    rf"(?:between|from|range)\s*(\d+){_CURRENCY_PATTERN}\s*(?:to|and|-|وحتى|لـ|ل|إلى|الي|و)\s*(\d+){_CURRENCY_PATTERN}"
+    rf"|بين\s*(\d+){_CURRENCY_PATTERN}\s*و\s*(\d+){_CURRENCY_PATTERN}",
     re.IGNORECASE,
 )
-_MAX_RE = re.compile(r"(?:under|below|up to|less than)\s*(\d+)|(?:حتى|اقل من|أقل من)\s*(\d+)", re.IGNORECASE)
-_MIN_RE = re.compile(r"(?:over|above|more than)\s*(\d+)|(?:فوق|اكثر من|أكثر من)\s*(\d+)", re.IGNORECASE)
+_MAX_RE = re.compile(
+    rf"(?:under|below|up to|less than)\s*(\d+){_CURRENCY_PATTERN}|(?:حتى|اقل من|أقل من|تحت)\s*(\d+){_CURRENCY_PATTERN}",
+    re.IGNORECASE,
+)
+_MIN_RE = re.compile(
+    rf"(?:over|above|more than)\s*(\d+){_CURRENCY_PATTERN}|(?:فوق|اكثر من|أكثر من|اعلى من|أعلى من)\s*(\d+){_CURRENCY_PATTERN}",
+    re.IGNORECASE,
+)
 
 
 def extract_price_range(query: str):
     m = _RANGE_RE.search(query)
     if m:
-        nums = [int(g) for g in m.groups() if g]
-        return (min(nums), max(nums))
+        nums = [int(g) for g in m.groups() if g and g.isdigit()]
+        if len(nums) >= 2:
+            return (min(nums[:2]), max(nums[:2]))
     m = _MAX_RE.search(query)
     if m:
-        return (0, int(next(g for g in m.groups() if g)))
+        val = next(int(g) for g in m.groups() if g and g.isdigit())
+        return (0, val)
     m = _MIN_RE.search(query)
     if m:
-        return (int(next(g for g in m.groups() if g)), float("inf"))
+        val = next(int(g) for g in m.groups() if g and g.isdigit())
+        return (val, float("inf"))
     return None
 
 
@@ -299,14 +338,18 @@ def _mentioned_merchants(query: str, merchants: list) -> list:
     """Returns the known merchant names (from the index) that appear
     literally in the query. `merchants` should be sorted longest-first so a
     longer name matches before a shorter one that happens to be a substring
-    of it (e.g. "Pizza Hut Express" before "Pizza Hut")."""
+    of it (e.g. "Pizza Hut Express" before "Pizza Hut"). Uses word boundary
+    matching to avoid false-positive substring hits."""
     q = (query or "").lower()
     found = []
     for m in merchants:
-        if len(m) < 3:
+        m_clean = m.strip()
+        if len(m_clean) < 3:
             continue
-        if m.lower() in q:
-            found.append(m)
+        m_lower = m_clean.lower()
+        pattern = rf"(?:\b|^){re.escape(m_lower)}(?:\b|$)"
+        if re.search(pattern, q):
+            found.append(m_clean)
     return found
 
 
@@ -899,7 +942,7 @@ class RagEngine:
 
         best_score = max((r["combined_score"] for r in retrieved), default=0.0)
         if best_score < config.MIN_RELEVANCE_SCORE:
-            yield FALLBACK_MESSAGE[detect_lang(query)]
+            yield FALLBACK_MESSAGE.get(detect_lang(query), FALLBACK_MESSAGE["en"])
             return
 
         reply_lang = detect_lang(query)

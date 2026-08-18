@@ -90,12 +90,17 @@ class SessionMemory:
             return
 
         existing_raw = self._r.lrange(self._key, 0, -1)
-        existing = [json.loads(x) for x in existing_raw]
+        existing = []
+        for x in existing_raw:
+            try:
+                existing.append(json.loads(x))
+            except (json.JSONDecodeError, TypeError):
+                continue
         new_ids = {it["id"] for it in items}
         # Drop any existing entries that duplicate an id in this turn, so
         # re-showing an offer moves it to the front instead of creating a
         # duplicate -- same de-dupe behavior as the original deque version.
-        existing = [e for e in existing if e["id"] not in new_ids]
+        existing = [e for e in existing if e.get("id") not in new_ids]
         # `items` is already highest-relevance-first for this turn (callers
         # pass raw_sources[:3] in that order); prepending it ahead of
         # `existing` gives the same "most-recent-turn-first,
@@ -116,7 +121,15 @@ class SessionMemory:
         without any reshaping."""
         stop = (n - 1) if n else -1
         raw = self._r.lrange(self._key, 0, stop)
-        return [{"metadata": json.loads(x)["metadata"]} for x in raw]
+        out = []
+        for x in raw:
+            try:
+                parsed = json.loads(x)
+                if isinstance(parsed, dict) and "metadata" in parsed:
+                    out.append({"metadata": parsed["metadata"]})
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return out
 
 
 class MemoryStore:

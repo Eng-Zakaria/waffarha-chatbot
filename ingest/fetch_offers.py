@@ -29,10 +29,23 @@ def fetch_page(section_id: int, page: int, lang: str) -> dict:
         "page": page,
         "section_id": section_id,
         "lang": lang,
+        "security_key": get_security_key(),
     }
-    resp = requests.post(config.OFFERS_API_URL, json=body, timeout=config.REQUEST_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    max_retries = getattr(config, "MAX_RETRIES", 3)
+    backoff = getattr(config, "RETRY_BACKOFF", 2)
+    last_err = None
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.post(config.OFFERS_API_URL, json=body, timeout=config.REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.RequestException as e:
+            last_err = e
+            if attempt < max_retries:
+                sleep_sec = backoff ** (attempt - 1)
+                time.sleep(sleep_sec)
+    raise last_err
 
 
 def extract_offer_list(raw_json: dict) -> list:

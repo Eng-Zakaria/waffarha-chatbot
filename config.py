@@ -10,16 +10,15 @@ EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 OFFERS_API_URL = "https://api-test.waffarha.tech/api/sectionOffers"
 
 _security_key = os.getenv("WAFFARHA_SECURITY_KEY")
-if not _security_key:
-    # CHANGED: used to silently fall back to a real key hardcoded here --
-    # that value has since leaked into the repo/uploads and should be
-    # treated as compromised. Fail loudly instead of shipping a secret in
-    # source. Set WAFFARHA_SECURITY_KEY in your .env (docker-compose already
-    # enforces this at the compose level; this covers running app.py directly).
-    raise RuntimeError(
-        "WAFFARHA_SECURITY_KEY is not set. Copy env.example to .env and set it "
-        "(get a fresh key -- the old hardcoded one is compromised and must be rotated)."
-    )
+def get_security_key() -> str:
+    if not _security_key:
+        raise RuntimeError(
+            "WAFFARHA_SECURITY_KEY is not set. "
+            "This key is required to fetch fresh offers from the Waffarha API. "
+            "If you are only running the chatbot with a prebuilt index, you can ignore this error "
+            "by not running fetch_offers.py."
+        )
+    return _security_key
 
 OFFERS_API_BASE_BODY = {
     "security_key": _security_key,

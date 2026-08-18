@@ -145,8 +145,8 @@ def load_offers() -> list:
         # the metadata source, so the shorter date flows consistently into the
         # embedded text, the fact checklist, and the direct-answer card
         # without needing to touch rag_engine.py at all.
-        if expiry and " " in str(expiry):
-            expiry = str(expiry).split(" ", 1)[0]
+        if expiry:
+            expiry = re.split(r"[ T]", str(expiry))[0].strip()
         offer_id = pick_field(offer, fc["id"])
         lang = offer.get("_lang", "en")
 

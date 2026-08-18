@@ -587,17 +587,17 @@ let sessionCounter = 1;
 let activeChatId = null;
 
 const seedChats = () => ([
-  { id:"c1", title:"Cashback question", messages:[
+  { id:'seed_' + Date.now() + '_1', title:"Cashback question", messages:[
       {role:"bot", text:STRINGS.en.greeting, sources:[]},
       {role:"user", text:"How does cashback work?", sources:[]},
       {role:"bot", text: findAnswer("How does cashback work?", "en").answer, sources: findAnswer("How does cashback work?", "en").sources}
   ]},
-  { id:"c2", title:"Order #2481 status", messages:[
+  { id:'seed_' + Date.now() + '_2', title:"Order #2481 status", messages:[
       {role:"bot", text:STRINGS.en.greeting, sources:[]},
       {role:"user", text:"Where's my order?", sources:[]},
       {role:"bot", text: findAnswer("Where's my order?", "en").answer, sources: findAnswer("Where's my order?", "en").sources}
   ]},
-  { id:"c3", title:"Return policy help", messages:[
+  { id:'seed_' + Date.now() + '_3', title:"Return policy help", messages:[
       {role:"bot", text:STRINGS.en.greeting, sources:[]},
       {role:"user", text:"Can I return an item?", sources:[]},
       {role:"bot", text: findAnswer("return item", "en").answer, sources: findAnswer("return item", "en").sources}
@@ -1016,6 +1016,7 @@ function updateProfileUI(){
   const userId = getActiveUserId();
   const users = loadUsers();
   const user = users.find(u=>u.id===userId);
+  const sessionId = `${BROWSER_ID}:${userId}:${activeChatId}`;
   document.getElementById('profileName').textContent = user ? user.name : s.guestChats;
   document.getElementById('profileStatus').textContent = s.thisDevice;
   document.getElementById('profileAvatar').textContent = user ? user.name.trim().charAt(0).toUpperCase() : '🙂';
