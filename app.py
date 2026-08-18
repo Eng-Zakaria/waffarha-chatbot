@@ -29,7 +29,22 @@ import re
 import threading
 from typing import List, Optional
 
-import redis
+# NEW: redis import is optional now -- MEMORY_BACKEND=local (see config.py /
+# memory.py) never touches Redis at all, so this module shouldn't hard-require
+# the `redis` package just to catch its exception type. When it's not
+# installed, RedisError below is a dummy class that nothing ever raises (the
+# local backend raises normal Python exceptions instead), so the
+# `except RedisError` blocks further down simply never trigger -- same
+# effective behavior as before when Redis is actually in play.
+try:
+    import redis
+    from redis.exceptions import RedisError
+except ImportError:
+    redis = None
+
+    class RedisError(Exception):
+        pass
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -374,7 +389,7 @@ async def chat(req: ChatRequest):
 
     try:
         memory_store = await get_memory_store_async()
-    except redis.exceptions.RedisError as e:
+    except RedisError as e:
         # Session memory is a nice-to-have (better follow-up resolution),
         # not required to answer -- so a Redis outage degrades the chat
         # (follow-ups like "how much before the discount" may not resolve
@@ -390,7 +405,7 @@ async def chat(req: ChatRequest):
         recent_offers = (
             await asyncio.to_thread(session.recent) if session else []
         )
-    except redis.exceptions.RedisError as e:
+    except RedisError as e:
         log.warning("Redis unavailable while reading session memory; continuing without it: %s", e)
         session = None
         recent_offers = []
@@ -441,7 +456,7 @@ async def chat(req: ChatRequest):
             # already generated successfully.  Redis is an enhancement for
             # follow-ups, not a dependency for serving a chat response.
             await asyncio.to_thread(session.remember, raw_sources[:3])
-        except redis.exceptions.RedisError as e:
+        except RedisError as e:
             log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
 
     reply_lang = detect_lang(query)
@@ -494,7 +509,7 @@ async def chat_stream(req: ChatRequest):
 
     try:
         memory_store = await get_memory_store_async()
-    except redis.exceptions.RedisError as e:
+    except RedisError as e:
         log.warning("Redis unavailable, continuing without session memory: %s", e)
         memory_store = None
 
@@ -503,7 +518,7 @@ async def chat_stream(req: ChatRequest):
         recent_offers = (
             await asyncio.to_thread(session.recent) if session else []
         )
-    except redis.exceptions.RedisError as e:
+    except RedisError as e:
         log.warning("Redis unavailable while reading session memory; continuing without it: %s", e)
         session = None
         recent_offers = []
@@ -579,7 +594,7 @@ async def chat_stream(req: ChatRequest):
                 # Same best-effort behavior as chat(): a failed memory write
                 # must not discard an answer that already streamed to the user.
                 await asyncio.to_thread(session.remember, raw_sources[:3])
-            except redis.exceptions.RedisError as e:
+            except RedisError as e:
                 log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
 
         yield f"event: done\ndata: {json.dumps({'answer': cleaned})}{SSE_HEARTBEAT}"
