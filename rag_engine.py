@@ -377,31 +377,44 @@ def _fact_check_offer(doc: dict, answer_text: str):
 
 _CURRENCY_PATTERN = r"(?:\s*(?:egp|le|l\.e|ج\.م|جنيه|جنية))?"
 _RANGE_RE = re.compile(
-    rf"(?:between|from|range)\s*(\d+){_CURRENCY_PATTERN}\s*(?:to|and|-|وحتى|لـ|ل|إلى|الي|و)\s*(\d+){_CURRENCY_PATTERN}"
-    rf"|بين\s*(\d+){_CURRENCY_PATTERN}\s*و\s*(\d+){_CURRENCY_PATTERN}",
+    rf"(?:between|from|range)\s*(\d+){_CURRENCY_PATTERN}\s*(?:to|and|-|وحتي|لـ|ل|الي|و)\s*(\d+){_CURRENCY_PATTERN}"
+    rf"|بين\s*(\d+){_CURRENCY_PATTERN}\s*و\s*(\d+){_CURRENCY_PATTERN}"
+    rf"|من\s*(\d+){_CURRENCY_PATTERN}\s*(?:لـ|ل|الي|حتي|و)\s*(\d+){_CURRENCY_PATTERN}",
     re.IGNORECASE,
 )
 _MAX_RE = re.compile(
-    rf"(?:under|below|up to|less than)\s*(\d+){_CURRENCY_PATTERN}|(?:حتى|اقل من|أقل من|تحت)\s*(\d+){_CURRENCY_PATTERN}",
+    rf"(?:under|below|up to|less than)\s*(\d+){_CURRENCY_PATTERN}|(?:حتي|اقل من|تحت)\s*(\d+){_CURRENCY_PATTERN}",
     re.IGNORECASE,
 )
 _MIN_RE = re.compile(
-    rf"(?:over|above|more than)\s*(\d+){_CURRENCY_PATTERN}|(?:فوق|اكثر من|أكثر من|اعلى من|أعلى من)\s*(\d+){_CURRENCY_PATTERN}",
+    rf"(?:over|above|more than)\s*(\d+){_CURRENCY_PATTERN}|(?:فوق|اكثر من|اعلي من)\s*(\d+){_CURRENCY_PATTERN}",
     re.IGNORECASE,
 )
 
 
+def _normalize_arabic(text: str) -> str:
+    """Collapses Arabic spelling variants that are the same word to anyone
+    typing casually but broke literal regex matching when only one spelling
+    was listed -- hamza forms (أ/إ/آ -> ا) and alef maksura vs ya (ى -> ي).
+    This is exactly what silently dropped the price filter on 'اعلي من 200'
+    (user's spelling) when the regex only had 'اعلى من' listed -- no error,
+    no fallback note, just a returned offer that quietly ignored the
+    customer's stated constraint."""
+    return (text or "").replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ى", "ي")
+
+
 def extract_price_range(query: str):
-    m = _RANGE_RE.search(query)
+    q = _normalize_arabic(query)
+    m = _RANGE_RE.search(q)
     if m:
         nums = [int(g) for g in m.groups() if g and g.isdigit()]
         if len(nums) >= 2:
             return (min(nums[:2]), max(nums[:2]))
-    m = _MAX_RE.search(query)
+    m = _MAX_RE.search(q)
     if m:
         val = next(int(g) for g in m.groups() if g and g.isdigit())
         return (0, val)
-    m = _MIN_RE.search(query)
+    m = _MIN_RE.search(q)
     if m:
         val = next(int(g) for g in m.groups() if g and g.isdigit())
         return (val, float("inf"))
@@ -451,7 +464,7 @@ def _mentioned_merchants(query: str, merchants: list) -> list:
 # These words flag that the query is *referring back* to something rather
 # than describing something new.
 _ANAPHORA_WORDS = {
-    "this", "that", "it", "ده", "دي", "دة", "هذا", "هذه", "ذلك", "دول",
+    "this", "that", "it", "ده", "دي", "دة", "هذا", "هذه", "ذلك", "دول", "هو", "هي",
 }
 
 # NEW: a follow-up doesn't always use a pronoun -- "how much was the price
@@ -502,18 +515,47 @@ def _extract_ordinals(query: str) -> list:
     return found
 
 
+# NEW: a query that's essentially nothing but a numeric price filter
+# ("فيه اعلي من 200 جنيه؟") has no pronoun, no signal phrase, and names no
+# merchant of its own -- it's implicitly asking "within what we were just
+# looking at, but pricier/cheaper". Without this it free-floats: this is
+# exactly what sent "فيه اعلي من 200 جنيه؟" (right after a pasta-offer turn)
+# to an unrelated Mini Melts deal instead of a pricier pasta option.
+# A query that ALSO names its own topic ("عايز باستا اعلى من 200") is
+# untouched -- "باستا" survives the filter as real content, so this stays
+# False and the query is treated as self-contained, as it should be.
+_PRICE_FILTER_WORDS = {
+    "في", "فيه", "من", "او", "أو", "لو", "ان", "إن", "ده", "دي", "هل", "بس",
+    "كل", "كام", "بكام", "حابب", "عايز", "عاوز", "ايه", "إيه", "اعلي", "اعلى",
+    "أعلى", "اقل", "أقل", "فوق", "تحت", "حتى", "حتي", "اكثر", "أكثر", "جنيه",
+    "جنية", "و", "ل", "لـ", "الي", "إلى", "الى", "قد", "طب",
+    "the", "a", "an", "of", "in", "on", "at", "for", "to", "is", "are", "any",
+    "under", "over", "above", "below", "between", "from", "less", "more",
+    "than", "egp",
+}
+
+
+def _looks_like_price_only_query(query: str) -> bool:
+    if extract_price_range(query) is None:
+        return False
+    words = re.split(r"[\s؟?!.,،]+", (query or "").lower())
+    content = [w for w in words if w and not w.isdigit() and w not in _PRICE_FILTER_WORDS]
+    return len(content) == 0
+
+
 def _looks_like_followup_text(query: str) -> bool:
     """True when the query's own wording suggests it's referring back to
-    something already discussed -- either a pronoun (_ANAPHORA_WORDS) or one
-    of the common referring phrasings that carry no pronoun at all
-    (_FOLLOWUP_SIGNAL_PHRASES). Does NOT check merchant-naming itself --
+    something already discussed -- a pronoun (_ANAPHORA_WORDS), one of the
+    common referring phrasings that carry no pronoun (_FOLLOWUP_SIGNAL_
+    PHRASES), or a bare price filter with no topic of its own (see
+    _looks_like_price_only_query). Does NOT check merchant-naming itself --
     callers combine this with _mentioned_merchants so a query that both
     contains "ده" AND names a merchant is still treated as self-contained."""
     q = (query or "").lower()
     words = re.split(r"[\s؟?!.,،]+", q)
     has_anaphora = any(w in _ANAPHORA_WORDS for w in words if w)
     has_signal_phrase = any(p in q for p in _FOLLOWUP_SIGNAL_PHRASES)
-    return has_anaphora or has_signal_phrase
+    return has_anaphora or has_signal_phrase or _looks_like_price_only_query(query)
 
 
 def _same_entity_family(top_meta: dict, second_meta: dict) -> bool:

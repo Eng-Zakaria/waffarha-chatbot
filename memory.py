@@ -20,18 +20,25 @@ explicitly NOT safe the moment you run more than one uvicorn worker/replica
 -- each worker would keep its own inconsistent memory of what a session was
 shown, so follow-ups would randomly work depending on which worker handled
 which request; see git history for the original in-process version). Now
-backed by Redis, so memory is shared across workers/replicas and survives
-app restarts/redeploys.
+backed by Redis by default, so memory is shared across workers/replicas and
+survives app restarts/redeploys.
+
+NEW: that process-local dict is back, but now as an explicit opt-in second
+backend rather than the only option -- see config.MEMORY_BACKEND. Point of
+this is local dev/testing without needing a Redis server running at all
+(MEMORY_BACKEND=local in .env). It is NOT a replacement for the Redis
+backend in anything multi-worker/multi-replica -- same "each worker has its
+own inconsistent view" problem as before applies to it, on purpose, since
+that's the tradeoff for not needing a server.
 
 Public interface is unchanged on purpose: MemoryStore().get(session_id)
 still returns an object with .remember(docs) / .recent(n) -- app.py doesn't
-need to change at all.
+need to change at all regardless of which backend is selected.
 """
 import json
+import threading
 import time
 from typing import Optional
-
-import redis
 
 import config
 
@@ -43,7 +50,45 @@ def _key(session_id: str) -> str:
     return f"waffarha:session:{session_id}:offers"
 
 
-class SessionMemory:
+def _extract_items(docs: list) -> list:
+    """Shared shaping logic for both backends, so they can't silently drift
+    on what counts as a "rememberable" doc or what gets stored for it.
+
+    docs: list of retrieved-doc dicts in RagEngine's shape, i.e. each one
+    has a "metadata" key (this is exactly the shape of result["sources"]
+    from RagEngine.answer()). Only offer/FAQ entries are kept; anything
+    else is ignored. Callers should pass what was actually shown/used in
+    the answer (e.g. raw_sources[:3]), not the full internal candidate
+    pool, so memory reflects what the user actually saw, not everything the
+    retriever merely considered.
+    """
+    items = []
+    for doc in docs:
+        meta = doc.get("metadata", {}) or {}
+        source = meta.get("source")
+        if source not in ("offer", "faq"):
+            continue
+        items.append({
+            "id": f"{source}:{meta.get('id')}",
+            "metadata": meta,
+            "shown_at": time.time(),
+        })
+    return items
+
+
+def _merge(items: list, existing: list) -> list:
+    """`items` is already highest-relevance-first for this turn (callers
+    pass raw_sources[:3] in that order). Drop any existing entries that
+    duplicate an id in this turn, so re-showing an offer moves it to the
+    front instead of creating a duplicate, then prepend `items` ahead of
+    `existing` for "most-recent-turn-first, most-relevant-within-turn-first"
+    ordering, capped at MAX_OFFERS_PER_SESSION."""
+    new_ids = {it["id"] for it in items}
+    existing = [e for e in existing if e.get("id") not in new_ids]
+    return (items + existing)[:MAX_OFFERS_PER_SESSION]
+
+
+class RedisSessionMemory:
     """Thin, stateless-in-Python wrapper bound to one session_id -- all
     actual data lives in Redis under _key(session_id). Cheap to construct
     per-request; there's nothing here to leak or need eviction for, unlike
@@ -55,15 +100,7 @@ class SessionMemory:
         self._key = _key(session_id)
 
     def remember(self, docs: list):
-        """docs: list of retrieved-doc dicts in RagEngine's shape, i.e. each
-        one has a "metadata" key (this is exactly the shape of
-        result["sources"] from RagEngine.answer()). Only offer/FAQ entries
-        are kept; anything else is ignored. Callers should pass what was
-        actually shown/used in the answer (e.g. raw_sources[:3]), not the
-        full internal candidate pool, so memory reflects what the user
-        actually saw, not everything the retriever merely considered.
-
-        Stored as a Redis list of JSON strings, most-recent-first, capped
+        """Stored as a Redis list of JSON strings, most-recent-first, capped
         at MAX_OFFERS_PER_SESSION. De-dupe + reorder happens in Python
         (read-modify-write) rather than server-side Redis list ops, since
         "drop this id wherever it appears, then reinsert at the front" has
@@ -75,17 +112,7 @@ class SessionMemory:
         corrupted data, and a single browser tab doesn't send concurrent
         chat requests for the same session in practice.
         """
-        items = []
-        for doc in docs:
-            meta = doc.get("metadata", {}) or {}
-            source = meta.get("source")
-            if source not in ("offer", "faq"):
-                continue
-            items.append({
-                "id": f"{source}:{meta.get('id')}",
-                "metadata": meta,
-                "shown_at": time.time(),
-            })
+        items = _extract_items(docs)
         if not items:
             return
 
@@ -96,17 +123,7 @@ class SessionMemory:
                 existing.append(json.loads(x))
             except (json.JSONDecodeError, TypeError):
                 continue
-        new_ids = {it["id"] for it in items}
-        # Drop any existing entries that duplicate an id in this turn, so
-        # re-showing an offer moves it to the front instead of creating a
-        # duplicate -- same de-dupe behavior as the original deque version.
-        existing = [e for e in existing if e.get("id") not in new_ids]
-        # `items` is already highest-relevance-first for this turn (callers
-        # pass raw_sources[:3] in that order); prepending it ahead of
-        # `existing` gives the same "most-recent-turn-first,
-        # most-relevant-within-turn-first" ordering the original
-        # reversed()+appendleft trick produced.
-        merged = (items + existing)[:MAX_OFFERS_PER_SESSION]
+        merged = _merge(items, existing)
 
         pipe = self._r.pipeline()
         pipe.delete(self._key)
@@ -132,18 +149,117 @@ class SessionMemory:
         return out
 
 
-class MemoryStore:
-    """Process-wide handle to a single Redis connection pool. get() is
-    cheap (just wraps the shared client + a session_id), so there's no
-    session_id -> object map to maintain in Python anymore -- Redis is the
-    only place session state actually lives."""
+class LocalSessionMemory:
+    """Same interface/behavior as RedisSessionMemory, but backed by a plain
+    dict on the shared _LocalBackend instead of a Redis key. No JSON
+    round-trip needed since there's no network boundary -- items are stored
+    as the actual Python dicts.
+
+    Same race-condition tradeoff as the Redis version applies here too, just
+    guarded with a plain Lock instead of a Redis pipeline: two concurrent
+    remember() calls for the same session_id could still race the
+    read-modify-write, so the lock is held across the whole thing to at
+    least make each call atomic with respect to the others.
+    """
+
+    def __init__(self, backend: "_LocalBackend", session_id: str):
+        self._backend = backend
+        self._session_id = session_id
+
+    def remember(self, docs: list):
+        items = _extract_items(docs)
+        if not items:
+            return
+        with self._backend.lock:
+            existing, _ = self._backend.store.get(self._session_id, ([], 0.0))
+            merged = _merge(items, existing)
+            self._backend.store[self._session_id] = (
+                merged,
+                time.time() + SESSION_TTL_SECONDS,
+            )
+
+    def recent(self, n: int = None) -> list:
+        with self._backend.lock:
+            entry = self._backend.store.get(self._session_id)
+            if entry is None:
+                return []
+            items, expires_at = entry
+            if time.time() > expires_at:
+                # Lazy eviction: cheap stand-in for Redis's key TTL. Only
+                # checked on access, so an idle session's memory for a
+                # single-process dev run just sits there unused until either
+                # read again (and evicted here) or the process restarts.
+                del self._backend.store[self._session_id]
+                return []
+        sliced = items if n is None else items[:n]
+        return [{"metadata": it["metadata"]} for it in sliced]
+
+
+class _LocalBackend:
+    """Holds the actual in-process state for the "local" backend: a plain
+    dict of session_id -> (items, expires_at), guarded by a lock. Exists
+    only so LocalSessionMemory instances constructed for the same
+    MemoryStore share the same dict, the same way every RedisSessionMemory
+    shares the same Redis connection."""
+
+    def __init__(self):
+        self.store: dict = {}
+        self.lock = threading.Lock()
+
+    def get(self, session_id: str) -> LocalSessionMemory:
+        return LocalSessionMemory(self, session_id)
+
+
+class _RedisBackend:
+    """Holds the actual Redis connection for the "redis" backend. Import of
+    the `redis` package is deferred to here (rather than module top-level)
+    so the "local" backend -- and this whole module, at import time -- works
+    even in an environment that never installed/needs the redis package."""
 
     def __init__(self, redis_url: Optional[str] = None):
+        import redis
         self._r = redis.from_url(redis_url or config.REDIS_URL, decode_responses=True)
         # Fail fast if Redis isn't reachable, same spirit as RagEngine's
         # Ollama check in rag_engine.py -- a clear error at startup beats a
         # mysterious failure on the first chat request.
         self._r.ping()
 
-    def get(self, session_id: str) -> SessionMemory:
-        return SessionMemory(self._r, session_id)
+    def get(self, session_id: str) -> RedisSessionMemory:
+        return RedisSessionMemory(self._r, session_id)
+
+
+class MemoryStore:
+    """Process-wide handle to session memory. Picks a backend at
+    construction time and delegates to it for the rest of its life --
+    callers (app.py) don't need to know or care which one is active.
+
+    backend: "redis" (default) or "local". Falls back to
+    config.MEMORY_BACKEND when not given, so the normal way to switch is
+    setting MEMORY_BACKEND=local in your .env rather than passing this
+    explicitly -- the explicit param mainly exists for tests that want to
+    force one backend regardless of the environment.
+
+      - "redis": shared across workers/replicas, survives restarts.
+        Requires a reachable Redis server -- connects (and .ping()s) here
+        in __init__, so a bad/missing Redis fails fast at construction,
+        same as before.
+      - "local": plain in-process dict, no server, no `redis` package import
+        even attempted. Use this to run/test the app without Redis. NOT
+        shared across workers/replicas and NOT persisted across restarts --
+        single-process/dev-only, same caveat the old pre-Redis version had.
+    """
+
+    def __init__(self, redis_url: Optional[str] = None, backend: Optional[str] = None):
+        backend = (backend or config.MEMORY_BACKEND).lower()
+        if backend == "local":
+            self._impl = _LocalBackend()
+        elif backend == "redis":
+            self._impl = _RedisBackend(redis_url)
+        else:
+            raise ValueError(
+                f"Unknown MEMORY_BACKEND {backend!r}; expected 'redis' or 'local'"
+            )
+        self.backend = backend
+
+    def get(self, session_id: str):
+        return self._impl.get(session_id)

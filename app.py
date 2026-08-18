@@ -78,9 +78,9 @@ def get_memory_store() -> MemoryStore:
         return _memory
     with _memory_lock:
         if _memory is None:
-            log.info("Connecting to Redis (session memory)...")
+            log.info("Setting up session memory (backend=%s)...", config.MEMORY_BACKEND)
             _memory = MemoryStore()
-            log.info("Redis connected.")
+            log.info("Session memory ready (backend=%s).", _memory.backend)
     return _memory
 
 

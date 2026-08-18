@@ -159,3 +159,13 @@ GENERATION_QUEUE_TIMEOUT = float(os.getenv("GENERATION_QUEUE_TIMEOUT", "30"))
 # `docker run -p 6379:6379 redis:alpine`); docker-compose.yml overrides
 # this to the `redis` service's in-network address.
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# NEW: which backend memory.MemoryStore uses to store session memory.
+#   "redis" (default): shared across workers/replicas, survives restarts.
+#     Requires a reachable Redis server (see REDIS_URL above).
+#   "local": plain in-process dict, no server involved at all. Use this to
+#     run/test the app without installing or starting Redis -- set
+#     MEMORY_BACKEND=local in your .env. NOT shared across workers/replicas
+#     and NOT persisted across restarts, so it's single-process/dev-only;
+#     production (multi-worker/replica) should stay on "redis".
+MEMORY_BACKEND = os.getenv("MEMORY_BACKEND", "redis").lower()
