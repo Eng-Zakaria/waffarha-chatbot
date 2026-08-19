@@ -1,59 +1,81 @@
 """
 Full project evaluation harness for the Waffarha Assistant.
 
-Runs four independent test suites and rolls everything into one timestamped
+Runs five independent test suites and rolls everything into one timestamped
 report (JSON + CSV + Markdown):
 
   1. INFRASTRUCTURE  -- can we even load the embedding model, the FAISS
      index, and reach Ollama / Redis? (fail fast with a clear reason instead
      of every later suite mysteriously erroring out)
-  2. RAG CORRECTNESS  -- runs queries.json straight through RagEngine
-     in-process (same mechanism as the existing run_eval.py / common.py),
-     scoring retrieval accuracy, keyword checks, scaffolding leaks, and
-     per-query latency. No server needed for this part.
-  3. SERVER SMOKE + CONCURRENCY  -- HTTP tests against a running
+  2. RETRIEVAL-ONLY  -- calls RagEngine.retrieve() directly (embedding +
+     FAISS search + lexical/intent scoring), with NO LLM call at all.
+     Scores hit@1 / hit@k / MRR against queries.json's expected_source /
+     expected_id, plus embedding-only latency and a determinism sanity
+     check. This is what answers "is retrieval good or bad, independent of
+     the model" -- it isolates the retriever/embedding layer from
+     generation. Needs the embedding model + FAISS index; does NOT need
+     Ollama (see --rag-only / --retrieval-only below).
+  3. RAG CORRECTNESS, FULL PIPELINE  -- runs queries.json straight through
+     RagEngine.answer() in-process (same mechanism as the existing
+     run_eval.py / common.py): retrieval AND generation together, scoring
+     keyword checks, scaffolding leaks, and per-query latency. This is
+     "what the user actually sees" -- compare its pass rate against suite
+     2's to tell a retrieval regression apart from a generation regression.
+     Both suites 2 and 3 report per-category AND per-language (en/ar/mixed)
+     breakdowns, since queries.json now carries an explicit "lang" field.
+  4. SERVER SMOKE + CONCURRENCY  -- HTTP tests against a running
      `uvicorn app:app` (or the docker-compose `app` service): health check,
      a basic end-to-end /api/chat call, input validation (400 on empty
      query), then a concurrent burst of requests to measure latency
      percentiles and confirm the MAX_CONCURRENT_GENERATIONS /
      GENERATION_QUEUE_TIMEOUT semaphore behaves (no request hangs forever,
      overflow gets a clean 503 + Retry-After instead of a timeout).
-  4. SESSION MEMORY  -- HTTP multi-turn conversation against a fixed
+  5. SESSION MEMORY  -- HTTP multi-turn conversation against a fixed
      session_id: ask about a specific offer, then ask a pronoun follow-up
      ("how much was it before the discount") and confirm the answer
      resolves back to the SAME offer (validates memory.py's Redis-backed
      SessionMemory round trip end to end, not just unit-level).
 
-Suites 3 and 4 need the server (and therefore Ollama + Redis) actually
+Suites 4 and 5 need the server (and therefore Ollama + Redis) actually
 running; if they can't connect, they're recorded as SKIPPED with the
 connection error rather than failing the whole run -- so `--skip-http` (or
-simply not having the server up) still gives you a full RAG-correctness +
-latency report from suite 2 alone.
+simply not having the server up) still gives you full retrieval + RAG
+correctness + latency reports from suites 2 and 3 alone.
 
 Usage:
     # Everything, against a locally running server:
     python run_full_eval.py
 
-    # Only the in-process RAG suite (no server required):
-    python run_full_eval.py --skip-http
+    # RAG only: retrieval + in-process generation, no server, no Redis,
+    # and Ollama isn't required to even START the run (suite 2's pure
+    # retrieval numbers work with no LLM at all; suite 3's generation
+    # calls will simply error per-case if Ollama truly isn't reachable):
+    python run_full_eval.py --rag-only
+
+    # Retrieval ONLY: embedding + FAISS search, zero LLM calls, zero
+    # Ollama/Redis dependency -- the fastest way to check "is retrieval
+    # good or bad" on its own:
+    python run_full_eval.py --retrieval-only
 
     # Point at a different host, different queries file, heavier load test:
     python run_full_eval.py --base-url http://localhost:8000 \
         --queries queries.json --concurrency 20 --concurrency-requests 60
 
-    # Sweep a different embedding/LLM config for suite 2 only:
+    # Sweep a different embedding/LLM config for suites 2/3 only:
     python run_full_eval.py --embedding-model intfloat/multilingual-e5-base \
-        --llm-model qwen2.5:3b-instruct --temperature 0.0
+        --llm-model qwen2.5:3b-instruct --temperature 0.0 --rag-only
 
 Writes to <out-dir>/<timestamp>[_<tag>]/:
-    full.json      -- everything, machine-readable
-    summary.csv    -- one row per RAG query (same shape as run_eval.py's)
+    full.json       -- everything, machine-readable
+    retrieval.csv   -- one row per query from suite 2 (retrieval-only)
+    summary.csv     -- one row per query from suite 3 (full pipeline)
     report.md       -- human-readable report with tables + a pass/fail summary
 
 Exit code is 1 if anything the harness considers a hard failure occurred
-(a checked RAG case failed, an infra check failed, a smoke test failed, or
-the memory round-trip failed) -- SKIPPED suites (server not reachable) do
-NOT fail the run, since they're opt-in via having the server up.
+(a checked retrieval or RAG case failed, an infra check failed, a smoke
+test failed, or the memory round-trip failed) -- SKIPPED suites (server not
+reachable, or intentionally skipped via --skip-http/--rag-only/
+--retrieval-only) do NOT fail the run.
 """
 import argparse
 import csv
@@ -73,6 +95,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 from common import get_engine, run_one  # noqa: E402
 import config  # noqa: E402
+from rag_engine import RagEngine, detect_lang  # noqa: E402
 
 
 # =============================================================================
@@ -107,14 +130,31 @@ def _badge(ok):
     return "✅ PASS" if ok else "❌ FAIL"
 
 
+def _truncate(text, n):
+    text = text or ""
+    text = " ".join(text.split())  # collapse newlines/whitespace for table rows
+    return text if len(text) <= n else text[:n].rstrip() + "…"
+
+
+def _md_escape(text):
+    # Markdown table cells break on raw pipes/newlines.
+    return (text or "").replace("|", "\\|").replace("\n", " ")
+
+
 # =============================================================================
 # Suite 1: infrastructure checks
 # =============================================================================
 
-def run_infra_checks(embedding_model, backend, llm_model):
+def run_infra_checks(embedding_model, backend, llm_model, rag_only=False):
     """Cheap, ordered checks so a failure points at the actual broken piece
     (missing index vs. Ollama down vs. Redis down) instead of a stack trace
-    from three layers deep in RagEngine.answer()."""
+    from three layers deep in RagEngine.answer().
+
+    rag_only -- when True, this is testing retrieval/embedding only (no
+    generation, no session memory), so the engine is loaded directly via
+    RagEngine(require_llm=False) instead of common.get_engine(), and the
+    Redis check is skipped entirely rather than reported as a failure --
+    neither Ollama nor Redis is needed for retrieval alone."""
     checks = []
 
     def add(name, ok, detail=""):
@@ -130,30 +170,41 @@ def run_infra_checks(embedding_model, backend, llm_model):
     except Exception as e:
         add("index files present", False, f"{type(e).__name__}: {e}")
 
-    # 1b. Full engine load: embedding model + FAISS/backend + Ollama ping.
-    # This is the same lazy-load path app.py's get_engine() uses.
+    # 1b. Engine load: embedding model + FAISS/backend [+ Ollama ping].
+    # Normal mode uses the same lazy-load path app.py's get_engine() uses
+    # (and requires Ollama, since suite 3's generation depends on it too).
+    # --rag-only constructs RagEngine directly with require_llm=False so
+    # retrieval can be evaluated with no Ollama server running at all.
     engine = None
     t0 = time.time()
+    label = ("engine load (embedding model + index, Ollama NOT required -- rag-only)" if rag_only
+             else "engine load (embedding model + index + Ollama reachable)")
     try:
-        engine = get_engine(embedding_model=embedding_model, backend=backend, llm_model=llm_model)
-        add("engine load (embedding model + index + Ollama reachable)", True,
+        if rag_only:
+            engine = RagEngine(embedding_model=embedding_model, backend=backend,
+                                llm_model=llm_model, require_llm=False)
+        else:
+            engine = get_engine(embedding_model=embedding_model, backend=backend, llm_model=llm_model)
+        add(label, True,
             f"{round(time.time() - t0, 2)}s, {len(engine.docs)} docs, "
             f"{len(engine._offer_merchants)} known merchants")
     except FileNotFoundError as e:
-        add("engine load (embedding model + index + Ollama reachable)", False, f"Index not found: {e}")
+        add(label, False, f"Index not found: {e}")
     except RuntimeError as e:
-        add("engine load (embedding model + index + Ollama reachable)", False, f"Ollama unreachable: {e}")
+        add(label, False, f"Ollama unreachable: {e}")
     except Exception as e:
-        add("engine load (embedding model + index + Ollama reachable)", False, f"{type(e).__name__}: {e}")
+        add(label, False, f"{type(e).__name__}: {e}")
 
     # 1c. Redis, independently of the engine (memory.py's own connection).
-    try:
-        from memory import MemoryStore
-        t0 = time.time()
-        MemoryStore()
-        add("redis reachable", True, f"{round(time.time() - t0, 2)}s via {config.REDIS_URL}")
-    except Exception as e:
-        add("redis reachable", False, f"{type(e).__name__}: {e} (REDIS_URL={config.REDIS_URL})")
+    # Not needed for retrieval-only evaluation (no session memory involved).
+    if not rag_only:
+        try:
+            from memory import MemoryStore
+            t0 = time.time()
+            MemoryStore()
+            add("redis reachable", True, f"{round(time.time() - t0, 2)}s via {config.REDIS_URL}")
+        except Exception as e:
+            add("redis reachable", False, f"{type(e).__name__}: {e} (REDIS_URL={config.REDIS_URL})")
 
     return {
         "checks": checks,
@@ -162,8 +213,169 @@ def run_infra_checks(embedding_model, backend, llm_model):
     }
 
 
+def _by_group(records, key_fn, ok_fn):
+    """Shared helper: buckets records by key_fn(record), counting total/
+    checked/passed via ok_fn(record) -> True/False/None (None = unchecked)."""
+    groups = {}
+    for r in records:
+        g = key_fn(r) or "uncategorized"
+        groups.setdefault(g, {"total": 0, "checked": 0, "passed": 0})
+        groups[g]["total"] += 1
+        ok = ok_fn(r)
+        if ok is not None:
+            groups[g]["checked"] += 1
+            if ok:
+                groups[g]["passed"] += 1
+    return groups
+
+
 # =============================================================================
-# Suite 2: RAG correctness + latency (in-process, via common.run_one)
+# Suite 2: RETRIEVAL-ONLY correctness + latency -- embedding + FAISS
+# search + lexical/intent scoring, via engine.retrieve() directly. No LLM
+# call happens in this suite at all, which is the point: it isolates
+# "did we find/rank the right document(s)" from "did the model write a
+# good answer from them", so a retrieval regression and a generation
+# regression show up as two different numbers instead of one blurred
+# pass/fail. Runs whenever the engine loaded, with or without --rag-only.
+# =============================================================================
+
+# Categories that only make sense with real generation (pure refusal/safety
+# behavior, or no single "correct" document to rank) are recorded for
+# visibility but not scored pass/fail here -- there's no expected_id/
+# expected_source ground truth to rank against.
+_RETRIEVAL_UNSCORED_CATEGORIES = {
+    "out_of_scope", "prompt_injection", "adversarial_input", "faq_not_in_kb",
+}
+
+
+def run_retrieval_suite(engine, queries_path):
+    queries_path = Path(queries_path)
+    if not queries_path.exists():
+        return {"skipped": True, "reason": f"{queries_path} not found", "records": []}
+
+    with open(queries_path, "r", encoding="utf-8") as f:
+        cases = json.load(f)
+
+    # Embedding-only micro-benchmark: encode a handful of real queries in
+    # isolation (outside of retrieve()'s embed+search+score bundle) to get
+    # a clean "how fast is the embedding model by itself" number, and a
+    # determinism sanity check (same text in -> ~identical vector out).
+    embed_samples = [c["query"] for c in cases if c.get("query")][:15]
+    embed_latencies = []
+    determinism_cos = None
+    try:
+        import numpy as np
+        for q in embed_samples:
+            t0 = time.time()
+            engine.embed_model.encode([q], normalize_embeddings=True, convert_to_numpy=True)
+            embed_latencies.append(time.time() - t0)
+        if embed_samples:
+            v1 = engine.embed_model.encode([embed_samples[0]], normalize_embeddings=True,
+                                            convert_to_numpy=True).astype("float32")[0]
+            v2 = engine.embed_model.encode([embed_samples[0]], normalize_embeddings=True,
+                                            convert_to_numpy=True).astype("float32")[0]
+            determinism_cos = float(np.dot(v1, v2) / ((np.linalg.norm(v1) * np.linalg.norm(v2)) or 1))
+    except Exception as e:
+        embed_latencies = []
+        determinism_cos = None
+        _embed_bench_error = f"{type(e).__name__}: {e}"
+    else:
+        _embed_bench_error = None
+
+    records = []
+    for case in cases:
+        query = case.get("query", "")
+        lang = case.get("lang") or detect_lang(query)
+        expected_source = case.get("expected_source")
+        expected_id = case.get("expected_id")
+        has_ground_truth = expected_id is not None
+        recent_offers = case.get("recent_offers")
+
+        rec = {
+            "id": case.get("id"), "category": case.get("category"), "lang": lang,
+            "query": query, "expected_source": expected_source, "expected_id": expected_id,
+        }
+        try:
+            t0 = time.time()
+            retrieved = engine.retrieve(query, history=None, recent_offers=recent_offers)
+            latency = time.time() - t0
+
+            top = retrieved[0] if retrieved else None
+            rec.update({
+                "latency_s": round(latency, 4),
+                "n_retrieved": len(retrieved),
+                "top_source": top["metadata"].get("source") if top else None,
+                "top_id": top["metadata"].get("id") if top else None,
+                "top_score": round(top.get("combined_score", 0.0), 4) if top else None,
+            })
+
+            rank = None
+            if has_ground_truth:
+                for i, r in enumerate(retrieved, start=1):
+                    same_source = (expected_source is None
+                                   or r["metadata"].get("source") == expected_source)
+                    if same_source and str(r["metadata"].get("id")) == str(expected_id):
+                        rank = i
+                        break
+                rec["rank"] = rank
+                rec["hit_at_1"] = rank == 1
+                rec["hit_at_k"] = rank is not None
+                rec["reciprocal_rank"] = (1.0 / rank) if rank else 0.0
+                rec["passed"] = rank is not None
+            elif expected_source is not None and case.get("category") not in _RETRIEVAL_UNSCORED_CATEGORIES:
+                # No specific doc to rank against, but we know which corpus
+                # (offer vs faq) the answer should be grounded in -- check
+                # that source shows up somewhere in the retrieved set.
+                source_hit = any(r["metadata"].get("source") == expected_source for r in retrieved)
+                rec["source_hit"] = source_hit
+                rec["passed"] = source_hit
+            else:
+                rec["passed"] = None  # no ground truth to score against (by design)
+        except Exception as e:
+            rec["error"] = str(e)
+            rec["traceback"] = traceback.format_exc(limit=3)
+            rec["passed"] = False
+        records.append(rec)
+
+    n_total = len(records)
+    n_checked = sum(1 for r in records if r.get("passed") is not None)
+    n_passed = sum(1 for r in records if r.get("passed") is True)
+    n_errors = sum(1 for r in records if "error" in r)
+    latencies = [r.get("latency_s") for r in records if "latency_s" in r]
+    reciprocal_ranks = [r["reciprocal_rank"] for r in records if "reciprocal_rank" in r]
+    hit1 = [r for r in records if "hit_at_1" in r]
+    hitk = [r for r in records if "hit_at_k" in r]
+
+    by_category = _by_group(records, lambda r: r.get("category"), lambda r: r.get("passed"))
+    by_lang = _by_group(records, lambda r: r.get("lang"), lambda r: r.get("passed"))
+
+    return {
+        "skipped": False,
+        "records": records,
+        "n_total": n_total,
+        "n_checked": n_checked,
+        "n_passed": n_passed,
+        "n_errors": n_errors,
+        "hit_at_1_rate": round(sum(1 for r in hit1 if r["hit_at_1"]) / len(hit1), 3) if hit1 else None,
+        "hit_at_k_rate": round(sum(1 for r in hitk if r["hit_at_k"]) / len(hitk), 3) if hitk else None,
+        "mrr": round(sum(reciprocal_ranks) / len(reciprocal_ranks), 3) if reciprocal_ranks else None,
+        "retrieval_latency_stats": _stats(latencies),
+        "embedding_only_latency_stats": _stats(embed_latencies),
+        "embedding_determinism_cosine": round(determinism_cos, 6) if determinism_cos is not None else None,
+        "embedding_bench_error": _embed_bench_error,
+        "embedding_model": engine.embedding_model_name,
+        "by_category": by_category,
+        "by_lang": by_lang,
+        "all_ok": n_errors == 0 and n_passed == n_checked,
+    }
+
+
+# =============================================================================
+# Suite 3: RAG correctness + latency, FULL PIPELINE (in-process, via
+# common.run_one) -- retrieval AND generation together, i.e. what the
+# user actually sees. Compare against Suite 2's retrieval-only numbers to
+# tell "retrieval found the right doc but the model wrote a bad answer
+# from it" apart from "retrieval itself surfaced the wrong doc".
 # =============================================================================
 
 def run_rag_suite(engine, queries_path):
@@ -184,6 +396,15 @@ def run_rag_suite(engine, queries_path):
                 "query": case.get("query"), "error": str(e),
                 "traceback": traceback.format_exc(limit=3), "passed": False,
             }
+        # NEW: tag every record with the query's language (from the case
+        # itself if present, else auto-detected) so pass rates and latency
+        # can be broken out by language regardless of what common.run_one's
+        # record shape does or doesn't carry.
+        rec["lang"] = case.get("lang") or detect_lang(case.get("query", ""))
+        # NEW: guarantee "query" is always present on the record regardless
+        # of whether common.run_one's own return dict includes it, so
+        # summary.csv and the markdown report can always show the question.
+        rec.setdefault("query", case.get("query", ""))
         records.append(rec)
 
     n_total = len(records)
@@ -193,15 +414,8 @@ def run_rag_suite(engine, queries_path):
     n_leaks = sum(1 for r in records if r.get("scaffolding_leak"))
     latencies = [r.get("latency_s") for r in records if "latency_s" in r]
 
-    by_category = {}
-    for r in records:
-        cat = r.get("category") or "uncategorized"
-        by_category.setdefault(cat, {"total": 0, "checked": 0, "passed": 0})
-        by_category[cat]["total"] += 1
-        if r.get("passed") is not None:
-            by_category[cat]["checked"] += 1
-            if r.get("passed"):
-                by_category[cat]["passed"] += 1
+    by_category = _by_group(records, lambda r: r.get("category"), lambda r: r.get("passed"))
+    by_lang = _by_group(records, lambda r: r.get("lang"), lambda r: r.get("passed"))
 
     return {
         "skipped": False,
@@ -213,6 +427,7 @@ def run_rag_suite(engine, queries_path):
         "n_leaks": n_leaks,
         "latency_stats": _stats(latencies),
         "by_category": by_category,
+        "by_lang": by_lang,
         "all_ok": n_errors == 0 and n_passed == n_checked,
     }
 
@@ -399,8 +614,19 @@ def run_memory_suite(base_url, session, engine):
 # =============================================================================
 
 def write_csv(records, path):
-    fields = ["id", "category", "passed", "top_source", "top_id", "top_score",
+    fields = ["id", "category", "lang", "query", "passed", "top_source", "top_id", "top_score",
               "scaffolding_leak", "latency_s", "answer", "error"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for rec in records:
+            writer.writerow(rec)
+
+
+def write_retrieval_csv(records, path):
+    fields = ["id", "category", "lang", "query", "expected_source", "expected_id",
+              "top_source", "top_id", "top_score", "rank", "hit_at_1", "hit_at_k",
+              "reciprocal_rank", "passed", "latency_s", "error"]
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
@@ -426,6 +652,7 @@ def write_markdown(report, path):
     a(f"**Backend:** {report['env']['backend']}  ")
     a(f"**LLM model:** {report['env']['llm_model']}  ")
     a(f"**Base URL (HTTP suites):** {report['env']['base_url'] or 'n/a (--skip-http)'}  ")
+    a(f"**Mode:** {'RAG-only (retrieval, no generation, no HTTP)' if report['env'].get('rag_only') else 'Full'}  ")
     a("")
 
     overall_ok = report["overall_ok"]
@@ -447,9 +674,69 @@ def write_markdown(report, path):
         a(f"| {c['name']} | {_badge(c['ok'])} | {c['detail']} |")
     a("")
 
-    # --- RAG suite ---
+    # --- Retrieval-only suite ---
+    retrieval = report.get("retrieval")
+    a("## 2. Retrieval-only correctness & latency (embedding + search, NO generation)")
+    a("")
+    a("_Isolates the retriever from the LLM: calls `engine.retrieve()` directly, so a low "
+      "score here means the embedding/search/ranking layer itself is at fault, independent "
+      "of anything the model does with what it's given._")
+    a("")
+    if retrieval is None:
+        a("_Skipped._")
+        a("")
+    elif retrieval.get("skipped"):
+        a(f"_Skipped: {retrieval['reason']}_")
+        a("")
+    else:
+        a(f"- **Cases run:** {retrieval['n_total']} (**{retrieval['n_checked']}** had ground truth to score)")
+        a(f"- **Passed:** {retrieval['n_passed']}/{retrieval['n_checked']}")
+        a(f"- **Errors:** {retrieval['n_errors']}")
+        a(f"- **Hit@1:** {retrieval['hit_at_1_rate']}  |  **Hit@k:** {retrieval['hit_at_k_rate']}  |  **MRR:** {retrieval['mrr']}")
+        a(f"- **Embedding model:** `{retrieval['embedding_model']}`")
+        a(f"- **Embedding determinism (cosine, same query encoded twice):** {retrieval['embedding_determinism_cosine']}")
+        a("")
+        a("**Latency**")
+        a("")
+        a("| Metric | N | Min | Mean | Median | p95 | Max |")
+        a("|---|---|---|---|---|---|---|")
+        a(_fmt_stats_row("Retrieval (embed + search + score)", retrieval["retrieval_latency_stats"]))
+        a(_fmt_stats_row("Embedding only (encode call alone)", retrieval["embedding_only_latency_stats"]))
+        a("")
+        a("**By category**")
+        a("")
+        a("| Category | Total | Checked | Passed |")
+        a("|---|---|---|---|")
+        for cat, s in sorted(retrieval["by_category"].items()):
+            a(f"| {cat} | {s['total']} | {s['checked']} | {s['passed']} |")
+        a("")
+        a("**By language**")
+        a("")
+        a("| Language | Total | Checked | Passed |")
+        a("|---|---|---|---|")
+        for lang, s in sorted(retrieval["by_lang"].items()):
+            a(f"| {lang} | {s['total']} | {s['checked']} | {s['passed']} |")
+        a("")
+        failed = [r for r in retrieval["records"]
+                  if (r.get("passed") is False) or "error" in r]
+        if failed:
+            a("**Failed / errored retrieval cases**")
+            a("")
+            a("| id | category | lang | question | expected | got (top-1) | rank | issue |")
+            a("|---|---|---|---|---|---|---|---|")
+            for r in failed[:30]:
+                question = _md_escape(_truncate(r.get("query", ""), 100))
+                expected = f"{r.get('expected_source')}:{r.get('expected_id')}"
+                got = f"{r.get('top_source')}:{r.get('top_id')} (score={r.get('top_score')})"
+                issue = f"ERROR: {r['error']}" if "error" in r else "not in retrieved set"
+                a(f"| {r.get('id')} | {r.get('category')} | {r.get('lang')} | {question} | {expected} | {got} | {r.get('rank')} | {issue} |")
+            if len(failed) > 30:
+                a(f"| … | | | | | | | +{len(failed) - 30} more, see full.json |")
+            a("")
+
+    # --- RAG suite (full pipeline) ---
     rag = report["rag"]
-    a("## 2. RAG correctness & latency (in-process)")
+    a("## 3. RAG correctness & latency, full pipeline (retrieval + generation, in-process)")
     a("")
     if rag.get("skipped"):
         a(f"_Skipped: {rag['reason']}_")
@@ -464,7 +751,7 @@ def write_markdown(report, path):
         a("")
         a("| Metric | N | Min | Mean | Median | p95 | Max |")
         a("|---|---|---|---|---|---|---|")
-        a(_fmt_stats_row("Per-query latency", rag["latency_stats"]))
+        a(_fmt_stats_row("Per-query latency (retrieval + generation)", rag["latency_stats"]))
         a("")
         a("**By category**")
         a("")
@@ -473,26 +760,36 @@ def write_markdown(report, path):
         for cat, s in sorted(rag["by_category"].items()):
             a(f"| {cat} | {s['total']} | {s['checked']} | {s['passed']} |")
         a("")
+        a("**By language**")
+        a("")
+        a("| Language | Total | Checked | Passed |")
+        a("|---|---|---|---|")
+        for lang, s in sorted(rag["by_lang"].items()):
+            a(f"| {lang} | {s['total']} | {s['checked']} | {s['passed']} |")
+        a("")
         failed = [r for r in rag["records"] if r.get("passed") is False or "error" in r]
         if failed:
-            a("**Failed / errored cases**")
+            a("**Failed / errored cases (question + answer)**")
             a("")
-            a("| id | category | issue |")
-            a("|---|---|---|")
+            a("| id | category | lang | question | answer | issue |")
+            a("|---|---|---|---|---|---|")
             for r in failed[:30]:
+                question = _md_escape(_truncate(r.get("query", ""), 120))
                 if "error" in r:
+                    answer = "_(no answer -- errored)_"
                     issue = f"ERROR: {r['error']}"
                 else:
+                    answer = _md_escape(_truncate(r.get("answer", ""), 200)) or "_(empty)_"
                     failed_checks = [k for k, v in r.get("checks", {}).items() if not v]
                     issue = f"failed checks: {', '.join(failed_checks)}"
-                a(f"| {r.get('id')} | {r.get('category')} | {issue} |")
+                a(f"| {r.get('id')} | {r.get('category')} | {r.get('lang')} | {question} | {answer} | {issue} |")
             if len(failed) > 30:
-                a(f"| … | | +{len(failed) - 30} more, see full.json |")
+                a(f"| … | | | | | +{len(failed) - 30} more, see full.json |")
             a("")
 
     # --- Smoke suite ---
     smoke = report.get("smoke")
-    a("## 3a. Server smoke test")
+    a("## 4a. Server smoke test")
     a("")
     if smoke is None:
         a("_Skipped (--skip-http)._")
@@ -509,7 +806,7 @@ def write_markdown(report, path):
 
     # --- Concurrency suite ---
     conc = report.get("concurrency")
-    a("## 3b. Concurrency / load test")
+    a("## 4b. Concurrency / load test")
     a("")
     if conc is None:
         a("_Skipped (--skip-http)._")
@@ -533,7 +830,7 @@ def write_markdown(report, path):
 
     # --- Memory suite ---
     mem = report.get("memory")
-    a("## 4. Session memory round-trip")
+    a("## 5. Session memory round-trip")
     a("")
     if mem is None:
         a("_Skipped (--skip-http)._")
@@ -580,7 +877,21 @@ def main():
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--skip-http", action="store_true",
-                         help="Skip suites 3/3b/4 entirely (no server required)")
+                         help="Skip suites 4a/4b/5 entirely (no server required)")
+    parser.add_argument("--rag-only", action="store_true",
+                         help="Test the RAG side only: retrieval (embedding + FAISS search) "
+                              "always runs, and this also runs the full retrieval+generation "
+                              "pipeline suite -- but skips everything server/session-related "
+                              "(suites 4a/4b/5) and does NOT require Ollama or Redis to be up "
+                              "at all. Use --rag-only --queries ... for a fast, dependency-free "
+                              "check of the retrieval layer plus in-process generation, with no "
+                              "server, no Redis, and (for the pure retrieval numbers) no Ollama "
+                              "needed either. Implies --skip-http.")
+    parser.add_argument("--retrieval-only", action="store_true",
+                         help="Like --rag-only, but ALSO skips the full generation suite (3), "
+                              "leaving just the pure retrieval/embedding suite (2). The fastest, "
+                              "most isolated way to answer 'is retrieval good or bad' with zero "
+                              "LLM calls and no Ollama/Redis dependency at all.")
     parser.add_argument("--concurrency", type=int, default=8,
                          help="Max simultaneous /api/chat requests in the load test")
     parser.add_argument("--concurrency-requests", type=int, default=24,
@@ -589,17 +900,28 @@ def main():
     parser.add_argument("--tag", default=None)
     args = parser.parse_args()
 
+    # --retrieval-only implies --rag-only implies --skip-http.
+    if args.retrieval_only:
+        args.rag_only = True
+    if args.rag_only:
+        args.skip_http = True
+
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     folder_name = f"{ts}_{args.tag}" if args.tag else ts
     out_dir = Path(args.out_dir) / folder_name
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"=== Waffarha Assistant full evaluation -- {ts} ===")
+    if args.retrieval_only:
+        print("Mode: --retrieval-only (embedding + search only, no LLM, no server)")
+    elif args.rag_only:
+        print("Mode: --rag-only (retrieval + in-process generation, no server, no Redis)")
     print(f"Output: {out_dir}/\n")
 
     # ---- Suite 1: infra ----
-    print("[1/4] Infrastructure checks...")
-    infra = run_infra_checks(args.embedding_model, args.backend, args.llm_model)
+    print("[1/5] Infrastructure checks...")
+    infra = run_infra_checks(args.embedding_model, args.backend, args.llm_model,
+                              rag_only=args.rag_only)
     for c in infra["checks"]:
         print(f"      {_badge(c['ok'])}  {c['name']}  -- {c['detail']}")
     engine = infra.pop("engine")
@@ -612,13 +934,40 @@ def main():
             "backend": args.backend,
             "llm_model": (engine.llm_model if engine else (args.llm_model or config.OLLAMA_MODEL)),
             "base_url": None if args.skip_http else args.base_url,
+            "rag_only": args.rag_only,
+            "retrieval_only": args.retrieval_only,
         },
         "infra": infra,
     }
 
-    # ---- Suite 2: RAG correctness (needs the engine from suite 1) ----
+    # ---- Suite 2: retrieval-only (needs the engine from suite 1; no LLM call) ----
     if engine is not None:
-        print("\n[2/4] RAG correctness + latency (queries.json, in-process)...")
+        print("\n[2/5] Retrieval-only correctness + latency (embedding + search, no LLM)...")
+        retrieval = run_retrieval_suite(engine, args.queries)
+        if retrieval.get("skipped"):
+            print(f"      skipped: {retrieval['reason']}")
+        else:
+            print(f"      {retrieval['n_passed']}/{retrieval['n_checked']} checked cases passed "
+                  f"({retrieval['n_total']} total, {retrieval['n_errors']} errors) -- "
+                  f"hit@1={retrieval['hit_at_1_rate']} hit@k={retrieval['hit_at_k_rate']} mrr={retrieval['mrr']}")
+    else:
+        retrieval = {"skipped": True, "reason": "engine failed to load, see infra checks above", "records": []}
+        print("\n[2/5] Retrieval-only -- SKIPPED (engine did not load)")
+    report["retrieval"] = retrieval
+
+    # ---- Suite 3: RAG correctness, full pipeline (retrieval + generation) ----
+    if args.retrieval_only:
+        rag = {"skipped": True, "reason": "--retrieval-only: full generation suite skipped", "records": []}
+        print("\n[3/5] RAG correctness (full pipeline) -- SKIPPED (--retrieval-only)")
+    elif engine is not None:
+        print("\n[3/5] RAG correctness + latency, full pipeline (queries.json, in-process)...")
+        if not engine.require_llm:
+            # --rag-only without --retrieval-only still wants generation, but the
+            # engine above was loaded with require_llm=False (no Ollama check) --
+            # if Ollama genuinely isn't reachable, generation calls below will
+            # raise naturally per-case and show up as errored records rather
+            # than crashing the whole suite.
+            pass
         if args.temperature is not None:
             engine.llm_options = {**engine.llm_options, "temperature": args.temperature}
         rag = run_rag_suite(engine, args.queries)
@@ -629,13 +978,13 @@ def main():
                   f"({rag['n_total']} total, {rag['n_errors']} errors, {rag['n_leaks']} leaks)")
     else:
         rag = {"skipped": True, "reason": "engine failed to load, see infra checks above", "records": []}
-        print("\n[2/4] RAG correctness -- SKIPPED (engine did not load)")
+        print("\n[3/5] RAG correctness (full pipeline) -- SKIPPED (engine did not load)")
     report["rag"] = rag
 
-    # ---- Suites 3/3b/4: HTTP ----
+    # ---- Suites 4a/4b/5: HTTP ----
     smoke = conc = mem = None
     if not args.skip_http:
-        print(f"\n[3/4] Server smoke test against {args.base_url} ...")
+        print(f"\n[4/5] Server smoke test against {args.base_url} ...")
         try:
             session = _http_session()
             smoke = run_smoke_suite(args.base_url, session)
@@ -655,7 +1004,7 @@ def main():
             print(f"      {conc['n_ok']} ok, {conc['n_503_backpressure']} backpressure (503), "
                   f"{conc['n_other_error']} unexpected errors, wall={conc['wall_s']}s")
 
-            print("\n[4/4] Session memory round-trip test ...")
+            print("\n[5/5] Session memory round-trip test ...")
             if engine is not None:
                 mem = run_memory_suite(args.base_url, session, engine)
                 if mem.get("skipped"):
@@ -667,12 +1016,13 @@ def main():
                 mem = {"skipped": True, "reason": "engine did not load (needed to pick a target offer)"}
                 print(f"      skipped: {mem['reason']}")
         else:
-            conc = {"skipped": True, "reason": "server not reachable, see 3a"}
-            mem = {"skipped": True, "reason": "server not reachable, see 3a"}
-            print("\n[4/4] Session memory round-trip -- SKIPPED (server not reachable)")
+            conc = {"skipped": True, "reason": "server not reachable, see 4a"}
+            mem = {"skipped": True, "reason": "server not reachable, see 4a"}
+            print("\n[5/5] Session memory round-trip -- SKIPPED (server not reachable)")
     else:
-        print("\n[3/4] Server smoke test -- SKIPPED (--skip-http)")
-        print("[4/4] Session memory round-trip -- SKIPPED (--skip-http)")
+        reason = "--rag-only" if args.rag_only else "--skip-http"
+        print(f"\n[4/5] Server smoke test -- SKIPPED ({reason})")
+        print(f"[5/5] Session memory round-trip -- SKIPPED ({reason})")
 
     report["smoke"] = smoke
     report["concurrency"] = conc
@@ -681,21 +1031,24 @@ def main():
     # ---- Roll up pass/fail ----
     def suite_status(s, ok_key="all_ok"):
         if s is None:
-            return "⏭️ skipped (--skip-http)"
+            return "⏭️ skipped (--skip-http/--rag-only)"
         if s.get("skipped"):
             return f"⏭️ skipped ({s.get('reason', '')})"
         return _badge(s.get(ok_key, False))
 
     suites_status = {
         "1. Infrastructure": _badge(infra["all_ok"]),
-        "2. RAG correctness": ("⏭️ skipped" if rag.get("skipped") else _badge(rag["all_ok"])),
-        "3a. Server smoke": suite_status(smoke),
-        "3b. Concurrency": suite_status(conc),
-        "4. Session memory": suite_status(mem),
+        "2. Retrieval-only": ("⏭️ skipped" if retrieval.get("skipped") else _badge(retrieval["all_ok"])),
+        "3. RAG correctness (full pipeline)": ("⏭️ skipped" if rag.get("skipped") else _badge(rag["all_ok"])),
+        "4a. Server smoke": suite_status(smoke),
+        "4b. Concurrency": suite_status(conc),
+        "5. Session memory": suite_status(mem),
     }
     report["suites_status"] = suites_status
 
     hard_failures = [infra["all_ok"] is False]
+    if not retrieval.get("skipped"):
+        hard_failures.append(retrieval["all_ok"] is False)
     if not rag.get("skipped"):
         hard_failures.append(rag["all_ok"] is False)
     if smoke and not smoke.get("skipped"):
@@ -711,6 +1064,8 @@ def main():
     with open(out_dir / "full.json", "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2, default=str)
 
+    if not retrieval.get("skipped"):
+        write_retrieval_csv(retrieval["records"], out_dir / "retrieval.csv")
     if not rag.get("skipped"):
         write_csv(rag["records"], out_dir / "summary.csv")
 
@@ -719,6 +1074,8 @@ def main():
     print(f"\n=== Overall: {_badge(overall_ok)} ===")
     print(f"Results written to {out_dir}/")
     print(f"  - {out_dir / 'full.json'}")
+    if not retrieval.get("skipped"):
+        print(f"  - {out_dir / 'retrieval.csv'}")
     if not rag.get("skipped"):
         print(f"  - {out_dir / 'summary.csv'}")
     print(f"  - {out_dir / 'report.md'}")
