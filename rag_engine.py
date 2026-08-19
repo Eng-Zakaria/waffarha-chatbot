@@ -786,7 +786,7 @@ def _same_entity_family(top_meta: dict, second_meta: dict) -> bool:
 
 class RagEngine:
     def __init__(self, embedding_model: str = None, backend: str = "faiss",
-                 llm_model: str = None, index_dir: str = None, llm_options: dict = None):
+                 llm_model: str = None, index_dir: str = None, llm_options: dict = None, require_llm: bool = True):
         """
         CHANGED (was: only read config.py):
           embedding_model -- sentence-transformers model id. Defaults to config.EMBEDDING_MODEL.
@@ -851,14 +851,17 @@ class RagEngine:
         )
 
         self.client = ollama.Client(host=config.OLLAMA_HOST)
-        try:
-            self.client.list()
-        except Exception as e:
-            raise RuntimeError(
-                f"Can't reach Ollama at {config.OLLAMA_HOST}. Is it installed and running? "
-                f"Download it from https://ollama.com, then run: ollama pull {self.llm_model}\n"
-                f"Original error: {e}"
-            )
+        if require_llm:
+            try:
+                self.client.list()
+            except Exception as e:
+                raise RuntimeError(
+                    f"Can't reach Ollama at {config.OLLAMA_HOST}. Is it installed and running? "
+                    f"Download it from https://ollama.com, then run: ollama pull {self.llm_model}\n"
+                    f"Original error: {e}"
+                )
+        self.require_llm = require_llm
+
 
     def _detect_multi_item(self, query: str):
         """Returns (multi_item: bool, mentioned_merchants: list). multi_item
