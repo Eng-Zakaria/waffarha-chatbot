@@ -72,6 +72,19 @@ TOP_K = 3
 CANDIDATE_K = 15 
 LEXICAL_BONUS_WEIGHT = 0.4 
 
+# NEW: intent classification (_classify_intent) used to be a HARD filter in
+# retrieve() -- any doc whose source didn't match the classified intent was
+# excluded from candidates entirely, before scoring. That's what was
+# silently dropping real FAQ answers: _OFFER_INTENT_WORDS contains generic
+# words like "coupon"/"discount"/"price" that show up constantly in FAQ
+# questions too ("How do I use my purchased coupon?" -> classified "offer"
+# -> every FAQ doc excluded, faq_4 never had a chance to score). Now used as
+# a soft additive bonus instead -- nudges ranking toward the classified
+# source without ever making the other source unreachable. Kept smaller
+# than LEXICAL_BONUS_WEIGHT since intent classification is a much cruder
+# signal (keyword-list guess) than an actual literal word match.
+INTENT_BONUS_WEIGHT = 0.15
+
 # NEW: used instead of TOP_K / CANDIDATE_K when a query is detected as
 # "multi-offer" -- either comparison-phrased ("compare X and Y") or naming
 # 2+ known merchants by name. A single-offer TOP_K=3 / CANDIDATE_K=15 is
@@ -83,6 +96,31 @@ CANDIDATE_K_MULTI = 30
 
 
 MIN_RELEVANCE_SCORE = 0.35  
+
+# NEW: minimum similarity ratio (difflib SequenceMatcher, 0-1) for a
+# capitalized brand-like token in the query to count as "close enough" to a
+# known merchant name. This is deliberately strict -- it exists to catch
+# the offer_hallucination_check failure mode (a query naming a merchant
+# that isn't in the catalog at all, e.g. "Starbucks Egypt", still scoring
+# 0.95+ on embedding similarity against some unrelated real offer and
+# getting answered as if it were real). Raise this if legitimate merchant
+# names with minor spelling variants start getting incorrectly rejected;
+# lower it (cautiously) if real merchants are getting flagged as unknown.
+MERCHANT_FUZZY_MATCH_CUTOFF = 0.8
+
+# NEW: known abbreviation/alternate-name overrides for merchants whose
+# common short form doesn't fuzzy-match their catalog name well (e.g. an
+# acronym vs. the full brand name). Add entries here as they're found in
+# real traffic instead of relying purely on fuzzy string similarity -- this
+# is the safer fix for the mixed_language_query_kfc failure mode (a Latin-
+# script brand abbreviation embedded in an Arabic sentence matching the
+# wrong merchant) since a wrong fuzzy guess is worse than no guess. Keys
+# are lowercase; values must match a real merchant string from the index.
+# Populate from your actual merchant list -- left empty here since this repo
+# snapshot doesn't include the merchant catalog.
+MERCHANT_ALIASES = {
+    # "kfc": "<exact merchant name as stored in the index>",
+}
 
 
 
@@ -142,6 +180,25 @@ MAX_TOKENS = 500
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "1536"))  
 
 HISTORY_TURNS_KEPT = 3
+
+# NEW: fallback for follow-up phrasings the hardcoded word/phrase lists in
+# rag_engine.py (_ANAPHORA_WORDS, _FOLLOWUP_SIGNAL_PHRASES, ...) don't
+# recognize -- e.g. the "بكام" gap. Rather than only growing those lists
+# forever as new dialectal phrasings turn up in production, a short,
+# low-content query that the rule-based checks say is NOT a follow-up gets
+# one cheap classification call to the LLM ("is this about the same offer
+# I just showed, or something new?") before being treated as fresh. Set
+# to False to disable entirely and rely only on the rule-based lists.
+FOLLOWUP_LLM_FALLBACK_ENABLED = os.getenv("FOLLOWUP_LLM_FALLBACK_ENABLED", "true").lower() == "true"
+
+# NEW: the LLM fallback above only fires for SHORT queries with this many
+# or fewer non-stopword words -- e.g. "بكام" (1 word) or "لسه شغال ولا لأ"
+# (a few words) qualify, but "do you have any pizza offers under 200 EGP"
+# (clearly self-contained, unambiguous, and not vague) does not, so the
+# fallback isn't spent on queries the rule-based checks were already right
+# to call "fresh". Keep this low -- it's a filter for AMBIGUOUS short
+# questions, not a general follow-up detector.
+FOLLOWUP_LLM_FALLBACK_MAX_CONTENT_WORDS = 4
 
 # NEW: caps how many /api/chat requests this process will have actively
 # generating with Ollama at once (see app.py's _generation_semaphore for

@@ -23,7 +23,7 @@ services:
 
   ollama:
     build:
-      context: ./ollama
+      context: ./ollama-docker
       # The build context's Dockerfile is named ollama-Dockerfile, not the
       # bare "Dockerfile" Compose looks for by default (there'd be no name
       # collision either way since it's in its own subfolder, but the repo
@@ -36,7 +36,7 @@ services:
       # Named volume, not baked-in storage, for the *running* container's
       # model dir. On first start Docker seeds an empty named volume from
       # the image's /root/.ollama -- so the model baked in at build time
-      # (see ./ollama/Dockerfile) ends up here automatically, and any model
+      # (see ./ollama-docker/Dockerfile) ends up here automatically, and any model
       # pulled later at runtime (`docker compose exec ollama ollama pull ...`)
       # persists across container restarts/recreates too.
       - ollama_models:/root/.ollama
