@@ -33,6 +33,33 @@ def load_faqs() -> list:
     with open(path, "r", encoding="utf-8") as f:
         faqs = json.load(f)
 
+    # NEW: ingest/fetch_payment_methods_clickhouse.py --write produces this
+    # file in the exact same raw record shape as faqs.json (id/question_en/
+    # answer_en/category/question_ar/answer_ar/category_ar), sourced from
+    # main.dim_payment_methods instead of hand-curated -- so it's simply
+    # concatenated in here rather than needing its own loader/doc-building
+    # logic. Optional and additive: nothing breaks if this file doesn't
+    # exist (e.g. it hasn't been generated yet, or a deploy doesn't use it).
+    payment_faqs_path = os.path.join(config.INDEX_DIR, "faqs_payment_methods.json")
+    if os.path.exists(payment_faqs_path):
+        with open(payment_faqs_path, "r", encoding="utf-8") as f:
+            payment_faqs = json.load(f)
+        faqs = faqs + payment_faqs
+        print(f"Loaded {len(payment_faqs)} payment-method FAQ record(s) from {payment_faqs_path}")
+
+    # NEW: ingest/fetch_purchasing_status_clickhouse.py --write produces this
+    # file, same raw record shape and same optional/additive contract as
+    # faqs_payment_methods.json above -- sourced from
+    # main.dim_purchasing_status, filtered to customer-facing status names
+    # only (see that script's module docstring for why the filter is on
+    # name shape rather than the status column).
+    purchasing_status_faqs_path = os.path.join(config.INDEX_DIR, "faqs_purchasing_status.json")
+    if os.path.exists(purchasing_status_faqs_path):
+        with open(purchasing_status_faqs_path, "r", encoding="utf-8") as f:
+            purchasing_status_faqs = json.load(f)
+        faqs = faqs + purchasing_status_faqs
+        print(f"Loaded {len(purchasing_status_faqs)} purchasing-status FAQ record(s) from {purchasing_status_faqs_path}")
+
     docs = []
     for faq in faqs:
         docs.append({
@@ -108,6 +135,62 @@ def _extract_sold_count(offer: dict):
     return int(m.group(1)) if m else None
 
 
+# NEW: ingest/fetch_type_price_clickhouse.py --write produces this file --
+# {str(offer_id): [tier_dict, ...]}, already filtered to status=1 (currently
+# purchasable) tiers only -- see that script's module docstring for why
+# status=1 vs 0 is the right filter. Optional and additive, same pattern as
+# faqs_payment_methods.json above: nothing breaks if it doesn't exist yet.
+def _load_type_prices() -> dict:
+    path = os.path.join(config.INDEX_DIR, "type_prices.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    n_tiers = sum(len(v) for v in data.values())
+    print(f"Loaded {n_tiers} pricing tier(s) across {len(data)} offer(s) from {path}")
+    return data
+
+
+# NEW: renders one tier as one line of embedded text. Falls back to the
+# other language's name if this language's is missing (same defensive
+# pattern as fetch_payment_methods_clickhouse.py's _build_faq_records) so a
+# gap in one language's data doesn't just silently drop that tier. Arabic
+# uses actual Arabic words for "was"/"off" rather than the mixed English-
+# in-Arabic phrasing the base Price: line above it already has (see
+# config.py's CURRENCY comment) -- new code doesn't need to repeat that.
+def _format_tier_line(tier: dict, lang: str) -> str:
+    name = tier.get(f"name_{lang}") or tier.get("name_en") or tier.get("name_ar") or ""
+    price = tier.get("price")
+    if not name or price in (None, ""):
+        return ""
+
+    currency = config.CURRENCY.get(lang, config.CURRENCY.get("en", "EGP")) \
+        if isinstance(config.CURRENCY, dict) else config.CURRENCY
+
+    before = tier.get("price_before_discount")
+    discount = tier.get("discount")
+    show_before = before not in (None, "", 0, "0") and str(before) != str(price)
+    show_discount = discount not in (None, "", 0, "0", "0.0")
+
+    line = f"- {name}: {price} {currency}"
+    if show_before or show_discount:
+        if lang == "ar":
+            extra = []
+            if show_before:
+                extra.append(f"كانت {before} {currency}")
+            if show_discount:
+                extra.append(f"خصم {discount}%")
+            line += " (" + "، ".join(extra) + ")"
+        else:
+            extra = []
+            if show_before:
+                extra.append(f"was {before} {currency}")
+            if show_discount:
+                extra.append(f"{discount}% off")
+            line += " (" + ", ".join(extra) + ")"
+    return line
+
+
 def load_offers() -> list:
     path = os.path.join(config.INDEX_DIR, "offers_raw.json")
     if not os.path.exists(path):
@@ -116,6 +199,8 @@ def load_offers() -> list:
 
     with open(path, "r", encoding="utf-8") as f:
         offers = json.load(f)
+
+    type_prices = _load_type_prices()
 
     fc = config.OFFER_FIELD_CANDIDATES
     docs = []
@@ -152,6 +237,16 @@ def load_offers() -> list:
 
         partners = offer.get("partners")
         merchant = partners.get("part_name", "") if isinstance(partners, dict) else ""
+        # NEW: partner contact/location fields, folded in additively (see
+        # fetch_offers_clickhouse.py's partner join) -- only present at all
+        # for a currently-active partner, and only per-field when that
+        # field is actually populated, so an offer with none of these just
+        # renders exactly as before.
+        part_address = partners.get("address", "") if isinstance(partners, dict) else ""
+        part_hours = partners.get("hours", "") if isinstance(partners, dict) else ""
+        part_phone = partners.get("phone", "") if isinstance(partners, dict) else ""
+        part_facebook = partners.get("facebook", "") if isinstance(partners, dict) else ""
+        part_website = partners.get("website", "") if isinstance(partners, dict) else ""
 
         show_old_price = old_price and old_price not in (0, "0") and str(old_price) != str(price)
         show_discount = discount and str(discount) not in ("0", "0.0")
@@ -159,6 +254,19 @@ def load_offers() -> list:
         text_parts = [f"Offer: {title}"]
         if merchant:
             text_parts.append(f"Merchant: {merchant}")
+        if part_address:
+            label = "Address" if lang == "en" else "العنوان"
+            text_parts.append(f"{label}: {part_address}")
+        if part_hours:
+            label = "Hours" if lang == "en" else "مواعيد العمل"
+            text_parts.append(f"{label}: {part_hours}")
+        if part_phone:
+            label = "Phone" if lang == "en" else "التليفون"
+            text_parts.append(f"{label}: {part_phone}")
+        if part_facebook:
+            text_parts.append(f"Facebook: {part_facebook}")
+        if part_website:
+            text_parts.append(f"Website: {part_website}")
         if description and description != title:
             text_parts.append(f"Description: {description}")
         if price:
@@ -177,6 +285,21 @@ def load_offers() -> list:
         if tag_line:
             text_parts.append(tag_line)
 
+        # NEW: fold active dim_type_price tiers into the embedded text --
+        # see _load_type_prices/_format_tier_line above. Purely additive to
+        # the single Price: line: offers with no tier data (the majority --
+        # only ~83% of offers with ANY dim_type_price rows, and far fewer
+        # than that of all offers, actually have multiple tiers) render
+        # exactly as before.
+        tiers = type_prices.get(str(offer_id), [])
+        if tiers:
+            tier_lines = [_format_tier_line(t, lang) for t in tiers]
+            tier_lines = [t for t in tier_lines if t]
+            if tier_lines:
+                label = "Pricing options" if lang == "en" else "خيارات الأسعار"
+                text_parts.append(f"{label}:")
+                text_parts.extend(tier_lines)
+
         sold_count = _extract_sold_count(offer)
 
         docs.append({
@@ -187,6 +310,12 @@ def load_offers() -> list:
                 "discount": discount if show_discount else None, "expiry": expiry,
                 "lang": lang, "section_id": offer.get("_section_id"),
                 "sold_count": sold_count,  # NEW -- see _extract_sold_count
+                # NEW -- partner contact/location, see fetch_offers_clickhouse.py.
+                # Empty string (not None) when absent, matching how the other
+                # optional string fields (merchant, etc.) already behave here.
+                "part_address": part_address, "part_hours": part_hours,
+                "part_phone": part_phone, "part_facebook": part_facebook,
+                "part_website": part_website,
             },
         })
 

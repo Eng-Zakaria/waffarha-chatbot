@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+import clickhouse_connect
 
 load_dotenv()
 # CHANGED: was hardcoded "cuda", which crashes on any machine without an
@@ -32,6 +33,52 @@ OFFERS_API_BASE_BODY = {
 }
 
 CATEGORY_IDS = [1, 5, 6, 7, 8, 9, 11, 12, 15, 17, 18, 20, 10, 21, 22, 24, 25, 146, 147, 148]
+
+# NEW: connection settings for ingest/fetch_offers_clickhouse.py, an
+# alternative offer source to fetch_offers.py's mobile-API scrape. Same
+# lazy-error pattern as get_security_key() above -- only raises if something
+# actually tries to connect, so importing config.py (e.g. from rag_engine.py,
+# which never touches ClickHouse) never requires these to be set.
+CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "localhost")
+CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))  # clickhouse-connect default HTTP port
+# CHANGED: matches the actual .env var name in use (CLICKHOUSE_USERNAME),
+# not the CLICKHOUSE_USER this originally assumed.
+CLICKHOUSE_USERNAME = os.getenv("CLICKHOUSE_USERNAME", "default")
+CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "main")
+# CHANGED: was a flat "false" default. Port 443 is the standard HTTPS port
+# for ClickHouse's HTTP interface (e.g. clickhouse-test.waffarha.tech runs
+# on 443) -- defaulting secure=False against a 443 host would just fail the
+# handshake. Still fully overridable via CLICKHOUSE_SECURE if you ever point
+# this at a plain-HTTP host on port 443 for some reason.
+CLICKHOUSE_SECURE = os.getenv("CLICKHOUSE_SECURE", "true" if CLICKHOUSE_PORT == 443 else "false").lower() == "true"
+_clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD")
+
+
+def get_clickhouse_client():
+    """Returns a connected clickhouse_connect client. Deferred import (like
+    get_security_key()'s deferred requirement) so nothing else in this repo
+    needs the clickhouse-connect package installed to import config.py.
+
+    IMPORTANT: this should be a READ-ONLY database user. fetch_offers_clickhouse.py
+    only issues SELECTs, but there is no code-level enforcement of that --
+    the enforcement belongs at the DB-user/grant level, same as any other
+    service account with query access to production data.
+    """
+
+    if not _clickhouse_password and os.getenv("CLICKHOUSE_REQUIRE_PASSWORD", "true").lower() == "true":
+        raise RuntimeError(
+            "CLICKHOUSE_PASSWORD is not set. Set it in .env, or set "
+            "CLICKHOUSE_REQUIRE_PASSWORD=false explicitly if your ClickHouse "
+            "user genuinely has no password (e.g. local dev)."
+        )
+    return clickhouse_connect.get_client(
+        host=CLICKHOUSE_HOST,
+        port=CLICKHOUSE_PORT,
+        username=CLICKHOUSE_USERNAME,
+        password=_clickhouse_password or "",
+        database=CLICKHOUSE_DATABASE,
+        secure=CLICKHOUSE_SECURE,
+    )
 
 LANGS = ["en", "ar"]
 
