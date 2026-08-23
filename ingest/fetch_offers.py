@@ -19,7 +19,8 @@ import time
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config  # noqa: E402
+import config 
+from config import get_security_key
 
 
 def fetch_page(section_id: int, page: int, lang: str) -> dict:
