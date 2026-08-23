@@ -10,7 +10,7 @@ python-dotenv>=1.0
 
 # --- Session memory (memory.py) ---
 redis>=5.0
-
+clickhouse_connect
 # --- Ingest scripts (ingest/build_index.py, ingest/fetch_offers.py) ---
 # Only needed if you plan to re-fetch offers or rebuild the index yourself --
 # not required just to run the chatbot against the prebuilt index.
