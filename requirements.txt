@@ -11,10 +11,19 @@ python-dotenv>=1.0
 # --- Session memory (memory.py) ---
 redis>=5.0
 clickhouse_connect
+
 # --- Ingest scripts (ingest/build_index.py, ingest/fetch_offers.py) ---
 # Only needed if you plan to re-fetch offers or rebuild the index yourself --
 # not required just to run the chatbot against the prebuilt index.
 requests>=2.31
+google
+
+# --- Evaluation & Comparison ---
+# For Gemini comparison (pip install google-genai)
+# For semantic similarity (pip install scikit-learn)
+# Uncomment if you want to run compare_llms.py:
+# google-genai>=1.0
+# scikit-learn>=1.3
 
 # --- Optional alternate vector store backends (vectorstores.py) ---
 # Uncomment whichever ones you actually use -- the app runs fine with just

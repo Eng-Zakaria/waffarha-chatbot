@@ -1,4 +1,5 @@
 import csv
+import json
 import os
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ from rag_engine import RagEngine
 # CONFIG
 # ============================================================
 
-INPUT_CSV = "eval/questions.csv"
+INPUT_JSON = "queries.json"
 OUTPUT_CSV = "eval/rag_vs_gemini.csv"
 
 GEMINI_MODEL = "gemini-2.5-flash"
@@ -174,7 +175,7 @@ def run_local_project(question: str):
 
 def main():
 
-    input_path = Path(INPUT_CSV)
+    input_path = Path(INPUT_JSON)
     output_path = Path(OUTPUT_CSV)
 
     output_path.parent.mkdir(
@@ -184,19 +185,22 @@ def main():
 
     if not input_path.exists():
         raise FileNotFoundError(
-            f"Input CSV not found: {input_path}"
+            f"Input JSON not found: {input_path}"
         )
 
     with open(
         input_path,
         "r",
-        encoding="utf-8-sig",
-        newline=""
+        encoding="utf-8-sig"
     ) as f:
 
-        reader = csv.DictReader(f)
+        rows = json.load(f)
 
-        rows = list(reader)
+    if not isinstance(rows, list):
+        raise ValueError(
+            f"Expected {input_path} to contain a JSON array of "
+            f"query objects, got {type(rows).__name__}."
+        )
 
     print(f"Loaded {len(rows)} questions.")
 
@@ -204,7 +208,10 @@ def main():
 
     for i, row in enumerate(rows, start=1):
 
-        question = row.get("question", "").strip()
+        query_id = row.get("id", "")
+        category = row.get("category", "")
+
+        question = row.get("query", "").strip()
         expected = row.get("expected_answer", "").strip()
 
         if not question:
@@ -277,6 +284,10 @@ def main():
 
             results.append({
 
+                "id": query_id,
+
+                "category": category,
+
                 "question": question,
 
                 "expected_answer": expected,
@@ -341,6 +352,10 @@ def main():
 
             results.append({
 
+                "id": query_id,
+
+                "category": category,
+
                 "question": question,
 
                 "expected_answer": expected,
@@ -372,6 +387,8 @@ def main():
     # ========================================================
 
     fieldnames = [
+        "id",
+        "category",
         "question",
         "expected_answer",
         "project_answer",

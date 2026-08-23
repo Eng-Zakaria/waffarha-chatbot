@@ -4,7 +4,7 @@ __pycache__/
 venv/
 venv*
 digest.txt
-
+eval/
 .aider*
 .continue
 .debug
