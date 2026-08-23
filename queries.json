@@ -27,11 +27,13 @@
     "category": "offer_direct_answer",
     "query": "Tell me about the Asian Wok offer.",
     "expected_source": "offer",
-    "expected_id": 9209,
     "expected_keywords": [
-      "175",
-      "EGP"
+      "Asian Wok"
     ],
+    "forbidden_keywords": [
+      "175"
+    ],
+    "note": "Offer 9209 (Asian Wok) is DISABLED in the live feed and excluded from the index -- the only honest answer is 'we don't currently have any offers from Asian Wok'. Must not fabricate 175 EGP from Mr. Wok / Wok and Walk.",
     "lang": "en"
   },
   {
@@ -739,10 +741,6 @@
     "lang": "ar",
     "query": "احكيلي عن عرض اسيان ووك",
     "expected_source": "offer",
-    "expected_id": 9209,
-    "expected_keywords": [
-      "175"
-    ],
     "note": "Arabic counterpart of offer_direct_answer_asianwok."
   },
   {

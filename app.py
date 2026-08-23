@@ -28,6 +28,9 @@ import random
 import re
 import threading
 from typing import List, Optional
+from identity import get_identity_resolver
+
+
 
 # NEW: redis import is optional now -- MEMORY_BACKEND=local (see config.py /
 # memory.py) never touches Redis at all, so this module shouldn't hard-require
@@ -101,6 +104,21 @@ def get_memory_store() -> MemoryStore:
 
 async def get_memory_store_async() -> MemoryStore:
     return await asyncio.to_thread(get_memory_store)
+
+
+
+_identity = None
+_identity_lock = threading.Lock()
+
+def get_identity():
+    global _identity
+    if _identity is not None:
+        return _identity
+    with _identity_lock:
+        if _identity is None:
+            _identity = get_identity_resolver()
+    return _identity 
+
 
 # ---------------------------------------------------------------------------
 # CORS: only needed because the frontend can be hosted on a different origin
@@ -371,6 +389,13 @@ def _build_suggestions(raw_sources: list, reply_lang: str) -> List[str]:
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
+    user_id = None
+    if config.PERSONAL_QUERIES_ENABLED:
+        try:
+            user_id = await asyncio.to_thread(get_identity().resolve, req)
+        except Exception as e:
+            log.warning("identity resolution failed: %s", e)
+            user_id = None 
     query = (req.query or "").strip()
     if not query:
         raise HTTPException(400, "query is required")
@@ -436,7 +461,7 @@ async def chat(req: ChatRequest):
         # doesn't block the event loop while it runs, same reasoning as
         # get_engine_async() above.
         result = await asyncio.to_thread(
-            engine.answer, query, history, recent_offers
+            engine.answer, query, history, recent_offers, user_id
         )
     except Exception:
         log.exception("chat() failed for query=%r", query)
@@ -494,6 +519,13 @@ SSE_HEARTBEAT = "\n\n"
 
 @app.post("/api/chat/stream")
 async def chat_stream(req: ChatRequest):
+    user_id = None
+    if config.PERSONAL_QUERIES_ENABLED:
+        try:
+            user_id = await asyncio.to_thread(get_identity().resolve, req)
+        except Exception as e:
+            log.warning("identity resolution failed: %s", e)
+            user_id = None
     query = (req.query or "").strip()
     if not query:
         raise HTTPException(400, "query is required")
@@ -543,7 +575,7 @@ async def chat_stream(req: ChatRequest):
 
     def _run():
         try:
-            for piece in engine.answer_stream(query, history, recent_offers):
+            for piece in engine.answer_stream(query, history, recent_offers, user_id):
                 q.put(("token", piece))
         except Exception as e:
             q.put(("error", str(e)))

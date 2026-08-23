@@ -107,14 +107,13 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  eval:                          # <- indent this 2 spaces, matching redis/ollama/app
+  eval:                         
     build:
       context: .
       args:
         EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-base}
     volumes:
       - ./data:/app/data:ro
-      - C:/Users/devza/Work/Waffarha/waffarha-eval:/app/eval
     working_dir: /app/eval
     environment:
       OLLAMA_HOST: http://ollama:11434

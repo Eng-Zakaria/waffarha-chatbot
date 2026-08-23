@@ -20,6 +20,8 @@ from sentence_transformers import SentenceTransformer
 
 import config
 from vectorstores import get_store  # CHANGED
+from personal_queries import is_personal_query, PERSONAL_ERROR
+from ingest.catalog_queries import is_catalog_query, CatalogQueryService, CATALOG_ERROR 
 
 # NEW: same logger name as app.py ("waffarha-app") so the follow-up LLM
 # fallback's warnings (see _llm_says_is_followup) show up in the same log
@@ -63,8 +65,11 @@ _STOCK_SOLD_SO_FAR = {
 # the source of truth for what these strings actually are.
 _SCAFFOLDING_MARKERS = [
     "MUST STATE (copy these exactly):",
+    "MUST STATE",
     "لازم تذكر (انسخها بالظبط):",
+    "لازم تذكر",
     "REQUIRED FACTS:",
+    "REQUIRED FACTS",
     "CONTEXT:",
     "USER QUESTION:",
 ]
@@ -107,6 +112,9 @@ _FAQ_INTENT_WORDS = {
     # refund word previously listed).
     "how do i", "how can i", "how to", "what is", "what are", "how does",
     "ازاي", "إزاي", "ايه هو", "إيه هو", "كيف", "طريقة", "استرجع",
+    # NEW: Arabic FAQ-specific words that were missing
+    "معلومات", "خصوصية", "سياسة", "عن وفرها", "ما هي وفرها", "ازاي اشتري", "كيفية الشراء",
+    "وسايل الدفع", "طرق الدفع", "حذف حسابي", "اعادة تعيين", "تغيير الباسورد",
 }
 
 # NEW: "how many left / is this sold out" style questions. remaining_coupons_count
@@ -122,7 +130,7 @@ _STOCK_INTENT_WORDS = {
     "متبقي", "فاضل", "باقي", "خلص", "خلصت", "نفدت", "لسه فاضل",
 }
 
-# NEW: "what's the cheapest offer" / "most expensive" style questions --
+# NEW: "what's the cheapest offer" / "most expensive" / "highest discount" style questions --
 # see _get_superlative_offer_answer. Top-k semantic retrieval alone can't
 # reliably answer these (it only ever sees a small candidate slice, not
 # the full ~800+ active-offer catalog), so these are detected and answered
@@ -136,6 +144,10 @@ _MOST_EXPENSIVE_WORDS = {
     "most expensive", "highest price", "priciest",
     "اغلى", "أغلى",
 }
+_HIGHEST_DISCOUNT_WORDS = {
+    "highest discount", "biggest discount", "most discount", "maximum discount",
+    "اعلى خصم", "أعلى خصم", "اكبر خصم", "أكبر خصم",
+}
 
 
 def _looks_like_superlative_price_query(query: str):
@@ -144,6 +156,8 @@ def _looks_like_superlative_price_query(query: str):
         return "min"
     if any(w in q for w in _MOST_EXPENSIVE_WORDS):
         return "max"
+    if any(w in q for w in _HIGHEST_DISCOUNT_WORDS):
+        return "max_discount"
     return None
 
 # NEW: greetings/small talk with no real content ("hi", "اهلا بك", "شكرا")
@@ -244,13 +258,45 @@ _INJECTION_PATTERNS = [
 # query is used for retrieval or embedded in the LLM message either way.
 _SCAFFOLDING_ECHO_MARKERS = [
     "CONTEXT:", "USER QUESTION:", "REQUIRED FACTS:",
-    "MUST STATE (copy these exactly):", "لازم تذكر (انسخها بالظبط):",
+    "MUST STATE (copy these exactly):", "MUST STATE",
+    "لازم تذكر (انسخها بالظبط):", "لازم تذكر",
 ]
 
 
 def _looks_like_injection_attempt(query: str) -> bool:
     q = query or ""
     return any(p.search(q) for p in _INJECTION_PATTERNS)
+
+
+# NEW: out-of-scope query detection -- general knowledge, medical advice,
+# weather, competitor comparisons, etc. These should be politely declined
+# rather than answered from retrieved context (which may contain unrelated
+# offers/FAQs that happen to embed close to the query).
+_OUT_OF_SCOPE_PATTERNS = [
+    # General knowledge / factual questions - more specific to avoid false positives
+    # on Waffarha queries like "What's the discount on X" or "What's the price of Y"
+    re.compile(r"\b(what is|what are|what's the|who is|when did|where is|how many|capital of)\s+(?:the|a|an)?\s*(?:capital|population|president|prime minister|currency|language|area|distance|height|width|depth|speed|weight|temperature|time zone|weather|climate|history|origin|meaning|definition)\b", re.IGNORECASE),
+    re.compile(r"\b(ما هو|ما هي|من هو|متى|اين|كم عدد|عاصمة)\s+(?:العاصمة|السكان|الرئيس|رئيس الوزراء|العملة|اللغة|المساحة|المسافة|الارتفاع|العرض|العمق|السرعة|الوزن|درجة الحرارة|المنطقة الزمنية|الطقس|المناخ|التاريخ|الأصل|المعنى|التعريف)\b", re.IGNORECASE),
+    # Medical/health advice
+    re.compile(r"\b(headache|medicine|pill|treatment|symptom|doctor|pain|ache|fever|nausea|ibuprofen|paracetamol|aspirin)\b", re.IGNORECASE),
+    re.compile(r"\b(صداع|دواء|حبوب|علاج|ألم|وجع|حمى|غثيان|ايبوبروفين|باراسيتامول|أسبرين)\b", re.IGNORECASE),
+    # Weather
+    re.compile(r"\b(weather|temperature|forecast|rain|sunny|cloudy)\b", re.IGNORECASE),
+    re.compile(r"\b(الطقس|الحرارة|توقعات|مطر|مشمس|غائم)\b", re.IGNORECASE),
+    # Competitor comparisons
+    re.compile(r"\b(better than|vs|versus|compare.*with|than.*groupon|than.*cobone|than.*(?:deal|offer|site))\b", re.IGNORECASE),
+    re.compile(r"\b(أفضل من|مقارنة.*مع|من.*جروبات|من.*كوبون|من.*(?:عروض|موقع))\b", re.IGNORECASE),
+    # Technical/programming
+    re.compile(r"\b(code|program|script|api|database|sql|select|insert|update|delete|drop table)\b", re.IGNORECASE),
+]
+
+
+def _looks_like_out_of_scope(query: str) -> bool:
+    """Returns True if the query appears to be outside Waffarha's domain
+    (general knowledge, medical, weather, competitor comparisons, etc.)"""
+    if not query:
+        return False
+    return any(p.search(query) for p in _OUT_OF_SCOPE_PATTERNS)
 
 
 def _sanitize_user_query(query: str) -> str:
@@ -810,6 +856,10 @@ class RagEngine:
         self.llm_model = llm_model or config.OLLAMA_MODEL
         self.llm_options = llm_options or {}  # NEW
 
+        # NEW: Initialize Ollama client with host from config
+        self.client = ollama.Client(host=config.OLLAMA_HOST)
+        
+
         if index_dir is None:
             from ingest.build_index import index_dir as _index_dir_fn  # local import, avoids cycle
             index_dir = _index_dir_fn(self.embedding_model_name, self.backend)
@@ -850,18 +900,77 @@ class RagEngine:
             reverse=True,
         )
 
-        self.client = ollama.Client(host=config.OLLAMA_HOST)
-        if require_llm:
-            try:
-                self.client.list()
-            except Exception as e:
-                raise RuntimeError(
-                    f"Can't reach Ollama at {config.OLLAMA_HOST}. Is it installed and running? "
-                    f"Download it from https://ollama.com, then run: ollama pull {self.llm_model}\n"
-                    f"Original error: {e}"
-                )
-        self.require_llm = require_llm
+        # NEW: Load inactive merchants from offers_raw.json (those with offer_status != "active")
+        self.inactive_merchants = self._load_inactive_merchants()
 
+        # NEW: lazy-initialized catalog query service (live ClickHouse queries)
+        self._catalog = None
+
+    def _load_inactive_merchants(self) -> set:
+        """Load merchants that appear ONLY in inactive offers (offer_status != "active").
+        These are needed to detect when a query names an inactive-only merchant
+        and there are no active offers from that merchant in the index."""
+        inactive_merchants = set()
+        try:
+            import json
+            raw_path = os.path.join(os.path.dirname(__file__), "..", "data", "offers_raw.json")
+            raw_path = os.path.normpath(raw_path)
+            if os.path.exists(raw_path):
+                with open(raw_path, "r", encoding="utf-8") as f:
+                    offers_raw = json.load(f)
+                for offer in offers_raw:
+                    if offer.get("offer_status") != "active":
+                        merchant = offer.get("merchant", "").strip()
+                        if merchant:
+                            inactive_merchants.add(merchant)
+        except Exception as e:
+            # If we can't load the raw data, at least we don't crash
+            print(f"Warning: Could not load inactive merchants: {e}")
+        return inactive_merchants
+
+    def _inactive_merchant_mention(self, query: str) -> str | None:
+        """Returns an inactive merchant name if the query mentions it and there are
+        no active offers from that merchant in the index. Also handles aliases and typos."""
+        q = query or ""
+        if not any(w in q.lower() for w in _OFFER_INTENT_WORDS):
+            return None
+        
+        q_lower = q.lower()
+        
+        # First check known inactive merchants (with substring match)
+        for merchant in self.inactive_merchants:
+            if merchant.lower() in q_lower:
+                # Verify no active offers from this merchant exist in index
+                active_merchants = set(m.lower() for m in self._offer_merchants)
+                if merchant.lower() not in active_merchants:
+                    return merchant
+        
+        # Check known aliases that map to inactive merchants
+        for alias, canonical in config.MERCHANT_ALIASES.items():
+            if alias in q_lower and canonical in self.inactive_merchants:
+                return canonical
+        
+        # Fuzzy match against inactive merchants (for typos like "Asain Wok")
+        import difflib
+        close = difflib.get_close_matches(q_lower, [m.lower() for m in self.inactive_merchants], n=1, cutoff=0.8)
+        if close:
+            # Find the original case version
+            for merchant in self.inactive_merchants:
+                if merchant.lower() == close[0]:
+                    return merchant
+        
+        return None
+
+    def _get_personal_service(self):
+        if self._personal is None:
+            from personal_queries import PersonalQueryService
+            self._personal = PersonalQueryService()
+        return self._personal
+
+    def _get_catalog_service(self):
+        if self._catalog is None:
+            self._catalog = CatalogQueryService()
+        return self._catalog
 
     def _detect_multi_item(self, query: str):
         """Returns (multi_item: bool, mentioned_merchants: list). multi_item
@@ -1399,7 +1508,7 @@ class RagEngine:
         return "\n".join(lines)
 
     def _get_superlative_offer_answer(self, query: str):
-        """Handles 'cheapest'/'most expensive' style questions by sorting
+        """Handles 'cheapest'/'most expensive'/'highest discount' style questions by sorting
         the FULL catalog's price metadata directly, instead of relying on
         top-k semantic retrieval to happen to surface the true extremum
         (see offer_ranking / offer_cheapest in the eval run: the answer
@@ -1410,19 +1519,37 @@ class RagEngine:
             return None
 
         def _price(meta):
-            try:
-                return float(re.sub(r"[^\d.]", "", str(meta.get("price", ""))))
-            except ValueError:
-                return None
+            # Try multiple price fields since metadata may have actual_value, price, etc.
+            for field in ["price", "actual_value", "offer_value", "current_price"]:
+                val = meta.get(field)
+                if val is not None:
+                    try:
+                        return float(re.sub(r"[^\d.]", "", str(val)))
+                    except ValueError:
+                        continue
+            return None
+
+        def _discount(meta):
+            # Try discount field
+            val = meta.get("discount")
+            if val is not None:
+                try:
+                    return float(re.sub(r"[^\d.]", "", str(val)))
+                except ValueError:
+                    pass
+            return None
 
         priced = [
             d for d in self.docs
-            if d["metadata"].get("source") == "offer" and _price(d["metadata"]) is not None
+            if d["metadata"].get("source") == "offer" and d["metadata"].get("offer_status") == "active" and _price(d["metadata"]) is not None
         ]
         if not priced:
             return None
 
-        pick = (min if direction == "min" else max)(priced, key=lambda d: _price(d["metadata"]))
+        if direction == "max_discount":
+            pick = max(priced, key=lambda d: _discount(d["metadata"]) or 0)
+        else:
+            pick = (min if direction == "min" else max)(priced, key=lambda d: _price(d["metadata"]))
 
         reply_lang = detect_lang(query)
         fact = _format_offer_facts(pick["metadata"], reply_lang)
@@ -1432,10 +1559,11 @@ class RagEngine:
         intro = {
             "min": {"en": "Here's the cheapest one available right now:", "ar": "ده أرخص عرض متاح دلوقتي:"},
             "max": {"en": "Here's the most expensive one available right now:", "ar": "ده أغلى عرض متاح دلوقتي:"},
+            "max_discount": {"en": "Here's the offer with the highest discount right now:", "ar": "ده العرض اللي عليه أعلى خصم دلوقتي:"},
         }[direction]
         return f"{intro[reply_lang]}\n{fact}"
 
-    def answer_stream(self, query: str, history: list = None, recent_offers: list = None):
+    def answer_stream(self, query, history=None, recent_offers=None, user_id=None):
         # CHANGED: history is now passed through -- retrieve() uses it to
         # anchor follow-up queries ("explain this offer") on the previous
         # turn's topic instead of retrieving on the follow-up's own,
@@ -1483,6 +1611,34 @@ class RagEngine:
             yield _CLARIFICATION_REPLY["en"]
             return
 
+        
+        # NEW: personal-data queries ("my coupons", "my orders") are answered
+        # from live ClickHouse (fct_coupons) scoped to the resolved user_id,
+        # not from the static RAG index. Only active when
+        # PERSONAL_QUERIES_ENABLED and a user_id was resolved (see identity.py).
+        if user_id is not None and config.PERSONAL_QUERIES_ENABLED and is_personal_query(query):
+            try:
+                result = self._get_personal_service().handle(query, user_id, detect_lang(query))
+            except Exception as e:
+                log.warning("personal query failed for user_id=%s query=%r: %s", user_id, query, e)
+                result = {"answer": PERSONAL_ERROR.get(detect_lang(query), PERSONAL_ERROR["en"]), "sources": []}
+            if result and result.get("answer"):
+                yield result["answer"]
+            return
+
+        # NEW: live catalog queries (merchant, price, ranking, location, tags)
+        # hit ClickHouse directly for fresh data instead of the static FAISS index.
+        # Only active when CATALOG_QUERIES_ENABLED.
+        if config.CATALOG_QUERIES_ENABLED and is_catalog_query(query):
+            try:
+                result = self._get_catalog_service().handle(query, detect_lang(query))
+            except Exception as e:
+                log.warning("catalog query failed for query=%r: %s", query, e)
+                result = {"answer": CATALOG_ERROR.get(detect_lang(query), CATALOG_ERROR["en"]), "sources": []}
+            if result and result.get("answer"):
+                yield result["answer"]
+            return
+
         # NEW: a query naming a merchant we don't actually have never
         # reaches retrieval/generation -- previously a nonexistent brand
         # like "Starbucks Egypt" could score 0.95+ against some unrelated
@@ -1496,6 +1652,32 @@ class RagEngine:
                 yield f"للأسف مفيش عندنا عروض من {unmatched_brand} حاليًا."
             else:
                 yield f"We don't currently have any offers from {unmatched_brand}."
+            return
+
+        # NEW: a query naming a merchant that has no active offers in the index
+        # (but appears only in inactive offers) should not fall back to an
+        # unrelated active offer. See eval category offer_direct_answer_asianwok.
+        inactive_brand = self._inactive_merchant_mention(query)
+        if inactive_brand:
+            lang = detect_lang(query)
+            if lang == "ar":
+                yield f"للأسف مفيش عندنا عروض من {inactive_brand} حاليًا."
+            else:
+                yield f"We don't currently have any offers from {inactive_brand}."
+            return
+
+            lang = detect_lang(query)
+            if lang == "ar":
+                yield f"للأسف مفيش عندنا عروض من {unmatched_brand} حاليًا."
+            else:
+                yield f"We don't currently have any offers from {unmatched_brand}."
+            return
+
+        # NEW: out-of-scope queries (general knowledge, medical, weather, etc.)
+        # should be declined politely instead of letting the LLM hallucinate
+        # from retrieved context. See eval category out_of_scope.
+        if _looks_like_out_of_scope(query):
+            yield FALLBACK_MESSAGE.get(detect_lang(query), FALLBACK_MESSAGE["en"])
             return
 
         # NEW: superlative price queries ("cheapest", "most expensive")
@@ -1634,8 +1816,8 @@ class RagEngine:
             header = "\n\n📋 " + ("Details: " if lang == "en" else "التفاصيل: ")
             yield header + " | ".join(missing_facts)
 
-    def answer(self, query: str, history: list = None, recent_offers: list = None) -> dict:
-        chunks = list(self.answer_stream(query, history, recent_offers))
+    def answer(self, query, history=None, recent_offers=None, user_id=None) -> dict:
+        chunks = list(self.answer_stream(query, history, recent_offers, user_id))
         full = "".join(chunks)
         # NEW: defense-in-depth. The system prompt now tells the model not to
         # copy the REQUIRED FACTS block's own header/label, but a model can

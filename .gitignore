@@ -5,3 +5,7 @@ venv/
 venv*
 digest.txt
 results/
+.aider*
+.continue
+.debug
+.claude

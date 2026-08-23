@@ -63,6 +63,9 @@ _OFFER_COLUMNS = [
     "offer_sold_coponos", "offer_no_coponos",
     "special_display",
     "rate", "rate_count",
+    # NEW: offer fine-print/terms from dim_offers
+    "offer_fineprint_en", "offer_fineprint_ar",
+    "waffarha_advice_en", "waffarha_advice_ar",
 ]
 
 # NEW: partner contact/location columns, confirmed worth ingesting via

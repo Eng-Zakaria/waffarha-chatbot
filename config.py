@@ -166,7 +166,12 @@ MERCHANT_FUZZY_MATCH_CUTOFF = 0.8
 # Populate from your actual merchant list -- left empty here since this repo
 # snapshot doesn't include the merchant catalog.
 MERCHANT_ALIASES = {
-    # "kfc": "<exact merchant name as stored in the index>",
+    "kfc": "KFC",
+    "كنتاكي": "دجاج كنتاكي",
+    "كنتاكي فرايد تشيكن": "دجاج كنتاكي",
+    "kentucky fried chicken": "KFC",
+    "asian wok": "Asian Wok",
+    "اسيان ووك": "Asian Wok",
 }
 
 
@@ -273,3 +278,23 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 #     and NOT persisted across restarts, so it's single-process/dev-only;
 #     production (multi-worker/replica) should stay on "redis".
 MEMORY_BACKEND = os.getenv("MEMORY_BACKEND", "redis").lower()
+
+# NEW: per-user ("my coupons / my orders") queries. These hit ClickHouse
+# live (fct_coupons) rather than the static RAG index, and are gated behind
+# identity resolution -- see identity.py. Off by default until a real auth
+# backend exists.
+PERSONAL_QUERIES_ENABLED = os.getenv("PERSONAL_QUERIES_ENABLED", "true").lower() == "true"
+IDENTITY_BACKEND = os.getenv("IDENTITY_BACKEND", "static").lower()
+STATIC_TEST_USER_ID = int(os.getenv("STATIC_TEST_USER_ID", "0") or "0")
+
+# NEW: live catalog queries (offers, merchants, prices, locations, tags).
+# These hit ClickHouse live (dim_offers, dim_partners, dim_type_price)
+# instead of the static FAISS index. Enabled by default since no auth
+# is required for public catalog data.
+CATALOG_QUERIES_ENABLED = os.getenv("CATALOG_QUERIES_ENABLED", "true").lower() == "true"
+
+# NEW: identity backend configuration
+# IDENTITY_BACKEND=header: reads user_id from HTTP header (set by auth proxy/gateway)
+IDENTITY_HEADER = os.getenv("IDENTITY_HEADER", "X-User-ID")
+# IDENTITY_BACKEND=session: reads user_id from Redis session store
+SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session_id")

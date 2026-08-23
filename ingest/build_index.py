@@ -247,9 +247,16 @@ def load_offers() -> list:
         part_phone = partners.get("phone", "") if isinstance(partners, dict) else ""
         part_facebook = partners.get("facebook", "") if isinstance(partners, dict) else ""
         part_website = partners.get("website", "") if isinstance(partners, dict) else ""
+        
+        # NEW: offer fine-print/terms from dim_offers (offer_fineprint_en/ar, waffarha_advice_en/ar)
+        # These provide important terms and conditions that users often ask about
+        offer_fineprint_en = offer.get("offer_fineprint_en", "")
+        offer_fineprint_ar = offer.get("offer_fineprint_ar", "")
+        waffarha_advice_en = offer.get("waffarha_advice_en", "")
+        waffarha_advice_ar = offer.get("waffarha_advice_ar", "")
 
         show_old_price = old_price and old_price not in (0, "0") and str(old_price) != str(price)
-        show_discount = discount and str(discount) not in ("0", "0.0")
+        show_discount = discount is not None and str(discount) != "" and str(discount) != "0" and str(discount) != "0.0"
 
         text_parts = [f"Offer: {title}"]
         if merchant:
@@ -302,12 +309,22 @@ def load_offers() -> list:
 
         sold_count = _extract_sold_count(offer)
 
+        # NEW: add fine-print/terms to text for embedding
+        fineprint = offer_fineprint_en if lang == "en" else offer_fineprint_ar
+        advice = waffarha_advice_en if lang == "en" else waffarha_advice_ar
+        if fineprint:
+            label = "Terms & Conditions" if lang == "en" else "الشروط والأحكام"
+            text_parts.append(f"{label}: {fineprint[:500]}")  # truncate for embedding
+        if advice:
+            label = "Important Notes" if lang == "en" else "ملاحظات هامة"
+            text_parts.append(f"{label}: {advice[:500]}")  # truncate for embedding
+
         docs.append({
             "text": "\n".join(text_parts),
             "metadata": {
                 "source": "offer", "id": offer_id, "title": title, "merchant": merchant,
                 "price": price, "old_price": old_price if show_old_price else None,
-                "discount": discount if show_discount else None, "expiry": expiry,
+                "discount": discount if (discount is not None and str(discount).strip() != "") else None, "expiry": expiry,
                 "lang": lang, "section_id": offer.get("_section_id"),
                 "sold_count": sold_count,  # NEW -- see _extract_sold_count
                 # NEW -- partner contact/location, see fetch_offers_clickhouse.py.
@@ -316,6 +333,9 @@ def load_offers() -> list:
                 "part_address": part_address, "part_hours": part_hours,
                 "part_phone": part_phone, "part_facebook": part_facebook,
                 "part_website": part_website,
+                # NEW -- offer fine-print/terms from dim_offers
+                "offer_fineprint_en": offer_fineprint_en, "offer_fineprint_ar": offer_fineprint_ar,
+                "waffarha_advice_en": waffarha_advice_en, "waffarha_advice_ar": waffarha_advice_ar,
             },
         })
 
