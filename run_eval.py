@@ -4,6 +4,8 @@ Runs eval/queries.json against RagEngine and logs results.
     python eval/run_eval.py
     python eval/run_eval.py --queries eval/queries.json --embedding-model intfloat/multilingual-e5-base
     python eval/run_eval.py --llm-model qwen2.5:3b-instruct --temperature 0.0
+    python eval/run_eval.py --force-llm-generation      # RAG with retrieval but force LLM generation (no direct answers)
+    python eval/run_eval.py --no-retrieval              # LLM-only mode (no retrieval at all)
 
 Writes two files per run to eval/results/<timestamp>/:
   - full.json     every field from common.run_one(), per query
@@ -37,14 +39,24 @@ def main():
                          help="Override generation temperature for this run only")
     parser.add_argument("--out-dir", default=str(Path(__file__).parent / "results"))
     parser.add_argument("--tag", default=None, help="Extra label folded into the results folder name")
+    parser.add_argument("--force-llm-generation", action="store_true",
+                         help="Skip direct-answer shortcuts, always use LLM generation with retrieved context")
+    parser.add_argument("--no-retrieval", action="store_true",
+                         help="LLM-only mode: skip retrieval entirely, generate from LLM knowledge only")
     args = parser.parse_args()
 
     with open(args.queries, "r", encoding="utf-8") as f:
         cases = json.load(f)
 
     llm_options = {"temperature": args.temperature} if args.temperature is not None else None
-    engine = get_engine(embedding_model=args.embedding_model, backend=args.backend,
-                         llm_model=args.llm_model, llm_options=llm_options)
+    engine = get_engine(
+        embedding_model=args.embedding_model,
+        backend=args.backend,
+        llm_model=args.llm_model,
+        llm_options=llm_options,
+        force_llm_generation=args.force_llm_generation,
+        no_retrieval=args.no_retrieval,
+    )
 
     records = []
     for case in cases:
@@ -71,6 +83,8 @@ def main():
             "embedding_model": engine.embedding_model_name,
             "backend": engine.backend,
             "llm_model": engine.llm_model,
+            "force_llm_generation": engine.force_llm_generation,
+            "no_retrieval": engine.no_retrieval,
             "results": records,
         }, f, ensure_ascii=False, indent=2)
 

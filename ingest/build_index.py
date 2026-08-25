@@ -207,21 +207,31 @@ def load_offers() -> list:
     skipped_inactive = 0
     skipped_no_title = 0
 
+    from datetime import datetime
+
     for offer in offers:
         status = offer.get(config.OFFER_STATUS_FIELD)
         if config.OFFER_ACTIVE_VALUES and status not in config.OFFER_ACTIVE_VALUES:
             skipped_inactive += 1
             continue
 
+        # Check if offer is expired
+        expiry = pick_field(offer, fc["expiry"])
+        if expiry:
+            try:
+                expiry_date = datetime.strptime(str(expiry).split(" ")[0], "%Y-%m-%d").date()
+                if expiry_date < datetime.now().date():
+                    skipped_inactive += 1
+                    continue
+            except (ValueError, TypeError):
+                # If expiry date is malformed, treat as active
+                pass
+
         title = pick_field(offer, fc["title"])
         if not title:
             skipped_no_title += 1
             continue
 
-        description = pick_field(offer, fc["description"])
-        price = pick_field(offer, fc["price"])
-        old_price = pick_field(offer, fc["old_price"])
-        discount = pick_field(offer, fc["discount"])
         expiry = pick_field(offer, fc["expiry"])
         # NEW: raw expiry is "YYYY-MM-DD HH:MM:SS" (confirmed consistent across
         # all 1664 records) but the time-of-day is never meaningful here --
@@ -232,6 +242,19 @@ def load_offers() -> list:
         # without needing to touch rag_engine.py at all.
         if expiry:
             expiry = re.split(r"[ T]", str(expiry))[0].strip()
+
+        # Check if offer has expired
+        if expiry:
+            try:
+                from datetime import datetime
+                expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
+                current_date = datetime.now().date()
+                if expiry_date < current_date:
+                    skipped_inactive += 1  # Count expired offers as inactive
+                    continue
+            except ValueError:
+                # If date parsing fails, continue processing the offer
+                pass
         offer_id = pick_field(offer, fc["id"])
         lang = offer.get("_lang", "en")
 
@@ -254,6 +277,11 @@ def load_offers() -> list:
         offer_fineprint_ar = offer.get("offer_fineprint_ar", "")
         waffarha_advice_en = offer.get("waffarha_advice_en", "")
         waffarha_advice_ar = offer.get("waffarha_advice_ar", "")
+
+        price = pick_field(offer, fc["price"])
+        old_price = pick_field(offer, fc["old_price"])
+        discount = pick_field(offer, fc["discount"])
+        description = pick_field(offer, fc["description"])
 
         show_old_price = old_price and old_price not in (0, "0") and str(old_price) != str(price)
         show_discount = discount is not None and str(discount) != "" and str(discount) != "0" and str(discount) != "0.0"
@@ -340,7 +368,7 @@ def load_offers() -> list:
         })
 
     if skipped_inactive:
-        print(f"Skipped {skipped_inactive} offer(s) with status not in {config.OFFER_ACTIVE_VALUES}.")
+        print(f"Skipped {skipped_inactive} offer(s) with status not in {config.OFFER_ACTIVE_VALUES} or expired.")
     if skipped_no_title:
         print(f"Skipped {skipped_no_title} offer(s) with no usable title.")
 
@@ -373,6 +401,18 @@ def build_for(embedding_model: str, backend: str, docs: list, embeddings):
     store.build(embeddings, docs)
     if backend == "faiss":
         store.save(store_path)
+
+    # NEW: build BM25 lexical index for hybrid retrieval (one per embedding model,
+    # shared across all backends). Saved as bm25.pkl in the same directory.
+    bm25_path = os.path.join(d, "bm25.pkl")
+    try:
+        from vectorstores.bm25_store import BM25Store
+        bm25_store = BM25Store()
+        bm25_store.build(docs)
+        bm25_store.save(bm25_path)
+        print(f"Saved BM25 index to {bm25_path}")
+    except Exception as e:
+        print(f"Warning: failed to build BM25 index: {e}")
 
     with open(docs_path, "wb") as f:
         pickle.dump(docs, f)

@@ -142,7 +142,14 @@ TOP_K_MULTI = 6
 CANDIDATE_K_MULTI = 30
 
 
-MIN_RELEVANCE_SCORE = 0.35  
+MIN_RELEVANCE_SCORE = 0.35
+
+# NEW: hybrid BM25 + embedding retrieval switches.
+# Turn hybrid retrieval on and tune how much lexical BM25 evidence should
+# contribute versus the existing lexical overlap bonus.
+ENABLE_HYBRID_RETRIEVAL = os.getenv("ENABLE_HYBRID_RETRIEVAL", "true").lower() == "true"
+BM25_WEIGHT = float(os.getenv("BM25_WEIGHT", "0.35"))
+RRF_K = int(os.getenv("RRF_K", "60"))
 
 # NEW: minimum similarity ratio (difflib SequenceMatcher, 0-1) for a
 # capitalized brand-like token in the query to count as "close enough" to a

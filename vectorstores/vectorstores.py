@@ -402,4 +402,9 @@ def get_store(name: str, persist_path: str = None) -> VectorStore:
         return LanceDBStore(persist_path)
     if name == "pgvector":
         return PgVectorStore(persist_path)
-    raise ValueError(f"Unknown backend '{name}'. Choose from: faiss, chroma, qdrant, lancedb, pgvector")
+    if name == "bm25":
+        # BM25 is a separate lexical index; import lazily to avoid
+        # requiring rank_bm25 unless the user actually uses this backend
+        from vectorstores.bm25_store import BM25Store
+        return BM25Store()
+    raise ValueError(f"Unknown backend '{name}'. Choose from: faiss, chroma, qdrant, lancedb, pgvector, bm25")

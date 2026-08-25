@@ -58,10 +58,44 @@ DEFAULT_OUTPUT_DIR = "comparison_results"
 # GEMINI WRAPPER
 # ============================================================
 
+class RateLimiter:
+    """Simple rate limiter for Gemini API (5 RPM free tier)."""
+
+    def __init__(self, max_requests_per_minute: int = 5):
+        self.max_requests = max_requests_per_minute
+        self.requests = []
+        self.min_interval = 60.0 / max_requests_per_minute  # 12 seconds for 5 RPM
+
+    def wait_if_needed(self):
+        """Wait if we've hit the rate limit."""
+        now = time.time()
+        # Remove requests older than 1 minute
+        self.requests = [t for t in self.requests if now - t < 60]
+
+        # Proactive check: if we're at max_requests - 1, wait to avoid hitting limit
+        if len(self.requests) >= self.max_requests:
+            # Wait until the oldest request is more than 1 minute old
+            oldest = self.requests[0]
+            wait_time = 60 - (now - oldest) + 1.0  # Add 1s buffer
+            if wait_time > 0:
+                print(f"  Rate limit reached. Waiting {wait_time:.1f}s...")
+                time.sleep(wait_time)
+
+        # Additional safety: ensure minimum interval between requests
+        if self.requests:
+            time_since_last = now - self.requests[-1]
+            if time_since_last < self.min_interval:
+                wait_time = self.min_interval - time_since_last + 0.5
+                print(f"  Enforcing minimum interval. Waiting {wait_time:.1f}s...")
+                time.sleep(wait_time)
+
+        self.requests.append(time.time())
+
+
 class GeminiEvaluator:
     """Evaluates queries using Gemini with the same RAG context as local model."""
 
-    def __init__(self, model_name: str = DEFAULT_GEMINI_MODEL):
+    def __init__(self, model_name: str = DEFAULT_GEMINI_MODEL, max_rpm: int = 5):
         if not GEMINI_AVAILABLE:
             raise RuntimeError("google-genai not installed. Run: pip install google-genai")
 
@@ -71,6 +105,7 @@ class GeminiEvaluator:
 
         self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
+        self.rate_limiter = RateLimiter(max_rpm)
 
         # System prompt matching the local RAG system prompt
         self.system_prompt = """You are the Waffarha customer support assistant, embedded in a chat widget.
@@ -97,29 +132,64 @@ Rules:
             messages.extend(history[-6:])  # Keep last 3 turns
         messages.append({"role": "user", "content": user_content})
 
+        # Apply rate limiting before making the request
+        self.rate_limiter.wait_if_needed()
+
         start_time = time.perf_counter()
+        max_retries = 3
+        base_wait = 2.0
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[msg["content"] for msg in messages],
-            )
+        for attempt in range(max_retries):
+            try:
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=[msg["content"] for msg in messages],
+                )
 
-            elapsed = time.perf_counter() - start_time
-            answer = response.text or ""
+                elapsed = time.perf_counter() - start_time
+                answer = response.text or ""
 
-            return {
-                "answer": answer.strip(),
-                "latency_s": round(elapsed, 3),
-                "error": None
-            }
-        except Exception as e:
-            elapsed = time.perf_counter() - start_time
-            return {
-                "answer": "",
-                "latency_s": round(elapsed, 3),
-                "error": str(e)
-            }
+                return {
+                    "answer": answer.strip(),
+                    "latency_s": round(elapsed, 3),
+                    "error": None
+                }
+            except Exception as e:
+                elapsed = time.perf_counter() - start_time
+                error_str = str(e)
+
+                # Check for quota/rate limit errors (429)
+                if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str or "quota" in error_str.lower():
+                    if attempt < max_retries - 1:
+                        # Try to extract retry delay from error message (e.g., "Please retry in 36.17668707s")
+                        import re
+                        retry_match = re.search(r'Please retry in ([\d.]+)s', error_str)
+                        if retry_match:
+                            wait_time = float(retry_match.group(1)) + 1.0  # Add 1s buffer
+                        else:
+                            # Exponential backoff with jitter as fallback
+                            wait_time = base_wait * (2 ** attempt) + (time.time() % 1)
+
+                        print(f"  Rate limit hit (attempt {attempt + 1}/{max_retries}). Waiting {wait_time:.1f}s before retry...")
+                        time.sleep(wait_time)
+                        # Reset rate limiter to allow immediate retry after backoff
+                        self.rate_limiter.requests = []
+                        start_time = time.perf_counter()  # Reset timer
+                        continue
+
+                # Non-retryable error or max retries reached
+                return {
+                    "answer": "",
+                    "latency_s": round(elapsed, 3),
+                    "error": error_str
+                }
+
+        # Should not reach here, but just in case
+        return {
+            "answer": "",
+            "latency_s": round(time.perf_counter() - start_time, 3),
+            "error": "Max retries exceeded"
+        }
 
 
 # ============================================================
@@ -266,6 +336,10 @@ def run_comparison(
             gemini_latency = gemini_result.get("latency_s", 0)
             gemini_error = gemini_result.get("error")
             print(f"  Gemini: {gemini_latency:.3f}s")
+
+            # Check if Gemini returned empty answer due to rate limiting
+            if not gemini_answer.strip() and gemini_error:
+                print(f"  ⚠️  Gemini error: {gemini_error[:100]}...")
         else:
             gemini_answer = ""
             gemini_latency = 0

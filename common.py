@@ -17,6 +17,8 @@ def get_engine(
     backend: str = "faiss",
     llm_model: Optional[str] = None,
     llm_options: Optional[dict] = None,
+    force_llm_generation: bool = False,
+    no_retrieval: bool = False,
 ) -> RagEngine:
     """Returns a cached or newly created RagEngine instance."""
     key = (
@@ -24,6 +26,8 @@ def get_engine(
         backend,
         llm_model or config.OLLAMA_MODEL,
         frozenset((llm_options or {}).items()),
+        force_llm_generation,
+        no_retrieval,
     )
     if key not in _ENGINE_CACHE:
         _ENGINE_CACHE[key] = RagEngine(
@@ -31,6 +35,8 @@ def get_engine(
             backend=backend,
             llm_model=llm_model,
             llm_options=llm_options,
+            force_llm_generation=force_llm_generation,
+            no_retrieval=no_retrieval,
         )
     return _ENGINE_CACHE[key]
 

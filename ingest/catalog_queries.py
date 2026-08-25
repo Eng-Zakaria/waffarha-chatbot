@@ -17,9 +17,15 @@ No user input is ever interpolated into SQL -- all filters use named parameters.
 
 import logging
 import re
-from typing import Optional
+from typing import Optional, List, Dict
+import sys
+import os
 
 import config
+
+# Add parent directory to path for session_manager import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from session_manager import SessionManager
 
 log = logging.getLogger("waffarha-app")
 
@@ -32,6 +38,8 @@ CATALOG_ERROR = {
 
 # Merchant-specific: "KFC offers", "عروض كنتاكي", "deals from Pizza Hut"
 # These patterns ONLY match when the query is explicitly asking for offers/deals/coupons
+# ALSO matches merchant + price/discount queries (e.g., "KFC price", "KFC discount", "KFC بكام")
+# ORDER MATTERS: More specific patterns should come BEFORE more general ones
 _MERCHANT_PATTERNS = [
     # "offers from KFC", "deals at Pizza Hut", "coupons by X"
     r"(?:offers?|deals?|coupons?)\s+(?:from|at|by|of|for)\s+(.+)",  # English
@@ -45,6 +53,18 @@ _MERCHANT_PATTERNS = [
     r"^(?:show\s+me\s+)?([A-Za-z&'’\s]{2,})\s+(?:offers?|deals?|coupons?)\b",
     # Arabic: "كنتاكي عروض" (merchant + عروض)
     r"^([؀-ۿ\s]{2,})\s+عروض\b",
+    # NEW: Arabic "كم سعر عرض KFC" / "بكام عرض KFC" / "خصم KFC" - MORE SPECIFIC, check first
+    # Use word boundaries and stop at punctuation/prepositions
+    r"كم\s+سعر\s+عرض\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
+    r"بكام\s+عرض\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
+    r"خصم\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
+    # NEW: Mixed Arabic/English "discount بتاع KFC" / "price بتاع KFC"
+    r"(?:discount|price|cost|بكام|السعر|الخصم)\s+(?:بتاع|بتاع)\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
+    # NEW: Merchant + price/discount queries - "KFC price", "KFC discount", "KFC بكام"
+    r"^([A-Za-z&'’\s]{2,})\s+(?:price|cost|discount|بكام|السعر|الخصم)\b",
+    r"([A-Za-z&'’\s]{2,})\s+(?:price|cost|discount|بكام|السعر|الخصم)\b",
+    # General Arabic "كم/السعر/الخصم" at start - LESS SPECIFIC, check last
+    r"^([؀-ۿ\s]{2,})\s+(?:بكام|السعر|الخصم)\b",
 ]
 _MERCHANT_RE = [re.compile(p, re.IGNORECASE) for p in _MERCHANT_PATTERNS]
 
@@ -101,6 +121,16 @@ _TAG_RE = [re.compile(p, re.IGNORECASE) for p in _TAG_PATTERNS]
 
 # Multi-merchant: handled by _mentioned_merchants from rag_engine (2+ merchants named)
 
+# Comparison patterns: "compare X and Y", "X vs Y", "difference between X and Y"
+_COMPARE_PATTERNS = [
+    r"(?:compare|compare the)\s+(.+?)\s+(?:and|vs|versus)\s+(.+)",
+    r"(.+?)\s+(?:vs|versus)\s+(.+?)\s+(?:offers?|deals?)",
+    r"(?:which is better|ايهم أفضل)\s+(.+?)\s+(?:or|ولا)\s+(.+)",
+    r"(?:مقارنة بين|compare between)\s+(.+?)\s+(?:و|and)\s+(.+)",
+    r"(?:difference between|الفرق بين)\s+(.+?)\s+(?:و|and)\s+(.+)",
+]
+_COMPARE_RE = [re.compile(p, re.IGNORECASE) for p in _COMPARE_PATTERNS]
+
 # --- Unsupported patterns (honestly refused) ---
 _UNSUPPORTED_PATTERNS = [
     r"\b(my\s+(coupons?|orders?|purchases?|account|wallet|cashback|balance|points))\b",
@@ -111,9 +141,17 @@ _UNSUPPORTED_PATTERNS = [
 
 # FAQ/how-to patterns that should NOT go to catalog queries
 # These are informational questions, not offer lookups
+# NOTE: Merchant-specific price/discount queries ("كم سعر عرض KFC", "ماكدونالدز بكام")
+# are catalog queries - they need fresh data from ClickHouse, not FAQ answers.
+# The patterns below ONLY match GENERIC questions without a merchant name.
+# IMPORTANT: Superlative queries ("cheapest", "most expensive", "highest discount")
+# are checked FIRST in _detect_intent, so they bypass FAQ check here.
+# Also, we exclude any query containing superlative terms from FAQ classification.
 _FAQ_PATTERNS = [
     r"\b(how\s+(do|can|to)\s+(i|you|we))\b",
-    r"\bwhat\s+(is|are)\b",
+    # "what is/are" - but NOT when the question contains superlative terms anywhere
+    # Matches "what is X" but fails if query contains cheapest/most expensive/highest discount etc.
+    r"(?:(?!cheapest|most\s+expensive|highest\s+discount|ارخص|أرخص|أغلى|اعلى\s+خصم|أعلى\s+خصم).)*\bwhat\s+(is|are)\b(?!.*\b(?:cheapest|most\s+expensive|highest\s+discount|ارخص|أرخص|أغلى|اعلى\s+خصم|أعلى\s+خصم)\b)",
     r"\bhow\s+does\b",
     r"\b(can|could)\s+(i|you)\b",
     r"\bregister|sign.?up|login|log.?in|create\s+account\b",
@@ -125,16 +163,17 @@ _FAQ_PATTERNS = [
     r"\babout\s+waffarha\b",
     r"\bwhat\s+is\s+waffarha\b",
     r"\bprivacy\s+(policy|information)\b",
-    r"\bhow\s+much\b",  # "how much is X" - price check, not catalog lookup
-    r"\bwhat'?s\s+the\s+(discount|price)\b",  # "what's the discount on X"
-    r"\btell\s+me\s+about\b",  # "tell me about X" - info request, not catalog lookup
+    # Generic "how much" without merchant - handled by follow-up/memory or FAQ
+    r"^\s*(?:how\s+much|بكام|كام)\s*[؟?!.,]*\s*$",
+    # Generic "what's the price/discount" without merchant
+    r"^\s*(?:what'?s\s+the\s+(?:discount|price)|بكام\s+ال(?:سعر|خصم)?)",
+    # Generic "tell me about" without specific merchant/offer
+    r"\btell\s+me\s+about\s+(?!.*(?:offer|deal|coupon|عرض|كوبون|خصم)).+",
     r"ازاي\s+(اشترى|ادفع|استخدم|الغي|احذف|اسجل)",
     r"كيفية\s+(الشراء|الدفع|الاستخدام|الغاء|حذف|التسجيل)",
     r"معلومات\s+(عن|خصوصية|سياسة)",
     r"ايه\s+(هي|هو)\s+وفرها",
     r"سياسة\s+(الخصوصية|الاسترداد|الكاش\s*باك)",
-    r"بكام\b",  # Arabic "how much"
-    r"كام\s+(السعر|الثمن)",  # Arabic "price"
 ]
 _FAQ_RE = [re.compile(p, re.IGNORECASE) for p in _FAQ_PATTERNS]
 _UNSUPPORTED_RE = [re.compile(p, re.IGNORECASE) for p in _UNSUPPORTED_PATTERNS]
@@ -153,6 +192,11 @@ def is_catalog_query(query: str) -> bool:
     if any(r.search(q) for r in _UNSUPPORTED_RE):
         return False
 
+    # FAST PATH: Superlative queries ("cheapest", "most expensive", "highest discount")
+    # are ALWAYS catalog queries - check before FAQ patterns to avoid false negatives
+    if any(r.search(q) for r in _SUPERLATIVE_RE):
+        return True
+
     # Explicitly NOT catalog: FAQ/how-to questions
     if any(r.search(q) for r in _FAQ_RE):
         return False
@@ -161,7 +205,7 @@ def is_catalog_query(query: str) -> bool:
     return any(
         r.search(q) for r in
         _MERCHANT_RE + _PRICE_CEILING_RE + _PRICE_FLOOR_RE + _PRICE_RANGE_RE +
-        _SUPERLATIVE_RE + _LOCATION_RE + _TAG_RE
+        _SUPERLATIVE_RE + _LOCATION_RE + _TAG_RE + _COMPARE_RE
     )
 
 
@@ -177,12 +221,21 @@ def _detect_intent(query: str) -> dict:
     intent = {
         "type": None,
         "merchant": None,
+        "merchants": [],  # For comparison queries
         "price_min": None,
         "price_max": None,
         "direction": None,  # "min", "max", "max_discount"
         "tag": None,
         "location": None,
     }
+
+    # Check comparison intent first
+    for re_obj in _COMPARE_RE:
+        match = re_obj.search(q)
+        if match:
+            intent["type"] = "compare"
+            intent["merchants"] = [match.group(1).strip(), match.group(2).strip()]
+            return intent
 
     # Check superlative first (cheapest/most expensive/highest discount)
     for i, re_obj in enumerate(_SUPERLATIVE_RE):
@@ -229,7 +282,10 @@ def _detect_intent(query: str) -> dict:
         m = re_obj.search(q)
         if m:
             intent["type"] = "merchant"
-            intent["merchant"] = m.group(1).strip()
+            merchant = m.group(1).strip()
+            # Clean trailing punctuation that may have been captured
+            merchant = re.sub(r"[؟?!.,،;:\s]+$", "", merchant).strip()
+            intent["merchant"] = merchant
             return intent
 
     # Check price ceiling
@@ -336,7 +392,7 @@ def _build_price_filter(price_min: Optional[float], price_max: Optional[float]) 
 def _build_tag_filter(tag: str) -> tuple[str, dict]:
     """Builds WHERE clause for special_display tag."""
     # special_display is comma-separated; match as a tag
-    where = "AND o.offer_special_display LIKE %(tag)s"
+    where = "AND o.special_display LIKE %(tag)s"
     params = {"tag": f"%{tag}%"}
     return where, params
 
@@ -364,6 +420,8 @@ class CatalogQueryService:
         self._client = client
         # Cache of active merchants for faster resolution
         self._merchant_cache: Optional[set] = None
+        # Initialize session manager for comparison queries
+        self.session_manager = SessionManager()
 
     def _get_client(self):
         if self._client is None:
@@ -371,7 +429,15 @@ class CatalogQueryService:
         return self._client
 
     def _rows(self, sql: str, params: dict) -> list[dict]:
-        return [dict(r) for r in self._get_client().query(sql, parameters=params).named_results()]
+        rows = []
+        for r in self._get_client().query(sql, parameters=params).named_results():
+            row_dict = dict(r)
+            # Convert datetime objects to ISO format strings for JSON serialization
+            for key, value in row_dict.items():
+                if hasattr(value, 'isoformat'):
+                    row_dict[key] = value.isoformat()
+            rows.append(row_dict)
+        return rows
 
     def _get_active_merchants(self) -> set:
         """Fetch and cache active merchant names from dim_partners."""
@@ -423,36 +489,51 @@ class CatalogQueryService:
 
     # -- Query Methods -------------------------------------------------------
 
-    def list_by_merchant(self, merchant: str, lang: str, limit: int = 10) -> list[dict]:
+    def list_by_merchant(self, merchant: str, lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
         merchant = self._resolve_merchant(merchant)
         where, params = _build_merchant_filter(merchant, lang)
         sql = _BASE_SELECT + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
         params["lim"] = limit
-        return self._rows(sql, params)
+        rows = self._rows(sql, params)
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
+        return rows
 
-    def list_by_price_range(self, price_min: Optional[float], price_max: Optional[float], lang: str, limit: int = 10) -> list[dict]:
+    def list_by_price_range(self, price_min: Optional[float], price_max: Optional[float], lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
         where, params = _build_price_filter(price_min, price_max)
         sql = _BASE_SELECT + where + " ORDER BY o.actual_value ASC NULLS LAST LIMIT %(lim)s"
         params["lim"] = limit
-        return self._rows(sql, params)
+        rows = self._rows(sql, params)
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
+        return rows
 
-    def get_superlative(self, direction: str, lang: str) -> list[dict]:
+    def get_superlative(self, direction: str, lang: str, session_id: Optional[str] = None) -> list[dict]:
         sql, params = _build_superlative_query(direction, limit=1)
-        return self._rows(sql, params)
+        rows = self._rows(sql, params)
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
+        return rows
 
-    def get_merchant_location(self, merchant: str, lang: str) -> list[dict]:
+    def get_merchant_location(self, merchant: str, lang: str, session_id: Optional[str] = None) -> list[dict]:
         merchant = self._resolve_merchant(merchant)
         where, params = _build_merchant_filter(merchant, lang)
         sql = _BASE_SELECT + where + " LIMIT 5"
-        return self._rows(sql, params)
+        rows = self._rows(sql, params)
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
+        return rows
 
-    def list_by_tag(self, tag: str, lang: str, limit: int = 10) -> list[dict]:
+    def list_by_tag(self, tag: str, lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
         where, params = _build_tag_filter(tag)
         sql = _BASE_SELECT + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
         params["lim"] = limit
-        return self._rows(sql, params)
+        rows = self._rows(sql, params)
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
+        return rows
 
-    def list_multi_merchant(self, merchants: list[str], lang: str, limit_per_merchant: int = 3) -> list[dict]:
+    def list_multi_merchant(self, merchants: list[str], lang: str, limit_per_merchant: int = 3, session_id: Optional[str] = None) -> list[dict]:
         """Fetch offers for multiple merchants (e.g., 'KFC and Pizza Hut')."""
         all_results = []
         for merchant in merchants:
@@ -464,6 +545,8 @@ class CatalogQueryService:
             for r in rows:
                 r["_matched_merchant"] = merchant
             all_results.extend(rows)
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, all_results)
         return all_results
 
     # -- Formatting Helpers --------------------------------------------------
@@ -486,6 +569,9 @@ class CatalogQueryService:
     def _short_date(self, v) -> str:
         if not v:
             return ""
+        # Handle datetime objects
+        if hasattr(v, 'strftime'):
+            return v.strftime("%Y-%m-%d")
         return str(v)[:10]
 
     def _clean_text(self, text) -> str:
@@ -565,6 +651,8 @@ class CatalogQueryService:
                 "location_header": "Here are the details for {merchant}:",
                 "tag_header": "Here are the current {tag} offers:",
                 "multi_merchant_header": "Here are offers from {merchants}:",
+                "compare_header": "Here's a comparison of offers from {merchants}:",
+                "compare_no_offers": "I don't have any offers from {merchants} in your recent history to compare.",
             },
             "ar": {
                 "no_offers": "مفيش عروض نشطة مطابقة للطلب.",
@@ -577,10 +665,12 @@ class CatalogQueryService:
                 "location_header": "تفاصيل {merchant}:",
                 "tag_header": "دي عروض {tag} الحالية:",
                 "multi_merchant_header": "عروض من {merchants}:",
+                "compare_header": "مقارنة بين عروض {merchants}:",
+                "compare_no_offers": "مفيش عروض من {merchants} في سجلك الحديث للمقارنة.",
             },
         }[lang]
 
-    def handle(self, query: str, lang: str) -> dict:
+    def handle(self, query: str, lang: str, session_id: Optional[str] = None) -> dict:
         """Main entry point: detect intent, run query, format answer."""
         q = (query or "").strip()
         if not q:
@@ -596,31 +686,33 @@ class CatalogQueryService:
             from rag_engine import _mentioned_merchants
             mentioned = _mentioned_merchants(q, sorted(self._get_active_merchants(), key=len, reverse=True))
             if len(mentioned) >= 2:
-                return self._answer_multi_merchant(mentioned, lang)
+                return self._answer_multi_merchant(mentioned, lang, session_id)
 
             if intent["type"] == "merchant":
-                return self._answer_merchant(intent["merchant"], lang)
+                return self._answer_merchant(intent["merchant"], lang, session_id)
             elif intent["type"] == "price_ceiling":
-                return self._answer_price_ceiling(intent["price_max"], lang)
+                return self._answer_price_ceiling(intent["price_max"], lang, session_id)
             elif intent["type"] == "price_floor":
-                return self._answer_price_floor(intent["price_min"], lang)
+                return self._answer_price_floor(intent["price_min"], lang, session_id)
             elif intent["type"] == "price_range":
-                return self._answer_price_range(intent["price_min"], intent["price_max"], lang)
+                return self._answer_price_range(intent["price_min"], intent["price_max"], lang, session_id)
             elif intent["type"] == "superlative":
-                return self._answer_superlative(intent["direction"], lang)
+                return self._answer_superlative(intent["direction"], lang, session_id)
             elif intent["type"] == "location":
-                return self._answer_location(intent["merchant"], lang)
+                return self._answer_location(intent["merchant"], lang, session_id)
             elif intent["type"] == "tag":
-                return self._answer_tag(intent["tag"], lang)
+                return self._answer_tag(intent["tag"], lang, session_id)
+            elif intent["type"] == "compare":
+                return self._answer_compare(intent["merchants"], lang, session_id)
             else:
                 # Fallback: generic offer list
-                return self._answer_generic(lang)
+                return self._answer_generic(lang, session_id)
         except Exception as e:
             log.warning("catalog query failed for query=%r: %s", query, e)
             return {"answer": CATALOG_ERROR.get(lang, CATALOG_ERROR["en"]), "sources": []}
 
-    def _answer_merchant(self, merchant: str, lang: str) -> dict:
-        rows = self.list_by_merchant(merchant, lang, limit=10)
+    def _answer_merchant(self, merchant: str, lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.list_by_merchant(merchant, lang, limit=10, session_id=session_id)
         if not rows:
             resolved = self._resolve_merchant(merchant)
             msgs = self._messages(lang)
@@ -631,8 +723,8 @@ class CatalogQueryService:
         lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_price_ceiling(self, price_max: float, lang: str) -> dict:
-        rows = self.list_by_price_range(None, price_max, lang, limit=10)
+    def _answer_price_ceiling(self, price_max: float, lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.list_by_price_range(None, price_max, lang, limit=10, session_id=session_id)
         if not rows:
             msgs = self._messages(lang)
             cur = self._currency(lang)
@@ -644,8 +736,8 @@ class CatalogQueryService:
         lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_price_floor(self, price_min: float, lang: str) -> dict:
-        rows = self.list_by_price_range(price_min, None, lang, limit=10)
+    def _answer_price_floor(self, price_min: float, lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.list_by_price_range(price_min, None, lang, limit=10, session_id=session_id)
         if not rows:
             msgs = self._messages(lang)
             return {"answer": msgs["no_offers"], "sources": []}
@@ -656,8 +748,8 @@ class CatalogQueryService:
         lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_price_range(self, price_min: float, price_max: float, lang: str) -> dict:
-        rows = self.list_by_price_range(price_min, price_max, lang, limit=10)
+    def _answer_price_range(self, price_min: float, price_max: float, lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.list_by_price_range(price_min, price_max, lang, limit=10, session_id=session_id)
         if not rows:
             msgs = self._messages(lang)
             return {"answer": msgs["no_offers"], "sources": []}
@@ -668,8 +760,8 @@ class CatalogQueryService:
         lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_superlative(self, direction: str, lang: str) -> dict:
-        rows = self.get_superlative(direction, lang)
+    def _answer_superlative(self, direction: str, lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.get_superlative(direction, lang, session_id=session_id)
         if not rows:
             msgs = self._messages(lang)
             return {"answer": msgs["no_offers"], "sources": []}
@@ -685,8 +777,8 @@ class CatalogQueryService:
         lines = [header, self._format_offer(rows[0], lang)]
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_location(self, merchant: str, lang: str) -> dict:
-        rows = self.get_merchant_location(merchant, lang)
+    def _answer_location(self, merchant: str, lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.get_merchant_location(merchant, lang, session_id=session_id)
         if not rows:
             resolved = self._resolve_merchant(merchant)
             msgs = self._messages(lang)
@@ -698,8 +790,8 @@ class CatalogQueryService:
         lines = [header] + [self._format_offer(r, lang, include_location=True) for r in rows[:3]]
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_tag(self, tag: str, lang: str) -> dict:
-        rows = self.list_by_tag(tag, lang, limit=10)
+    def _answer_tag(self, tag: str, lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.list_by_tag(tag, lang, limit=10, session_id=session_id)
         if not rows:
             msgs = self._messages(lang)
             return {"answer": msgs["no_offers"], "sources": []}
@@ -718,8 +810,8 @@ class CatalogQueryService:
         lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_multi_merchant(self, merchants: list[str], lang: str) -> dict:
-        rows = self.list_multi_merchant(merchants, lang, limit_per_merchant=3)
+    def _answer_multi_merchant(self, merchants: list[str], lang: str, session_id: Optional[str] = None) -> dict:
+        rows = self.list_multi_merchant(merchants, lang, limit_per_merchant=3, session_id=session_id)
         if not rows:
             msgs = self._messages(lang)
             return {"answer": msgs["no_offers"], "sources": []}
@@ -742,13 +834,67 @@ class CatalogQueryService:
 
         return {"answer": "\n".join(lines), "sources": []}
 
-    def _answer_generic(self, lang: str) -> dict:
+    def _answer_compare(self, merchants: List[str], lang: str, session_id: Optional[str] = None) -> dict:
+        """Compare offers for merchants using session memory.
+
+        FIX for Issue #3: Previously this method retrieved fresh offers instead of
+        scoping to previously shown offers, and could truncate mid-word due to
+        insufficient context. Now it uses session memory to get the offers that
+        were actually shown to the user, and ensures complete answer formatting.
+        """
+        msgs = self._messages(lang)
+
+        if not session_id:
+            return {"answer": msgs["compare_no_offers"].format(merchants=", ".join(merchants)), "sources": []}
+
+        # Get offers from session memory for each merchant
+        merchant_offers = self.session_manager.get_offers_for_merchants(session_id, merchants)
+
+        # Check if we have offers for any merchants
+        total_offers = sum(len(offers) for offers in merchant_offers.values())
+        if total_offers == 0:
+            return {"answer": msgs["compare_no_offers"].format(merchants=", ".join(merchants)), "sources": []}
+
+        # Build the comparison answer
+        merchant_names = " & ".join(merchants)
+        lines = [msgs["compare_header"].format(merchants=merchant_names)]
+
+        for merchant in merchants:
+            offers = merchant_offers.get(merchant, [])
+            if offers:
+                lines.append(f"\n**{merchant}:**")
+                # Show all available offers for this merchant (limit to 3 to avoid truncation)
+                for offer in offers[:3]:
+                    lines.append(self._format_offer(offer, lang))
+            else:
+                # Merchant not found in session
+                if lang == "ar":
+                    lines.append(f"\n**{merchant}:** {msgs['no_offers']}")
+                else:
+                    lines.append(f"\n**{merchant}:** {msgs['no_offers']}")
+
+        # Ensure the answer is complete (no truncation mid-word)
+        answer = "\n".join(lines)
+
+        # Validate that no words are cut off mid-word
+        words = answer.split()
+        for i, word in enumerate(words):
+            # Check for incomplete words (ending with hyphen indicating truncation)
+            if word.endswith('-') and i < len(words) - 1:
+                log.warning(f"Detected potential truncation in compare answer: '{word}'")
+
+        return {"answer": answer, "sources": []}
+
+    def _answer_generic(self, lang: str, session_id: Optional[str] = None) -> dict:
         """Fallback: show a few top active offers."""
         sql = _BASE_SELECT + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT 5"
         rows = self._rows(sql, {})
         if not rows:
             msgs = self._messages(lang)
             return {"answer": msgs["no_offers"], "sources": []}
+
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
 
         msgs = self._messages(lang)
         header = "Here are some top offers right now:" if lang == "en" else "بعض أفضل العروض دلوقتي:"

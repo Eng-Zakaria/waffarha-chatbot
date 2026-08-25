@@ -145,7 +145,7 @@ def _md_escape(text):
 # Suite 1: infrastructure checks
 # =============================================================================
 
-def run_infra_checks(embedding_model, backend, llm_model, rag_only=False):
+def run_infra_checks(embedding_model, backend, llm_model, rag_only=False, force_llm_generation=False, no_retrieval=False):
     """Cheap, ordered checks so a failure points at the actual broken piece
     (missing index vs. Ollama down vs. Redis down) instead of a stack trace
     from three layers deep in RagEngine.answer().
@@ -154,7 +154,11 @@ def run_infra_checks(embedding_model, backend, llm_model, rag_only=False):
     generation, no session memory), so the engine is loaded directly via
     RagEngine(require_llm=False) instead of common.get_engine(), and the
     Redis check is skipped entirely rather than reported as a failure --
-    neither Ollama nor Redis is needed for retrieval alone."""
+    neither Ollama nor Redis is needed for retrieval alone.
+
+    force_llm_generation -- if True, skip direct-answer shortcuts, force LLM generation.
+
+    no_retrieval -- if True, LLM-only mode, no retrieval at all."""
     checks = []
 
     def add(name, ok, detail=""):
@@ -177,14 +181,23 @@ def run_infra_checks(embedding_model, backend, llm_model, rag_only=False):
     # retrieval can be evaluated with no Ollama server running at all.
     engine = None
     t0 = time.time()
-    label = ("engine load (embedding model + index, Ollama NOT required -- rag-only)" if rag_only
-             else "engine load (embedding model + index + Ollama reachable)")
+    if rag_only or no_retrieval:
+        # For rag-only or no-retrieval modes, we don't require Ollama to be reachable
+        # for infrastructure check (it's tested per-case in the actual suites)
+        label = "engine load (embedding model + index, Ollama NOT required -- rag-only/no-retrieval)"
+        require_llm = False
+    else:
+        label = "engine load (embedding model + index + Ollama reachable)"
+        require_llm = True
     try:
-        if rag_only:
-            engine = RagEngine(embedding_model=embedding_model, backend=backend,
-                                llm_model=llm_model, require_llm=False)
-        else:
-            engine = get_engine(embedding_model=embedding_model, backend=backend, llm_model=llm_model)
+        engine = RagEngine(
+            embedding_model=embedding_model,
+            backend=backend,
+            llm_model=llm_model,
+            require_llm=require_llm,
+            force_llm_generation=force_llm_generation,
+            no_retrieval=no_retrieval,
+        )
         add(label, True,
             f"{round(time.time() - t0, 2)}s, {len(engine.docs)} docs, "
             f"{len(engine._offer_merchants)} known merchants")
@@ -197,7 +210,8 @@ def run_infra_checks(embedding_model, backend, llm_model, rag_only=False):
 
     # 1c. Redis, independently of the engine (memory.py's own connection).
     # Not needed for retrieval-only evaluation (no session memory involved).
-    if not rag_only:
+    # Also not needed for no_retrieval mode (no retrieval, no session memory).
+    if not rag_only and not no_retrieval:
         try:
             from memory import MemoryStore
             t0 = time.time()
@@ -892,6 +906,12 @@ def main():
                               "leaving just the pure retrieval/embedding suite (2). The fastest, "
                               "most isolated way to answer 'is retrieval good or bad' with zero "
                               "LLM calls and no Ollama/Redis dependency at all.")
+    parser.add_argument("--force-llm-generation", action="store_true",
+                         help="Skip direct-answer shortcuts, always use LLM generation with retrieved context. "
+                              "Tests LLM behavior when retrieval works but we force LLM to generate answers.")
+    parser.add_argument("--no-retrieval", action="store_true",
+                         help="LLM-only mode: skip retrieval entirely, generate from LLM knowledge only. "
+                              "Useful for comparing RAG vs pure LLM performance.")
     parser.add_argument("--concurrency", type=int, default=8,
                          help="Max simultaneous /api/chat requests in the load test")
     parser.add_argument("--concurrency-requests", type=int, default=24,
@@ -915,13 +935,28 @@ def main():
     if args.retrieval_only:
         print("Mode: --retrieval-only (embedding + search only, no LLM, no server)")
     elif args.rag_only:
-        print("Mode: --rag-only (retrieval + in-process generation, no server, no Redis)")
+        if args.force_llm_generation:
+            print("Mode: --rag-only --force-llm-generation (retrieval + forced LLM generation, no server, no Redis)")
+        elif args.no_retrieval:
+            print("Mode: --rag-only --no-retrieval (LLM-only generation, no retrieval, no server, no Redis)")
+        else:
+            print("Mode: --rag-only (retrieval + in-process generation, no server, no Redis)")
+    elif args.force_llm_generation:
+        print("Mode: --force-llm-generation (retrieval + forced LLM generation)")
+    elif args.no_retrieval:
+        print("Mode: --no-retrieval (LLM-only generation, no retrieval)")
     print(f"Output: {out_dir}/\n")
 
     # ---- Suite 1: infra ----
     print("[1/5] Infrastructure checks...")
-    infra = run_infra_checks(args.embedding_model, args.backend, args.llm_model,
-                              rag_only=args.rag_only)
+    infra = run_infra_checks(
+        args.embedding_model,
+        args.backend,
+        args.llm_model,
+        rag_only=args.rag_only,
+        force_llm_generation=args.force_llm_generation,
+        no_retrieval=args.no_retrieval,
+    )
     for c in infra["checks"]:
         print(f"      {_badge(c['ok'])}  {c['name']}  -- {c['detail']}")
     engine = infra.pop("engine")
@@ -936,6 +971,8 @@ def main():
             "base_url": None if args.skip_http else args.base_url,
             "rag_only": args.rag_only,
             "retrieval_only": args.retrieval_only,
+            "force_llm_generation": args.force_llm_generation,
+            "no_retrieval": args.no_retrieval,
         },
         "infra": infra,
     }
