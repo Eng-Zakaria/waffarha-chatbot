@@ -1,0 +1,119 @@
+[
+  {
+    "id": "faq_1",
+    "category": "Account & Registration",
+    "category_ar": "الحساب والتسجيل",
+    "question_en": "How do I register / create an account?",
+    "question_ar": "كيفية انشاء حساب على وفرها؟",
+    "answer_en": "To create a new account: 1) Tap 'Create New Account'. 2) Add your phone number. 3) You'll receive a verification code via SMS. 4) Enter the code in the app to complete registration. Then complete your data through 'My Account', click the settings icon, and select 'Edit profile'. You now have an account and can enjoy all available offers.",
+    "answer_ar": "خطوات إنشاء حساب جديد على ابلكيشن وفرها: 1) اضغط على 'إنشاء حساب'. 2) سجل رقم الموبايل. 3) هيوصلك كود تفعيل على نفس رقم الموبايل في رسالة نصية. 4) اكتب الكود في الابلكيشن وهيتم تفعيل الحساب بنجاح. استكمل البيانات من خلال خانة 'حسابي' واضغط على علامة الاعدادات ثم 'تعديل البيانات'."
+  },
+  {
+    "id": "faq_2",
+    "category": "How to Purchase",
+    "category_ar": "طريقة الشراء",
+    "question_en": "How do I purchase from the Waffarha app?",
+    "question_ar": "كيفية الشراء من أبلكيشن وفرها؟",
+    "answer_en": "1) Choose the offer that suits you. 2) Select the number of coupons and click 'Add to Cart'. 3) Click 'Go to Cart' to review your order details. 4) Click 'Proceed to Checkout' and choose your preferred payment method. 5) After completing payment, find your coupon number under 'My Orders' > 'Order Details' > 'Show Offer Code'. You can use the coupon at the location or request delivery if available for that offer and your area is within the delivery zone; an additional delivery fee set by the merchant may apply.",
+    "answer_ar": "1) اختار العرض اللي يناسبك. 2) حدد عدد الكوبونات واضغط على 'أضف إلى العربة'. 3) اضغط على 'الذهاب للعربة' علشان تراجع تفاصيل الطلب. 4) اضغط على 'تابع عملية الشراء' واختار طريقة الدفع المناسبة. 5) بعد إتمام الدفع، هتلاقي رقم الكوبون في 'طلباتي' < 'تفاصيل الطلب' < 'اظهر كود العرض'. تقدر تستخدم الكوبون في المكان أو تطلب دليفري لو متاح ضمن شروط العرض ومنطقتك."
+  },
+  {
+    "id": "faq_3",
+    "category": "Payment Methods",
+    "category_ar": "طرق الدفع",
+    "question_en": "What payment methods are available on the app?",
+    "question_ar": "طرق الدفع المتاحة على الابلكيشن؟",
+    "answer_en": "Waffarha supports: Bank cards (Visa/MasterCard), Bank Installments (major banks), Apple Pay, E-wallets (Vodafone Cash, Etisalat Cash, Orange Cash, and others), payment via reference number (Fawry, Daman, Basata, Geidea, O-pay), ValU, Suhoola, Forsa, Aman, Contact, Premium Card, Mogo, TRU, and Klivvr.",
+    "answer_ar": "وفرها بتقدملك اكتر من طريقة دفع: البطاقات البنكية (فيزا/ماستركارد)، التقسيط البنكي، Apple Pay، المحافظ الإلكترونية (فودافون كاش، اتصالات كاش، أورنج كاش وغيرها)، الدفع بالرقم المرجعي (فوري، ضامن، بساطة، جيديا، أوباي)، ڤاليو، سهولة، فرصة، أمان، كونتكت، بريميوم كارد، موجو، ترو، كليڤر."
+  },
+  {
+    "id": "faq_4",
+    "category": "How to Use",
+    "category_ar": "طريقة الاستخدام",
+    "question_en": "How do I use my purchased coupon?",
+    "question_ar": "طريقة استخدام الكوبون بعد الشراء؟",
+    "answer_en": "After payment, find the coupon under 'My Orders' > 'Order Details' > 'Show Offer Code'. For dine-in/takeaway: check the list of available branches and provide the coupon number to the merchant. For delivery (check offer terms first to confirm it's available): call the merchant's hotline, provide the coupon numbers, and confirm order details and address. If your location is within the delivery area, pay the delivery fee in cash upon receipt. It's best to contact the merchant before purchasing to confirm delivery availability for your area.",
+    "answer_ar": "بعد إتمام الدفع، تقدر تلاقي الكوبونات من خانة 'طلباتي' < 'تفاصيل الطلب' < 'اظهر كود العرض'. لو حابب تستخدمه في الفرع، زور الفرع من خانة 'الفروع المتاحة' ووضح رقم الكوبون للتاجر. لو حابب دليفري (بعد التأكد إن العرض متاح للتوصيل من الشروط)، اتصل بالخط الساخن للتاجر ووضح أرقام الكوبونات وتفاصيل الطلب والعنوان. لو التوصيل متاح لمنطقتك هتدفع رسوم التوصيل كاش عند الاستلام."
+  },
+  {
+    "id": "faq_5",
+    "category": "Bill Payment",
+    "category_ar": "دفع الفواتير",
+    "question_en": "How do I pay my bills through the app?",
+    "question_ar": "طريقة دفع الفواتير من الابلكيشن؟",
+    "answer_en": "Go to the 'Bill Payment' section in the app. You'll see services like balance recharge, mobile & landline bills, utility bills, and monthly installments. Select the service, enter the number you want to top-up or pay for, click 'Proceed to Payment', then choose the payment method that suits you.",
+    "answer_ar": "تقدر تسدد فواتيرك من خانة 'دفع الفواتير' على الابلكيشن، هتلاقي خدمات زي شحن الرصيد وفواتير الموبايل والخط الأرضي والفواتير المنزلية والأقساط الشهرية. بعد اختيار الخدمة، اكتب الرقم اللي عايز تشحن عليه أو تسدد له، اضغط 'إتمام الدفع'، واختار وسيلة الدفع المناسبة."
+  },
+  {
+    "id": "faq_6",
+    "category": "Payment Methods for Bills",
+    "category_ar": "وسائل دفع الفواتير",
+    "question_en": "What payment methods are available for paying bills?",
+    "question_ar": "وسائل دفع الفواتير المتاحة؟",
+    "answer_en": "Bank cards (Visa/MasterCard), Bank Installments, E-wallets (Vodafone Cash, Etisalat Cash, Orange Cash, and others), TRU, Suhoola, Forsa, Premium Card, and Contact Installments. Note: available payment methods for bills may change, so check the checkout page for the current options.",
+    "answer_ar": "البطاقات البنكية (فيزا/ماستركارد)، التقسيط البنكي، المحافظ الإلكترونية (فودافون كاش، اتصالات كاش، أورنج كاش وغيرها)، ترو، سهولة، فرصة، بريميوم كارد، كونتكت. ملحوظة: قد تتغير وسائل الدفع الخاصة بالفواتير، يرجى مراجعة الطرق المتاحة عند الدفع."
+  },
+  {
+    "id": "faq_7",
+    "category": "Bill Status",
+    "category_ar": "حالة الفاتورة",
+    "question_en": "How do I check my bill status?",
+    "question_ar": "ازاي اعرف حالة الفاتورة؟",
+    "answer_en": "Click on 'Profile', select 'Payments', then select the bill you want to know the status of — full details will be shown.",
+    "answer_ar": "اضغط على خانة 'حسابي'، اختار خانة 'مدفوعاتك'، اختار الفاتورة اللي محتاج تعرف حالتها وهيظهرلك التفاصيل بالكامل."
+  },
+  {
+    "id": "faq_8",
+    "category": "Refunds",
+    "category_ar": "الاسترجاع",
+    "question_en": "How do I refund a coupon?",
+    "question_ar": "كيفية عمل استرجاع للكوبون؟",
+    "answer_en": "Open 'My Orders', select the coupon you want to refund, click 'Refund Coupon', then choose the refund method that suits you from the available options. Note: refunds are available anytime before the offer's expiration date, which you can find under 'My Account'.",
+    "answer_ar": "افتح خانة 'طلباتي'، اختار الكوبون اللي حابب تسترجعه، اضغط على 'استرجاع الكوبون'، وحدد طريقة الاسترجاع اللي تناسبك. ملحوظة: خيار الاسترجاع متاح في أي وقت قبل تاريخ انتهاء العرض، واللي تقدر تلاقيه في خانة 'طلباتي'."
+  },
+  {
+    "id": "faq_9",
+    "category": "Bank Card Management",
+    "category_ar": "إضافة وحذف الكروت",
+    "question_en": "How do I add or remove a saved bank card?",
+    "question_ar": "كيفية إضافة أو حذف الكارت البنكي؟",
+    "answer_en": "Make sure the app is updated to the latest version. While purchasing, use the same bank card and activate the 'Save Card' option before completing payment. Next time you pay with the same saved card, you'll only need to enter the CVV and the OTP sent by your bank via SMS — no need to re-enter card details. You can add multiple cards the same way.",
+    "answer_ar": "تأكد إن الأبلكيشن محدث لآخر إصدار. عند الدفع، استخدم نفس الكارت البنكي وفعل خيار 'حفظ الكارت' (Card Save) قبل إتمام الدفع. المرة الجاية هتحتاج تكتب بس CVV وكود OTP اللي بيوصلك من البنك، من غير ما تدخل بيانات الكارت من جديد. وتقدر تضيف أكتر من كارت بنفس الطريقة."
+  },
+  {
+    "id": "faq_10",
+    "category": "Gift Vouchers",
+    "category_ar": "بطاقات الهدايا",
+    "question_en": "How do I buy a gift voucher?",
+    "question_ar": "كيفية شراء بطاقات الهدايا؟",
+    "answer_en": "1) Select the gift voucher from the available list of brands. 2) Confirm the amount and value of vouchers you want to purchase. 3) Select whether you'll use it yourself or send it as a gift. 4) Complete the purchase with your preferred payment method and confirm the order. 5) Go to the 'Gift Vouchers' section to review your voucher's details.",
+    "answer_ar": "1) اختار القسيمة من العلامة التجارية أو التاجر المفضل. 2) حدد قيمة القسيمة والعدد اللي عايز تشتريه. 3) اختار إذا هتستخدمها بنفسك أو هترسلها كهدية. 4) أكمل الشراء بتحديد طريقة الدفع وتأكيد الطلب. 5) روح خانة 'بطاقات الهدايا' لمراجعة تفاصيل قسيمتك."
+  },
+  {
+    "id": "faq_11",
+    "category": "Cashback Policy",
+    "category_ar": "سياسة الكاش باك",
+    "question_en": "What is the cashback policy?",
+    "question_ar": "ما هي سياسة الكاش باك؟",
+    "answer_en": "Cashback balance is valid for 30 days from the time it's added. It's added after a coupon is activated with the merchant (or after a bill payment). You can use either cashback OR a discount code, not both on the same order. Track your cashback (time added, expiry date) under 'My Wallet' inside 'My Account'. Cashback can only be used to purchase coupons — it cannot be used for bill payments and is not redeemable as cash.",
+    "answer_ar": "رصيد الكاش باك متاح لمدة 30 يوم فقط من وقت إضافته، ويتم إضافته بعد تفعيل الكوبونات للعروض أو دفع الفاتورة للفواتير. تقدر تختار بين استخدام رصيد الكاش باك أو تطبيق كود خصم (الاتنين مش ممكن مع بعض في نفس الطلب). لمتابعة تفاصيل الكاش باك اضغط على 'رصيد المحفظة' من داخل 'حسابي'. الكاش باك يُستخدم فقط لشراء الكوبونات ولا يمكن استخدامه في دفع الفواتير ولا استرداده كاش."
+  },
+  {
+    "id": "faq_12_about",
+    "category": "About Waffarha",
+    "category_ar": "عن وفرها",
+    "question_en": "What is Waffarha and how does it offer such big discounts?",
+    "question_ar": "ما هي وفرها وازاي بتقدم خصومات كبيرة؟",
+    "answer_en": "Waffarha negotiates discounted, ready-to-use offers on your behalf with stores and service providers, using group buying: when enough people are interested in an offer, Waffarha negotiates as a single large buyer, letting the seller offer a much bigger discount than they could to an individual. This benefits customers (real discounts, new services to try), sellers (reach new customers, sell more volume), and Waffarha (connects both sides). The offers on Waffarha are not available directly from the seller at the same price.",
+    "answer_ar": "وفرها بتفاوض نيابة عنك مع محلات ومقدمي خدمات على خصومات جاهزة للاستخدام، من خلال الشراء الجماعي: لما عدد كافي من الناس يهتموا بعرض معين، وفرها بتفاوض كمشتري واحد كبير، وده بيخلي البائع يقدر يقدم خصم أكبر بكتير من اللي ممكن يقدمه لفرد واحد. ده بيفيد العميل (خصومات حقيقية وتجربة خدمات جديدة)، والبائع (يوصل لعملاء جدد ويبيع كمية أكبر)، ووفرها (بتربط الطرفين). العروض على وفرها مش متاحة من البائع مباشرة بنفس السعر."
+  },
+  {
+    "id": "faq_13_privacy",
+    "category": "Privacy Policy",
+    "category_ar": "سياسة الخصوصية",
+    "question_en": "What information does Waffarha collect and how is it used?",
+    "question_ar": "ما هي المعلومات التي تجمعها وفرها وكيف يتم استخدامها؟",
+    "answer_en": "Waffarha collects Personally Identifiable Information (PII) such as name, address, email, phone, date of birth, and payment details when you create an account, order products, post reviews, enter contests, or sign up for offers — used to deliver services, personalize the app, and communicate with you. It also collects Non-PII (browser type, IP address, referring URLs) automatically via cookies and similar technologies, used to operate and analyze the platform. Waffarha may update this policy at any time; material changes are communicated via email or a notice on the platform.",
+    "answer_ar": "وفرها بتجمع معلومات تعريف شخصية (PII) زي الاسم والعنوان والإيميل ورقم الموبايل وتاريخ الميلاد وبيانات الدفع عند إنشاء حساب أو طلب منتجات أو كتابة تقييمات أو الاشتراك في عروض، وده بيُستخدم لتقديم الخدمة وتخصيص التطبيق والتواصل معاك. كمان بتجمع معلومات غير تعريفية (نوع المتصفح، عنوان IP، الروابط المحيلة) تلقائيًا عبر الكوكيز، وده بيُستخدم لتشغيل وتحليل المنصة. وفرها ممكن تحدث السياسة دي في أي وقت، وأي تغييرات جوهرية هيتم إبلاغك بيها عن طريق الإيميل أو إشعار على المنصة."
+  }
+]

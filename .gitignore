@@ -149,6 +149,9 @@ backup/
 # Data schema text file (informational only)
 data/data_schema.txt
 
+# Scratch/ contains short-term test, debug, and analysis scripts (see scratch/README.md)
+scratch/
+
 # =============================================================================
 # Claude / AI tool config
 # =============================================================================

@@ -1,0 +1,101 @@
+[
+  {
+    "id": "purchasing_status_1",
+    "question_en": "What does the order status \"Paid\" mean?",
+    "answer_en": "Your payment for this order was received and confirmed.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"تم الدفع\"؟",
+    "answer_ar": "تم استلام وتأكيد دفعتك لهذا الطلب.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_2",
+    "question_en": "What does the order status \"In Process\" mean?",
+    "answer_en": "Your order has been confirmed and is currently being processed.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"جارى التنفيذ\"؟",
+    "answer_ar": "تم تأكيد طلبك وجارٍ تنفيذه حاليًا.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_3",
+    "question_en": "What does the order status \"Used\" mean?",
+    "answer_en": "This coupon has already been redeemed.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"مستعمل\"؟",
+    "answer_ar": "تم استخدام هذا الكوبون بالفعل.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_5",
+    "question_en": "What does the order status \"Canceled\" mean?",
+    "answer_en": "This order or coupon has been canceled.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"ملغى\"؟",
+    "answer_ar": "تم إلغاء هذا الطلب أو الكوبون.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_6",
+    "question_en": "What does the order status \"Refund\" mean?",
+    "answer_en": "This order has been refunded.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"مرتجع\"؟",
+    "answer_ar": "تم استرداد قيمة هذا الطلب.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_7",
+    "question_en": "What does the order status \"Pending\" mean?",
+    "answer_en": "Your order is awaiting payment confirmation.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"معلق\"؟",
+    "answer_ar": "طلبك في انتظار تأكيد الدفع.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_8",
+    "question_en": "What does the order status \"Waiting\" mean?",
+    "answer_en": "Your order is on hold, awaiting a further step before it can proceed.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"انتظار\"؟",
+    "answer_ar": "طلبك في وضع الانتظار قبل استكمال الخطوات التالية.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_9",
+    "question_en": "What does the order status \"V Pending\" mean?",
+    "answer_en": "Your order is in a pending verification state.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"معلق\"؟",
+    "answer_ar": "طلبك في مرحلة انتظار التحقق.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_10",
+    "question_en": "What does the order status \"Expired\" mean?",
+    "answer_en": "This coupon's validity period has passed and it can no longer be used.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"منتهي الصلاحية\"؟",
+    "answer_ar": "انتهت صلاحية هذا الكوبون ولم يعد صالحًا للاستخدام.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_11",
+    "question_en": "What does the order status \"In Refund Process\" mean?",
+    "answer_en": "Your refund has been initiated and is currently being processed.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"جاري الاسترجاع\"؟",
+    "answer_ar": "تم بدء عملية استرداد قيمة طلبك وجارٍ تنفيذها.",
+    "category_ar": "حالة الطلب"
+  },
+  {
+    "id": "purchasing_status_12",
+    "question_en": "What does the order status \"Fawry Pending\" mean?",
+    "answer_en": "Your payment via Fawry has not yet been confirmed.",
+    "category": "purchase_status",
+    "question_ar": "ماذا تعني حالة الطلب \"فوري بيندنج\"؟",
+    "answer_ar": "لم يتم تأكيد الدفع عبر فوري حتى الآن.",
+    "category_ar": "حالة الطلب"
+  }
+]

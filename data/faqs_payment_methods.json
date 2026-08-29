@@ -1,0 +1,209 @@
+[
+  {
+    "id": "payment_4_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Fawry work?",
+    "answer_en": "\"Payment via Reference Numbers (Fawry - OPay - Damen - Basata - Geidea): 1. Select the most convenient method for you (Fawry, OPay, Damen, Basata, or Geidea) based on the nearest available provider, then click on \"\"Complete Payment.\"\" 2. You will receive a reference number (8 or 9 digits) valid for 12 hours. 3. Visit the nearest service provider for the selected method. 4. Ask the agent to process the payment to Waffarha (Fawry service code: 333) and provide them with the reference number. 5. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ فــورى؟",
+    "answer_ar": "فوري : اختار وسيلة الدفع فوري واضغط اتمام الشراء. اكتب كود فورى المكون من 6 أرقام (الكود ده صالح للدفع لمدة 5 ساعات). روح لأقرب منفذ فوري (ولمعرفة أقرب منفذ فوري ليك اتصل على 16421). اطلب من المسئول اختيار فوري باي من القائمة. ثم اختيار خدمة دفع وفرها.كوم. أعطى للمسئول كود الدفع وقم بسداد المبلغ المطلوب. احصل على إيصال فوري كاثبات لاتمام الدفع. بمجرد اكمال الدفع في فوري الكوبونات دلوقتي ظاهرة في حسابك على وفرها تحت خانة الكوبونات اطبعها أو اكتبها واستمتع بالعرض على طول."
+  },
+  {
+    "id": "payment_48_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Other Wallets work?",
+    "answer_en": "\"Vodafone Cash: 1. Select the Vodafone Cash payment method - enter your Vodafone Cash wallet number. 2. Once redirected to the payment page, enter your wallet’s (PIN) code. 3. Enter the verification code (OTP) sent to you by Vodafone Cash to complete the payment. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ المحافظ الأخرى؟",
+    "answer_ar": "\"Vodafone Cash: 1. Select the Vodafone Cash payment method - enter your Vodafone Cash wallet number. 2. Once redirected to the payment page, enter your wallet’s (PIN) code. 3. Enter the verification code (OTP) sent to you by Vodafone Cash to complete the payment. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\""
+  },
+  {
+    "id": "payment_48_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with Other Wallets?",
+    "answer_en": "- Your refund request will usually take up to 15 working days according to your Card Issuer bank policy. - Refund fees of 5% will be deducted.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ المحافظ الأخرى؟",
+    "answer_ar": "- سيتم تنفيذ طلب الاسترجاع الخاص بك في حد أقصاه 15 يوم عمل وذلك وفقا لسياسات البنك المصدر لبطاقتكم. - يتم خصم 5% قيمة مصروفات استرجاع للطلب."
+  },
+  {
+    "id": "payment_50_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Bank Installment work?",
+    "answer_en": "\"Installment Payment via Credit Cards (0% Interest): 1. Select the 0% interest installment payment method and click on \"\"Complete Payment\"\" (available only for purchases above EGP 500). 2. Choose the bank that issued your credit card, then select the available installment period (3 or 6 months). 3. Enter all the required information (card number, CVV code, and expiration date). 4. Confirm the payment using the verification code (OTP) sent by your bank. 5. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ تقسيط بنكي بدون فوائد؟",
+    "answer_ar": "\"Installment Payment via Credit Cards (0% Interest): 1. Select the 0% interest installment payment method and click on \"\"Complete Payment\"\" (available only for purchases above EGP 500). 2. Choose the bank that issued your credit card, then select the available installment period (3 or 6 months). 3. Enter all the required information (card number, CVV code, and expiration date). 4. Confirm the payment using the verification code (OTP) sent by your bank. 5. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\""
+  },
+  {
+    "id": "payment_50_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with Bank Installment?",
+    "answer_en": "Your request would be processed during 15 working days without any refund fees. For the transaction that is paid by \"Bank installment\": The full collected amount can be refunded without any deduction during 15 working days. But for refunding a part from the order, It can be refunded only on \"Waffarha wallet\" during 24 Hrs.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ تقسيط بنكي بدون فوائد؟",
+    "answer_ar": "يتم استرداد المبلغ خلال 15 يوم عمل بدون اي مصروفات استرجاع. العمليات المدفوعة من خلال \"التقسيط البنكي\": يمكن استرداد كامل المبلغ المدفوع على نفس الحساب البنكي بدون أي مصاريف استرداد، خلال 15 يوم عمل. أما في حالة استرداد جزء من المبلغ المدفوع، يمكن الاستفادة بالمبلغ الجزئي من خلال الاسترجاع على \"محفظة وفرها\" خلال 24 ساعة."
+  },
+  {
+    "id": "payment_61_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Opay work?",
+    "answer_en": "\"Payment via Reference Numbers (Fawry - OPay - Damen - Basata - Geidea): 1. Select the most convenient method for you (Fawry, OPay, Damen, Basata, or Geidea) based on the nearest available provider, then click on \"\"Complete Payment.\"\" 2. You will receive a reference number (8 or 9 digits) valid for 12 hours. 3. Visit the nearest service provider for the selected method. 4. Ask the agent to process the payment to Waffarha (Fawry service code: 333) and provide them with the reference number. 5. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ اوباي؟",
+    "answer_ar": "1 - اختار طريقة الدفع OPay وأضغط على إتمام الدفع. 2 - هيجيلك كود للدفع مكون من 9 أرقام والكود صالح للدفع خلال 12 ساعة. 3 - روح لأقرب تاجر/منفذ Opay ليك واطلب من المسئول اختيار قائمة مدفوعات OPay. 4- سلم كود Opay المكون من 9 ارقام للتاجر وادفع مبلغ العملية وأتاكد من استلام ايصال الدفع. 5- بمجرد إتمام الدفع رقم الكوبون بيكون موجود في صفحة طلباتي على الأبلكيشن ، سلم ارقام الكوبونات للتاجر وأستفيد بالعرض."
+  },
+  {
+    "id": "payment_66_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with e& money work?",
+    "answer_en": "\"Etisalat Cash: 1. Select the Etisalat Cash payment method - enter your Etisalat Cash wallet number. 2. Confirm the payment via the Etisalat Cash app (go to Purchase > Current Orders > Approve Payment Request). 3. Click on \"\"Complete Transaction\"\" through Waffarha app. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ آي أند ماني؟",
+    "answer_ar": "فيزا ومستركارد : اختار طريقه الدفع فيزا. هتتحول أتوماتيك على صفحة الدفع في بوابة البنك العربى الافريقي. اختار نوع الكارت بتاعك (ماستر كارد أو فيزا كارد). دخل بيانات الفيزا فى الصفحه واملأ كل الخانات الاساسية المطلوبة و اضغط على كلمة Pay. بمجرد اكمال الدفع الكوبونات هتتحول مرة تانية على Waffarha. هتلاقى الكوبونات دلوقتي ظاهرة في حسابك على وفرها تحت خانة الكوبونات اطبعها أو اكتبها واستمتع بالعرض على طول."
+  },
+  {
+    "id": "payment_66_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with e& money?",
+    "answer_en": "- Your refund request will usually take from 5 up to 7 working days to be reflected on your wallet again. - Refund fees of 5% will be deducted.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ آي أند ماني؟",
+    "answer_ar": "- سيتم تنفيذ طلب الاسترجاع الخاص بك وظهور المبلغ المسترد في محفظتك البنكية/الغير بنكية في حد أقصاه من 5 الى 7 ايام عمل. - يتم خصم 5% قيمة مصروفات استرجاع للطلب."
+  },
+  {
+    "id": "payment_68_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with valU work?",
+    "answer_en": "\"ValU: 1. Select ValU as your payment method (available for purchases of EGP 200 or more), choose your preferred installment plan, and click on \"\"Complete Payment.\"\" 2. You will receive an SMS with a link to the ValU app to retrieve your confirmation code. 3. Confirm the payment on Waffarha app using ValU confirmation code. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ ڤاليو؟",
+    "answer_ar": "اختار طريقة الدفع valU لمشتريات تبدأ من 200 جنيه. سيتم تحويلك أتوماتيك لصفحة الدفع الخاصة بـ valU. استكمل البيانات المطلوبة واختار فترة التقسيط المناسبة وقم بتأكيد العملية عن طريق الكود المرسل في رسالة على رقمك. بعد إكمال الدفع سيتم تحويلك مجددًا على Waffarha. ستظهر الكوبونات فورًا في حسابك على وفرها تحت خانة طلباتي، سلمها للتاجر واستمتع بالعرض في المكان."
+  },
+  {
+    "id": "payment_75_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Premium Card * work?",
+    "answer_en": "\"Premium Card: 1. Select Premium Card as your payment method. 2. Enter your card number and the required details (card expiration date and CVV), then click on \"\"Complete Payment.\"\" 3. Enter the confirmation code sent to you by Premium Card to complete the payment. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ بريميوم كارد؟",
+    "answer_ar": "اختار طريقه الدفع بريميم كارد واضغط اتمام الشراء. الموقع هيحولك أتوماتيك على صفحة الدفع في بريميم كارد. قم بإدخال البيانات المطلوبة فى صفحة الدفع واكمل الدفع. انتظر مكالمة تأكيد من خدمة عملاء بريميم كارد لاتمام الدفع. بمجرد اتمام الدفع هتلاقى الكوبونات دلوقتي ظاهرة في حسابك على وفرها تحت خانة الكوبونات اطبعها أو اكتبها واستمتع بالعرض على طول."
+  },
+  {
+    "id": "payment_75_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with Premium Card *?",
+    "answer_en": "- Your refund request will take up to 5 working days to be completed & reflect on your Premium card account.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ بريميوم كارد؟",
+    "answer_ar": "- سيتم تنفيذ طلب الاسترجاع الخاص بك في خلال 5أيام عمل لحسابك على بريميوم كارد."
+  },
+  {
+    "id": "payment_79_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Orange Cash work?",
+    "answer_en": "\"Orange Cash: 1. Select the Orange Cash payment method - enter your Orange Cash wallet number. 2. Confirm the payment via the Orange Cash app (go to Current Payment Requests > Approve Payment Request). 3. Click on \"\"Complete Transaction\"\" through the Waffarha app. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ اورنچ كاش؟",
+    "answer_ar": "فيزا ومستركارد : اختار طريقه الدفع فيزا. هتتحول أتوماتيك على صفحة الدفع في بوابة البنك العربى الافريقي. اختار نوع الكارت بتاعك (ماستر كارد أو فيزا كارد). دخل بيانات الفيزا فى الصفحه واملأ كل الخانات الاساسية المطلوبة و اضغط على كلمة Pay. بمجرد اكمال الدفع الكوبونات هتتحول مرة تانية على Waffarha. هتلاقى الكوبونات دلوقتي ظاهرة في حسابك على وفرها تحت خانة الكوبونات اطبعها أو اكتبها واستمتع بالعرض على طول."
+  },
+  {
+    "id": "payment_79_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with Orange Cash?",
+    "answer_en": "- Your refund request will usually take from 5 up to 7 working days to be reflected on your wallet again. - Refund fees of 5% will be deducted.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ اورنچ كاش؟",
+    "answer_ar": "- سيتم تنفيذ طلب الاسترجاع الخاص بك وظهور المبلغ المسترد في محفظتك البنكية/الغير بنكية في حد أقصاه من 5 الى 7 ايام عمل. - يتم خصم 5% قيمة مصروفات استرجاع للطلب."
+  },
+  {
+    "id": "payment_95_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Geidea work?",
+    "answer_en": "\"Payment via Reference Numbers (Fawry - OPay - Damen - Basata - Geidea): 1. Select the most convenient method for you (Fawry, OPay, Damen, Basata, or Geidea) based on the nearest available provider, then click on \"\"Complete Payment.\"\" 2. You will receive a reference number (8 or 9 digits) valid for 12 hours. 3. Visit the nearest service provider for the selected method. 4. Ask the agent to process the payment to Waffarha (Fawry service code: 333) and provide them with the reference number. 5. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ جيديا؟",
+    "answer_ar": "أمان : اختار وسيلة الدفع أمان واضغط اتمام الشراء. اكتب كود أمان المكون من 8 أرقام (الكود ده صالح للدفع لمدة 5 ساعات). روح لأقرب منفذ أمان (ولمعرفة أقرب منفذ أمان ليك اتصل على 16421). اطلب من المسئول اختيار أمان باي من القائمة. ثم اختيار خدمة دفع وفرها.كوم. أعطى للمسئول كود الدفع وقم بسداد المبلغ المطلوب. احصل على إيصال أمان كاثبات لاتمام الدفع. بمجرد اكمال الدفع في أمان الكوبونات دلوقتي ظاهرة في حسابك على وفرها تحت خانة الكوبونات اطبعها أو اكتبها واستمتع بالعرض على طول."
+  },
+  {
+    "id": "payment_107_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with FORSA work?",
+    "answer_en": "\"Forsa: 1. Select \"\"Forsa\"\" as your payment method (available for purchases above EGP 200, with the longest possible installment period offered). 2. Enter your mobile number linked to the payment method and your (PIN) code. 3. Choose the preferred installment period and confirm the payment using the one-time password (OTP). 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ فرصة؟",
+    "answer_ar": "1- اختار طريقة الدفع SYMPL. 2- دخل بيانات الكارت البنكي الخاص بك. 3- دخل رقم موبايلك و الرقم القومي.. 4- قم باختيار خطة الدفع المناسبة لك.. 5- دخل كلمة السر التي تم ارسالها في رسالة نصية.. 6- ادفع رسوم الخدمة والدفعة المقدمة (إذا وجدت) المبينة اثناء المعاملة بالكارت البنكي.. 7- بمجرد اتمام خطوات الدفع هتوصلك رسالة تأكيد من سيمبل و ارقام الكوبونات بتكون موجودة في صفحة طلباتي على الأبلكيشن ، سلم ارقام الكوبونات للتاجر واستفيد بالعرض."
+  },
+  {
+    "id": "payment_107_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with FORSA?",
+    "answer_en": "- Your refund request will usually take up to 15 working days to be reflected on your wallet again. - Refund fees of 5% will be deducted.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ فرصة؟",
+    "answer_ar": "- سيتم تنفيذ طلب الاسترجاع الخاص بك في حد أقصاه 15 يوم عمل وذلك وفقا لسياسات البنك المصدر لبطاقتكم. - يتم خصم 5% قيمة مصروفات استرجاع للطلب."
+  },
+  {
+    "id": "payment_109_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Vodafone Cash Wallet work?",
+    "answer_en": "\"Vodafone Cash: 1. Select the Vodafone Cash payment method - enter your Vodafone Cash wallet number. 2. Once redirected to the payment page, enter your wallet’s (PIN) code. 3. Enter the verification code (OTP) sent to you by Vodafone Cash to complete the payment. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ ڤودافون كاش؟",
+    "answer_ar": "\"Vodafone Cash: 1. Select the Vodafone Cash payment method - enter your Vodafone Cash wallet number. 2. Once redirected to the payment page, enter your wallet’s (PIN) code. 3. Enter the verification code (OTP) sent to you by Vodafone Cash to complete the payment. 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\""
+  },
+  {
+    "id": "payment_109_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with Vodafone Cash Wallet?",
+    "answer_en": "- Your refund request will usually takes 5 - 7 working days. - Refund fees of 5% will be deducted.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ ڤودافون كاش؟",
+    "answer_ar": "- سيتم تنفيذ طلب الاسترجاع الخاص بك في حد أقصاه من 5 - 7 أيام عمل . - يتم خصم 5% قيمة مصروفات استرجاع للطلب."
+  },
+  {
+    "id": "payment_112_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Souhoola work?",
+    "answer_en": "\"Aman & Souhoola Payment: 1. Select \"\"Souhoola\"\" or \"\"Aman\"\" as your payment method (available for purchases above EGP 1,000, with the longest possible installment period offered). 2. Enter your mobile number linked to the payment method and your (PIN) code. 3. Choose the preferred installment period and confirm the payment using the one-time password (OTP). 4. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ سهولة؟",
+    "answer_ar": "1- اختار طريقة الدفع SYMPL. 2- دخل بيانات الكارت البنكي الخاص بك. 3- دخل رقم موبايلك و الرقم القومي.. 4- قم باختيار خطة الدفع المناسبة لك.. 5- دخل كلمة السر التي تم ارسالها في رسالة نصية.. 6- ادفع رسوم الخدمة والدفعة المقدمة (إذا وجدت) المبينة اثناء المعاملة بالكارت البنكي.. 7- بمجرد اتمام خطوات الدفع هتوصلك رسالة تأكيد من سيمبل و ارقام الكوبونات بتكون موجودة في صفحة طلباتي على الأبلكيشن ، سلم ارقام الكوبونات للتاجر واستفيد بالعرض."
+  },
+  {
+    "id": "payment_112_refund",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "What is the refund policy if I paid with Souhoola?",
+    "answer_en": "- The amount will be refunded in 24 Hrs. - The minimum payment after proceeding refund is 500 EGP for installment plan 6 months & 1000 EGP for installments plans starting from 9 month.",
+    "question_ar": "إيه سياسة الاسترجاع لو دفعت بـ سهولة؟",
+    "answer_ar": "- يتم تنفيذ طلبك خلال 24 ساعة. - الحد الأدنى للمبلغ المدفوع بعد الاسترجاع 500ج لفترة التقسيط 6 اشهر 1000 جنيه فى حالة التقسيط بداية من 9 اشهر."
+  },
+  {
+    "id": "payment_117_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Damn work?",
+    "answer_en": "\"Payment via Reference Numbers (Fawry - OPay - Damen - Basata - Geidea): 1. Select the most convenient method for you (Fawry, OPay, Damen, Basata, or Geidea) based on the nearest available provider, then click on \"\"Complete Payment.\"\" 2. You will receive a reference number (8 or 9 digits) valid for 12 hours. 3. Visit the nearest service provider for the selected method. 4. Ask the agent to process the payment to Waffarha (Fawry service code: 333) and provide them with the reference number. 5. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ ضامن؟",
+    "answer_ar": "فوري : اختار وسيلة الدفع فوري واضغط اتمام الشراء. اكتب كود فورى المكون من 6 أرقام (الكود ده صالح للدفع لمدة 5 ساعات). روح لأقرب منفذ فوري (ولمعرفة أقرب منفذ فوري ليك اتصل على 16421). اطلب من المسئول اختيار فوري باي من القائمة. ثم اختيار خدمة دفع وفرها.كوم. أعطى للمسئول كود الدفع وقم بسداد المبلغ المطلوب. احصل على إيصال فوري كاثبات لاتمام الدفع. بمجرد اكمال الدفع في فوري الكوبونات دلوقتي ظاهرة في حسابك على وفرها تحت خانة الكوبونات اطبعها أو اكتبها واستمتع بالعرض على طول."
+  },
+  {
+    "id": "payment_119_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Basata work?",
+    "answer_en": "\"Payment via Reference Numbers (Fawry - OPay - Damen - Basata - Geidea): 1. Select the most convenient method for you (Fawry, OPay, Damen, Basata, or Geidea) based on the nearest available provider, then click on \"\"Complete Payment.\"\" 2. You will receive a reference number (8 or 9 digits) valid for 12 hours. 3. Visit the nearest service provider for the selected method. 4. Ask the agent to process the payment to Waffarha (Fawry service code: 333) and provide them with the reference number. 5. Once the payment is completed, you will find your coupons on the \"\"My Orders\"\" page. Show their numbers to the merchant and enjoy the offer.\"",
+    "question_ar": "إزاي أدفع بـ بساطة؟",
+    "answer_ar": "بساطه: اختار وسيلة الدفع بساطه واضغط اتمام الشراء. اكتب كود فورى المكون من 6 أرقام (الكود ده صالح للدفع لمدة 5 ساعات). روح لأقرب منفذ بساطه (ولمعرفة أقرب منفذ بساطه ليك اتصل على 16421). اطلب من المسئول اختيار فوري باي من القائمة. ثم اختيار خدمة دفع وفرها.كوم. أعطى للمسئول كود الدفع وقم بسداد المبلغ المطلوب. احصل على إيصال بساطه كاثبات لاتمام الدفع. بمجرد اكمال الدفع في فوري الكوبونات دلوقتي ظاهرة في حسابك على وفرها تحت خانة الكوبونات اطبعها أو اكتبها واستمتع بالعرض على طول."
+  },
+  {
+    "id": "payment_131_info",
+    "category": "payment",
+    "category_ar": "الدفع",
+    "question_en": "How does paying with Tru work?",
+    "answer_en": "Choose valU as a payment method for purchase starting from 200 LE. Automatically directed to the valU payment page. Continue the requested info, catch your preferred installment period then confirm the process by the code that sent to your phone in SMS. Once your payment is approved, you will be redirected again to Waffarha. Your coupons are shown in your Waffarha account under coupons. Now you can print it or write it down to enjoy redeeming them at the deal&rsquo;s place.",
+    "question_ar": "إزاي أدفع بـ ترو؟",
+    "answer_ar": "اختار طريقة الدفع valU لمشتريات تبدأ من 200 جنيه. سيتم تحويلك أتوماتيك لصفحة الدفع الخاصة بـ valU. استكمل البيانات المطلوبة واختار فترة التقسيط المناسبة وقم بتأكيد العملية عن طريق الكود المرسل في رسالة على رقمك. بعد إكمال الدفع سيتم تحويلك مجددًا على Waffarha. ستظهر الكوبونات فورًا في حسابك على وفرها تحت خانة طلباتي، سلمها للتاجر واستمتع بالعرض في المكان."
+  }
+]
