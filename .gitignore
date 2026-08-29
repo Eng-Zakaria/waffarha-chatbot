@@ -1,55 +1,156 @@
+# =============================================================================
 # Environment and secrets
+# =============================================================================
 .env
 .env.*
+!.env.example
+*.pem
+*.key
+secrets/
 
+# =============================================================================
 # Python
+# =============================================================================
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+*.egg-info/
+*.egg
+dist/
+build/
+pip-wheel-metadata/
 
+# =============================================================================
 # Virtual environments
+# =============================================================================
 venv/
-venv*
+venv*/
+env/
+.env_*/
+.venv/
 
-# Data directories (large files, built artifacts)
-data/
+# =============================================================================
+# Data and large generated files
+# =============================================================================
+# Raw data dumps (large, may contain sensitive info)
+data/offers_raw.json
+data/type_prices.json
+
+# Built vector indices (regenerable, large binary files)
+data/index/
+
+# Eval results (regenerable)
+results/
 eval/results/
+comparison_results/
+catalog_results.json
+rag_vs_catalog_results.json
 
-# Build outputs
+# Benchmark outputs
+results/benchmark_embedding_models.json
+results/comparison_results.json
+
+# =============================================================================
+# Build outputs and logs
+# =============================================================================
 digest.txt
-benchmark_embedding_models.json
+*.log
+*.out
+*.pid
+*.seed
+*.pid.lock
+nohup.out
 
-# IDE / editor
+# =============================================================================
+# IDE and editor
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
 .claude/
 .continue
 .debug
 .aider*
+.cursor*
 
-# Test and debug files (moved to scripts/ and tests/)
-test*.py
+# =============================================================================
+# OS files
+# =============================================================================
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# =============================================================================
+# Local-only test/debug scripts
+# =============================================================================
+# These are throwaway debugging scripts -- not part of the codebase
+debug_*.py
+test_*.py
 simple_test.py
-analyze_offers.py
+analyze_*.py
 answer_format.py
 check_bidi.py
-debug_arabic.py
+merchant_debug.txt
+
+# Old evaluation scripts (replaced by utils/run_full_eval.py)
 benchmark_embeddings.py
+compare_*.py
 run_eval.py
 run_full_eval.py
-compare_*.py
 
+# One-off data extraction scripts
+extract_*.py
+process_*.py
+
+# =============================================================================
 # Deployment configs (local only)
+# =============================================================================
 deployment/
+ollama-docker/
+docker-compose.local-clickhouse.yml
 
-# Comparison/benchmark results
-comparison_results/
-results/
-comparison_results.json
-results.txt
+# =============================================================================
+# Scratch / temp files
+# =============================================================================
+*.tmp
+*.bak
+*.swp
+*.orig
+*.rej
+nul
+scratch/
+tmp/
 
+# =============================================================================
 # Documentation scratch files
+# =============================================================================
 RATE_LIMIT_FIX.md
 CLICKHOUSE_LOCAL_SETUP.md
 *.log
 
+# =============================================================================
+# Project-specific: ignore old code that's been reorganized
+# =============================================================================
+# backup/ contains the original flat-structure files for reference
+backup/
+
+# Data schema text file (informational only)
+data/data_schema.txt
+
+# =============================================================================
+# Claude / AI tool config
+# =============================================================================
 CLAUDE.md
+AGENTS.md
