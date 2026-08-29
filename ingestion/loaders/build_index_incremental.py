@@ -9,8 +9,8 @@ This script builds/updates the vector index incrementally by:
 This is much faster than rebuilding the entire index from scratch.
 
 Usage:
-    python ingest/build_index_incremental.py --backend faiss
-    python ingest/build_index_incremental.py --backend chroma --embedding-model intfloat/multilingual-e5-small
+    python ingestion/loaders/build_index_incremental.py --backend faiss
+    python ingestion/loaders/build_index_incremental.py --backend chroma --embedding-model intfloat/multilingual-e5-small
 
 The script maintains a manifest file (index_manifest.json) that tracks:
 - Document hashes (content + metadata) for change detection
@@ -478,7 +478,13 @@ def rebuild_index(embedding_model: str, backend: str, docs: List[Dict], embeddin
 def incremental_update(embedding_model: str, backend: str,
                        new_or_modified: List[Dict], deleted_ids: List[str],
                        unchanged_docs: List[Dict], manifest: Dict) -> Dict:
-    """Perform incremental update to the index."""
+    """
+    Perform incremental update to the index.
+
+    Key optimization: We rebuild the FAISS index from existing + new embeddings
+    WITHOUT re-encoding unchanged documents. This makes updates fast even when
+    there are deletions.
+    """
     print(f"\n=== Incremental update: embedding={embedding_model}  backend={backend} ===")
     print(f"  New/modified: {len(new_or_modified)}")
     print(f"  Deleted: {len(deleted_ids)}")
@@ -488,18 +494,27 @@ def incremental_update(embedding_model: str, backend: str,
     docs_path = os.path.join(d, "docs.pkl")
     store_path = os.path.join(d, "index.faiss") if backend == "faiss" else d
 
-    # Load existing index and docs
-    store = get_store(backend, persist_path=None if backend == "faiss" else store_path)
-    store.load(store_path)
-
+    # Load existing docs from disk
     with open(docs_path, "rb") as f:
         existing_docs = pickle.load(f)
 
-    # Build new docs list: unchanged + new/modified (re-embedded)
-    # We need to re-embed new/modified docs
-    all_docs = unchanged_docs + new_or_modified
+    # Build a lookup from stable_id to existing doc index
+    existing_by_id = {}
+    for i, doc in enumerate(existing_docs):
+        source = doc["metadata"]["source"]
+        doc_id = doc["metadata"]["id"]
+        lang = doc["metadata"]["lang"]
+        stable_id = f"{source}:{doc_id}:{lang}"
+        existing_by_id[stable_id] = i
 
-    # Re-embed only new/modified docs
+    # Combine unchanged + new/modified docs
+    all_docs = list(unchanged_docs) + list(new_or_modified)
+
+    # Now rebuild the vector store
+    print(f"  Building new index with {len(all_docs)} documents...")
+
+    # Re-encode only new/modified docs
+    new_embeddings = None
     if new_or_modified:
         print(f"  Encoding {len(new_or_modified)} new/modified documents...")
         model = SentenceTransformer(embedding_model, device=config.EMBEDDING_DEVICE)
@@ -509,28 +524,93 @@ def incremental_update(embedding_model: str, backend: str,
             normalize_embeddings=True, convert_to_numpy=True,
         ).astype("float32")
 
-        # Add new embeddings to store
-        store.add(new_embeddings, new_or_modified)
+    # Rebuild FAISS index with all embeddings
+    if backend == "faiss":
+        import faiss
+        import numpy as np
 
-    # For deleted docs, we need to rebuild (FAISS doesn't support easy deletion)
-    # For now, if there are deletions, do a full rebuild
-    if deleted_ids:
-        print(f"  Deletions detected ({len(deleted_ids)}), doing full rebuild...")
-        # Re-encode all docs
+        # Get embedding dimension
+        if new_embeddings is not None:
+            dim = new_embeddings.shape[1]
+        else:
+            # Load existing index to get dimension
+            existing_index = faiss.read_index(store_path)
+            dim = existing_index.d
+            del existing_index
+
+        # Build a map of stable_id -> existing embedding index
+        existing_stable_ids = {}
+        for i, doc in enumerate(existing_docs):
+            source = doc["metadata"]["source"]
+            doc_id = doc["metadata"]["id"]
+            lang = doc["metadata"]["lang"]
+            stable_id = f"{source}:{doc_id}:{lang}"
+            existing_stable_ids[stable_id] = i
+
+        # Build combined embeddings in order of all_docs
+        combined_embeddings = []
+        unchanged_ids = set()
+
+        # First pass: add unchanged doc embeddings
+        for doc in unchanged_docs:
+            source = doc["metadata"]["source"]
+            doc_id = doc["metadata"]["id"]
+            lang = doc["metadata"]["lang"]
+            stable_id = f"{source}:{doc_id}:{lang}"
+            if stable_id in existing_stable_ids:
+                unchanged_ids.add(stable_id)
+
+        # Load existing index for embedding extraction
+        existing_index = faiss.read_index(store_path)
+
+        # Build combined embeddings in order of all_docs
+        for doc in all_docs:
+            source = doc["metadata"]["source"]
+            doc_id = doc["metadata"]["id"]
+            lang = doc["metadata"]["lang"]
+            stable_id = f"{source}:{doc_id}:{lang}"
+
+            if stable_id in unchanged_ids:
+                # Get embedding from existing FAISS index using reconstruct
+                orig_idx = existing_stable_ids[stable_id]
+                emb = existing_index.reconstruct(orig_idx)
+                combined_embeddings.append(emb)
+            else:
+                # Must be a new/modified doc - find in new_or_modified
+                for i, nm_doc in enumerate(new_or_modified):
+                    nm_source = nm_doc["metadata"]["source"]
+                    nm_doc_id = nm_doc["metadata"]["id"]
+                    nm_lang = nm_doc["metadata"]["lang"]
+                    nm_stable_id = f"{nm_source}:{nm_doc_id}:{nm_lang}"
+                    if nm_stable_id == stable_id:
+                        combined_embeddings.append(new_embeddings[i])
+                        break
+
+        del existing_index
+
+        combined_embeddings = np.array(combined_embeddings, dtype='float32')
+
+        # Create new index and add embeddings
+        new_index = faiss.IndexFlatIP(dim)
+        new_index.add(combined_embeddings)
+
+        # Save new index
+        faiss.write_index(new_index, store_path)
+        print(f"  Saved new FAISS index with {len(all_docs)} vectors")
+    else:
+        # For other backends, rebuild from scratch
+        print(f"  Backend {backend}: rebuilding index...")
+        store = get_store(backend, persist_path=None if backend == "faiss" else store_path)
+
+        # Encode all docs
         model = SentenceTransformer(embedding_model, device=config.EMBEDDING_DEVICE)
-        all_texts = [d["text"] for d in all_docs]
-        all_embeddings = model.encode(
-            all_texts, batch_size=64, show_progress_bar=True,
+        texts = [d["text"] for d in all_docs]
+        embeddings = model.encode(
+            texts, batch_size=64, show_progress_bar=True,
             normalize_embeddings=True, convert_to_numpy=True,
         ).astype("float32")
-        return rebuild_index(embedding_model, backend, all_docs, all_embeddings)
 
-    # Save updated docs
-    with open(docs_path, "wb") as f:
-        pickle.dump(all_docs, f)
-
-    # Save store (for FAISS, this saves the index)
-    if backend == "faiss":
+        store.build(embeddings, all_docs)
         store.save(store_path)
 
     # Update BM25 index
@@ -543,6 +623,10 @@ def incremental_update(embedding_model: str, backend: str,
         print(f"Updated BM25 index")
     except Exception as e:
         print(f"Warning: failed to update BM25 index: {e}")
+
+    # Save updated docs
+    with open(docs_path, "wb") as f:
+        pickle.dump(all_docs, f)
 
     # Update manifest
     manifest["documents"] = {}
@@ -593,33 +677,38 @@ def main():
 
         if args.force_full or not manifest.get("documents"):
             print(f"\nNo existing manifest or --force-full specified, doing full rebuild for {backend}")
+            start_time = time.time()
             model = SentenceTransformer(args.embedding_model, device=config.EMBEDDING_DEVICE)
             texts = [d["text"] for d in current_docs]
             embeddings = model.encode(
                 texts, batch_size=64, show_progress_bar=True,
                 normalize_embeddings=True, convert_to_numpy=True,
             ).astype("float32")
+            elapsed = time.time() - start_time
+            print(f"  Encoding took {elapsed:.1f}s")
             rebuild_index(args.embedding_model, backend, current_docs, embeddings)
         else:
             # Detect changes
+            start_time = time.time()
             new_or_modified, deleted_ids, unchanged_docs = detect_changes(current_docs, manifest)
+            detect_time = time.time() - start_time
+
+            print(f"\nChange detection took {detect_time:.2f}s")
+            print(f"  New/modified: {len(new_or_modified)}")
+            print(f"  Deleted: {len(deleted_ids)}")
+            print(f"  Unchanged: {len(unchanged_docs)}")
 
             if not new_or_modified and not deleted_ids:
-                print(f"\nNo changes detected for {backend}, index is up to date!")
+                print(f"No changes detected for {backend}, index is up to date!")
                 continue
 
-            if deleted_ids:
-                print(f"\nDeletions detected for {backend}, doing full rebuild...")
-                model = SentenceTransformer(args.embedding_model, device=config.EMBEDDING_DEVICE)
-                texts = [d["text"] for d in current_docs]
-                embeddings = model.encode(
-                    texts, batch_size=64, show_progress_bar=True,
-                    normalize_embeddings=True, convert_to_numpy=True,
-                ).astype("float32")
-                rebuild_index(args.embedding_model, backend, current_docs, embeddings)
-            else:
-                incremental_update(args.embedding_model, backend,
-                                 new_or_modified, deleted_ids, unchanged_docs, manifest)
+            # Always use incremental update - it now handles deletions WITHOUT full re-encode
+            # by extracting unchanged embeddings from the existing FAISS index
+            update_start = time.time()
+            incremental_update(args.embedding_model, backend,
+                             new_or_modified, deleted_ids, unchanged_docs, manifest)
+            update_time = time.time() - update_start
+            print(f"\nIncremental update completed in {update_time:.1f}s")
 
     print("\nDone!")
 
