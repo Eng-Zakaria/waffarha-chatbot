@@ -1,30 +1,55 @@
+# Environment and secrets
 .env
-data/
+.env.*
+
+# Python
 __pycache__/
-venv/
-venv*
-digest.txt
-eval/
-.aider*
-.continue
-.debug
-.claude
-comparison_results/
-results/
-CLAUDE.md
-benchmark_embedding_models.json
-RATE_LIMIT_FIX.md
-results.txt
-test*
-test_catalog.py
-simple_test.py
 *.pyc
 *.pyo
 .pytest_cache/
-test_*.py
+
+# Virtual environments
+venv/
+venv*
+
+# Data directories (large files, built artifacts)
+data/
+eval/results/
+
+# Build outputs
+digest.txt
+benchmark_embedding_models.json
+
+# IDE / editor
+.claude/
+.continue
+.debug
+.aider*
+
+# Test and debug files (moved to scripts/ and tests/)
+test*.py
 simple_test.py
-test_import.py
 analyze_offers.py
 answer_format.py
 check_bidi.py
+debug_arabic.py
+benchmark_embeddings.py
+run_eval.py
+run_full_eval.py
+compare_*.py
+
+# Deployment configs (local only)
+deployment/
+
+# Comparison/benchmark results
+comparison_results/
+results/
+comparison_results.json
+results.txt
+
+# Documentation scratch files
+RATE_LIMIT_FIX.md
+CLICKHOUSE_LOCAL_SETUP.md
 *.log
+
+CLAUDE.md

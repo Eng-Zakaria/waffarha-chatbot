@@ -1,0 +1,32 @@
+[
+  {
+    "query": "KFC offers",
+    "lang": "ar",
+    "answer": "دي العروض الحالية من KFC: - دجاج كنتاكي — 125.0 جنيه (was 299.0 جنيه), 58% off — صالح حتى 2023-10-09 - كنتاكي وسينمات — 149.0 جنيه (was 251.0 جنيه), 41% off — صالح حتى 2019-12-31 - دجاج كنتاكي — 189.0"
+  },
+  {
+    "query": "cheapest offer",
+    "lang": "ar",
+    "answer": "ده أرخص عرض متاح دلوقتي: - سبينيس — 0.0 جنيه (was 70.0 جنيه) — صالح حتى 2019-10-10"
+  },
+  {
+    "query": "under 200 EGP",
+    "lang": "ar",
+    "answer": "دي العروض تحت 200.0 جنيه: - الباز أفندي — 0.0 جنيه (was 15.0 جنيه), 100% off — صالح حتى 2018-04-15 - سبينيس — 0.0 جنيه (was 70.0 جنيه) — صالح حتى 2019-10-10 - كارنوفا كار كير — 0.0 جنيه — صالح حتى 201"
+  },
+  {
+    "query": "KFC price",
+    "lang": "ar",
+    "answer": "دي العروض الحالية من KFC: - دجاج كنتاكي — 125.0 جنيه (was 299.0 جنيه), 58% off — صالح حتى 2023-10-09 - كنتاكي وسينمات — 149.0 جنيه (was 251.0 جنيه), 41% off — صالح حتى 2019-12-31 - دجاج كنتاكي — 189.0"
+  },
+  {
+    "query": "What is the cheapest offer",
+    "lang": "en",
+    "answer": "Here's the cheapest offer available right now: - Spinneys — 0.0 EGP (was 70.0 EGP) — valid until 2019-10-10"
+  },
+  {
+    "query": "KFC and McDonald's",
+    "lang": "en",
+    "answer": "Here are offers from McDonald's, KFC:  McDonald's: - McDonald's — 79.0 EGP (was 120.0 EGP), 57% off — valid until 2026-08-31  KFC: - KFC — 125.0 EGP (was 299.0 EGP), 58% off — valid until 2023-10-09 -"
+  }
+]

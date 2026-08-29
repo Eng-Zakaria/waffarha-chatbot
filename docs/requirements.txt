@@ -1,0 +1,34 @@
+# --- Backend server ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+
+# --- RAG engine (rag_engine.py, vectorstores.py) ---
+sentence-transformers>=2.7
+faiss-cpu>=1.8          # swap for faiss-gpu if EMBEDDING_DEVICE=cuda and you have one built for your CUDA version
+ollama>=0.2.0
+python-dotenv>=1.0
+
+# --- Session memory (memory.py) ---
+redis>=5.0
+clickhouse_connect
+
+# --- Ingest scripts (ingest/build_index.py, ingest/fetch_offers.py) ---
+# Only needed if you plan to re-fetch offers or rebuild the index yourself --
+# not required just to run the chatbot against the prebuilt index.
+requests>=2.31
+google
+
+# --- Evaluation & Comparison ---
+# For Gemini comparison (pip install google-genai)
+# For semantic similarity (pip install scikit-learn)
+# Uncomment if you want to run compare_llms.py:
+# google-genai>=1.0
+# scikit-learn>=1.3
+
+# --- Optional alternate vector store backends (vectorstores.py) ---
+# Uncomment whichever ones you actually use -- the app runs fine with just
+# faiss-cpu above if you're sticking with the default "faiss" backend.
+# chromadb>=0.5
+# qdrant-client>=1.9
+# lancedb>=0.6
+# psycopg2-binary>=2.9

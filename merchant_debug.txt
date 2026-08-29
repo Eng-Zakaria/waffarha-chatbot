@@ -1,0 +1,258 @@
+Cityscape Mall: 8 offers
+  ID=7770: Rope climbing & trampoline games with up to 45% off at Ninja... Expiry=2026-08-31 Lang=en
+  ID=7771: Funny hour for your kid & VR games with up to 29% off @Kiddi... Expiry=2026-08-31 Lang=en
+  ID=7772: 30 min Laser tag challenge with 36% off at Fight Club Laser ... Expiry=2026-08-31 Lang=en
+  ID=7774: Bubble Fight game with 31% off @Ninja Max, Cityscape Mall!... Expiry=2026-08-31 Lang=en
+  ID=7776: Live a VR adventure with 40% off at Play Max, Cityscape Mall... Expiry=2026-08-31 Lang=en
+
+سيتي سكيب مول: 8 offers
+  ID=7770: مغامرات وألعاب التسلق والحبال والترامبولين بخصم حتى 45% في ن... Expiry=2026-08-31 Lang=ar
+  ID=7771: خصم حتى 29% على ألعاب متنوعة وألعاب VR لطفلك في منطقة ألعاب ... Expiry=2026-08-31 Lang=ar
+  ID=7772: 30 دقيقة تحدي الليزر تاج بخصم 36% في Fight Club Laser Tag, س... Expiry=2026-08-31 Lang=ar
+  ID=7774: العب Bubble fight مع أصحابك بخصم 31% في نينجا ماكس، سيتي سكي... Expiry=2026-08-31 Lang=ar
+  ID=7776: استمتع بمغامرة العالم الموازي في الـVR بخصم 40% في بلاي ماكس... Expiry=2026-08-31 Lang=ar
+
+Fun Kingdom: 6 offers
+  ID=7118: More than 90 games with 38% off @Fun Kingdom Suncity Mall! E... Expiry=2026-08-31 Lang=en
+  ID=7118: أكثر من 90 لعبة بخصم 38% في Fun kingdom بصن سيتي مول! ادفع 1... Expiry=2026-08-31 Lang=ar
+  ID=8190: Bowling round with 32% off @Fun Kingdom, Suncity Mall! EGP 8... Expiry=2026-08-31 Lang=en
+  ID=8190: جيم بولينج بخصم 32% في Fun kingdom, صن سيتي مول! فقط 85 جنيه... Expiry=2026-08-31 Lang=ar
+  ID=8191: Skating fun with 32% off @Fun Kingdom, Sun Citymall! EGP 85 ... Expiry=2026-08-31 Lang=en
+
+Beauty Treatment Lounge: 6 offers
+  ID=7264: A bridal package with 62% off at Beauty Treatment Lounge!... Expiry=2026-08-31 Lang=en
+  ID=7264: باقة تجهيزات العروسة بخصم 62% في بيوتي تريتمنت لاونج!... Expiry=2026-08-31 Lang=ar
+  ID=7265: Up to 64% off Haircare restoration & coloring packages @ Bea... Expiry=2026-08-31 Lang=en
+  ID=7265: استمتعي بعناية لشعرك مع باقات الصبغة والترميم بخصم حتى 64% م... Expiry=2026-08-31 Lang=ar
+  ID=7822: Moroccan bath & skincare packages with up to 74% off @Beauty... Expiry=2026-08-31 Lang=en
+
+Türkan Beauty & Spa: 6 offers
+  ID=7783: Moroccan bath & full pampering packages with up to 63% off @... Expiry=2026-08-31 Lang=en
+  ID=7783: اعتني بنفسك مع باقات الحمام المغربي والعناية الكاملة بخصم حت... Expiry=2026-08-31 Lang=ar
+  ID=7791: Hair straightening & restoration session with 53% off @Türka... Expiry=2026-08-31 Lang=en
+  ID=7791: جلسة تريتمنت أمريكي للشعر وترميم بخصم 53% في توركان بيوتي & ... Expiry=2026-08-31 Lang=ar
+  ID=7792: A bridal care package with 50% off @Türkan Beauty & Spa, She... Expiry=2026-08-31 Lang=en
+
+Le Doux Patisserie: 6 offers
+  ID=9080: Savor your favorite flavors with an irresistible selection o... Expiry=2026-08-31 Lang=en
+  ID=9080: استمتع بنكهاتك المفضلة وتشكيلة لا تُقاوم من الحلويات بخصم حت... Expiry=2026-08-31 Lang=ar
+  ID=9092: Start your day with coffee and a dessert or fresh baked good... Expiry=2026-08-31 Lang=en
+  ID=9092: ابدأ يومك بقهوة مع حلو أو مخبوزات بخصم 37% في فروع Le doux!... Expiry=2026-08-31 Lang=ar
+  ID=9499: Mouled celebrations even sweeter with 25% off on treat boxes... Expiry=2026-08-26 Lang=en
+
+The Cave Wellness & Fitness: 4 offers
+  ID=6879: Various packages of monthly gym subscription with up to 55% ... Expiry=2026-08-31 Lang=en
+  ID=6879: باقات متنوعة للاشتراك الشهري في الجيم بخصم حتى 55% للسيدات و... Expiry=2026-08-31 Lang=ar
+  ID=8281: Salt Cave & Morrocan Bath & massage packages for Men & Ladie... Expiry=2026-08-31 Lang=en
+  ID=8281: باقات استرخاء في كهف الملح والحمام المغربي والمساج للرجال وا... Expiry=2026-08-31 Lang=ar
+
+Ramage Hotel & Resort: 4 offers
+  ID=6976: Enjoy your birthday party with your friends with 32% off @Ra... Expiry=2026-08-31 Lang=en
+  ID=7978: Cinema ticket & Popcorn with 39% off @Ramge Hotel Cinema, 5t... Expiry=2026-08-31 Lang=en
+  ID=7979: Spend a whole day of relaxation, Pool use fun & Spring vibes... Expiry=2026-08-31 Lang=en
+  ID=8284: Enjoy a night stay on the pool & garden view with a breakfas... Expiry=2026-08-31 Lang=en
+
+فندق وريزورت راماچ: 4 offers
+  ID=6976: احتفل بعيد ميلادك مع أصحابك بخصم 32% في فندق راماچ، التجمع ا... Expiry=2026-08-31 Lang=ar
+  ID=7978: تذكرة سينما وفشار بخصم 39% في سينما فندق راماچ، التجمع الخام... Expiry=2026-08-31 Lang=ar
+  ID=7979: استمتع بداي يوز كله روقان وانبساط مع نزول حمام السباحة والأن... Expiry=2026-08-31 Lang=ar
+  ID=8284: إقامة ليلة في غرف وشاليهات متنوعة على ڤيو حمام السباحة والحد... Expiry=2026-08-31 Lang=ar
+
+Dodo Beauty Center & Spa: 4 offers
+  ID=7327: Hair Italian dye, caviar & restoration sessions with up to 6... Expiry=2026-08-31 Lang=en
+  ID=8057: Full Bridal Spa packages with 71% off @Dodo Beauty Center & ... Expiry=2026-08-31 Lang=en
+  ID=8058: Glow up with massage & beauty care packages with up to 79% o... Expiry=2026-08-31 Lang=en
+  ID=8060: Deep cleansing & Hydrafacial packages for a glowing skin wit... Expiry=2026-08-31 Lang=en
+
+دودو بيوتي سنتر آند سبا: 4 offers
+  ID=7327: باقات صبغة إيطالي وجلسات كافيار وترميم للشعر بخصم حتى 67% في... Expiry=2026-08-31 Lang=ar
+  ID=8057: باقات شاملة للعناية بالعروسة بخصم 71% في دودو بيوتي سنتر آند... Expiry=2026-08-31 Lang=ar
+  ID=8058: اعتني بجمالك مع باقات حمام مغربي ومساج وعناية كاملة بخصم حتى... Expiry=2026-08-31 Lang=ar
+  ID=8060: باقات تنظيف عميق وهيدرافيشال متكاملة لبشرة متألقة بخصم حتى 7... Expiry=2026-08-31 Lang=ar
+
+Stage ElNile: 4 offers
+  ID=7615: Start your day with special pleasant oriental breakfast with... Expiry=2026-08-31 Lang=en
+  ID=7615: ابدأ يومك بإفطار فلاحي أو شرقي شهي ومشروب بخصم حتى 44% في St... Expiry=2026-08-31 Lang=ar
+  ID=7616: Enjoy the tastiest lunch or Dinner of your choice or a desse... Expiry=2026-08-31 Lang=en
+  ID=7616: غداء أو عشاء على النيل من اختيارك أو حلو مع مشروبك المفضل بخ... Expiry=2026-08-31 Lang=ar
+
+Glam Beauty Salon: 4 offers
+  ID=7696: Enjoy full care sessions for body & face with up to 53% off ... Expiry=2026-08-31 Lang=en
+  ID=7696: استمتعي بباقات عناية كاملة للجسم والوجه بخصم حتى 53% في Glam... Expiry=2026-08-31 Lang=ar
+  ID=7717: Different hair dye & care sessions with up to 58% off @Glam ... Expiry=2026-08-31 Lang=en
+  ID=7717: باقات صبغة وعناية بالشعر بخصم حتى 58% في Glam Beauty Salon، ... Expiry=2026-08-31 Lang=ar
+
+Nile Way Boat: 4 offers
+  ID=7795: Have a different Birthday in the middle of the Nile with up ... Expiry=2026-08-31 Lang=en
+  ID=7795: عيد ميلادك أحلى في قلب النيل بخصم حتى 32% شاملة التجهيزات وا... Expiry=2026-08-31 Lang=ar
+  ID=7884: Private Nile Lunch & Dinner trips with up to 36% off on Nile... Expiry=2026-08-31 Lang=en
+  ID=7884: استمتع برحلات غداء وعشاء خاصة  لفردين أو لمجموعة في قلب الني... Expiry=2026-08-31 Lang=ar
+
+Hundred Degrees: 4 offers
+  ID=7803: Savor tasty variety of meals with up to 51% off at Hundred D... Expiry=2026-08-31 Lang=en
+  ID=7803: اختيارات متنوعة لوجبات لذيذة ترضي كل الأذواق بخصم حتى 51% في... Expiry=2026-08-31 Lang=ar
+  ID=7805: Open-air breakfast meal with 60% off at Hundred Degrees, 5th... Expiry=2026-08-31 Lang=en
+  ID=7805: إفطار في الهواء الطلق بخصم 60% في مطعم Hundred Degrees, التج... Expiry=2026-08-31 Lang=ar
+
+Luminosa Clinics: 4 offers
+  ID=8155: Enjoy body hair removal sessions with up to 32% off @Luminos... Expiry=2026-08-31 Lang=en
+  ID=8155: استمتعي بباقات إزالة الشعر الزائد من الجسم بخصم حتى 32% في L... Expiry=2026-08-31 Lang=ar
+  ID=8160: Take care of your skin with facial & mesotherapy sessions wi... Expiry=2026-08-31 Lang=en
+  ID=8160: اعتني ببشرتك مع باقة من جلسات العناية بالبشرة بخصم حتى 53% ف... Expiry=2026-08-31 Lang=ar
+
+Nouvel Age Clinics: 4 offers
+  ID=8171: Enhance your confidence with laser hair removal pulses with ... Expiry=2026-08-31 Lang=en
+  ID=8171: عزّزي ثقتك بنفسك مع نبضات إزالة الشعر بالليزر بخصم حتى 36% ف... Expiry=2026-08-31 Lang=ar
+  ID=8172: Everything your skin and hair need from Mesotherapy and Skin... Expiry=2026-08-31 Lang=en
+  ID=8172: كل ما تحتاجه بشرتك وشعرك من ميزوثيرابي وسكين بوستر وغيرهم بخ... Expiry=2026-08-31 Lang=ar
+
+COCO Restaurants: 4 offers
+  ID=8173: Varieties of Western breakfast options & a drink with 42% of... Expiry=2026-08-31 Lang=en
+  ID=8173: اختيارات متنوعة من وجبات الإفطار الغربي مع مشروب بخصم 42% في... Expiry=2026-08-31 Lang=ar
+  ID=8175: Main dishes, pizza, and pasta with dessert and a drink with ... Expiry=2026-08-31 Lang=en
+  ID=8175: تمتع باختيارات متنوعة من الأطباق الرئيسية وباستا وساندوتشات ... Expiry=2026-08-31 Lang=ar
+
+Maison de Thé "Tea House": 4 offers
+  ID=8231: Your tasty breakfast meals await with 32% Off @Maison de Thé... Expiry=2026-08-31 Lang=en
+  ID=8231: وجبات الإفطار اللذيذة بانتظارك بخصم 32% في فروع Maison de Th... Expiry=2026-08-31 Lang=ar
+  ID=8233: Make your lunch break extra delicious with up to 36% off @Ma... Expiry=2026-08-31 Lang=en
+  ID=8233: غداك ألذ بوجبات متنوعة مستنياك بخصم حتى 36% في فروع Maison D... Expiry=2026-08-31 Lang=ar
+
+Regency Pyramids Hotel: 4 offers
+  ID=8256: Enjoy a day use with Pyramids view including open buffet @Re... Expiry=2026-08-31 Lang=en
+  ID=8256: استمتع بقضاء داي يوز مع إطلالة على الأهرامات مباشرة في Regen... Expiry=2026-08-31 Lang=ar
+  ID=8257: Full night stay with breakfast in premium hotel rooms with d... Expiry=2026-08-31 Lang=en
+  ID=8257: إقامة ليلة كاملة مع وجبة الإفطار في غرف فندقية بإطلالة متنوع... Expiry=2026-08-31 Lang=ar
+
+Helnan Auberge Hotel: 4 offers
+  ID=8309: Enjoy a fun day use with lunch meal @Helnan Auberge Hotel, F... Expiry=2026-08-31 Lang=en
+  ID=8309: استمتع بداي يوز ممتع مع وجبة غذاء في فندق Helnan Auberge، ال... Expiry=2026-08-31 Lang=ar
+  ID=8312: Enjoy a night stay on the lake & garden view with a breakfas... Expiry=2026-08-31 Lang=en
+  ID=8312: إقامة ليلة في غرف متنوعة على ڤيو بحيرة والحديقة مع وجبتي الإ... Expiry=2026-08-31 Lang=ar
+
+Solis: 4 offers
+  ID=8327: Varieties of drinks & bakeries & desserts with up to 33% off... Expiry=2026-08-31 Lang=en
+  ID=8327: مشروبات متنوعة مع مخبوز وحلو بخصم حتى 33% في Solis، الكوربة!... Expiry=2026-08-31 Lang=ar
+  ID=8332: Variety of breakfast dishes & drinks with up to 37% off @Sol... Expiry=2026-08-31 Lang=en
+  ID=8332: تنوع في أطباق الإفطار مع مشروب بخصم 37% في Solis، الكوربة!... Expiry=2026-08-31 Lang=ar
+
+Leven lounge: 4 offers
+  ID=8424: Relaxing vibes and the perfect breakfast to start your day w... Expiry=2026-08-31 Lang=en
+  ID=8424: استمتع بإفطار رايق في أجواء هادئة بخصم حتى 45% في Leven Loun... Expiry=2026-08-31 Lang=ar
+  ID=8425: Unique flavors & vibes to discover in a hidden gem with up t... Expiry=2026-08-31 Lang=en
+  ID=8425: أجواء ونكهات فريدة لخروجة استثنائية مع أصحابك بخصم حتى 42% ف... Expiry=2026-08-31 Lang=ar
+
+Ms Spa & Skin Care: 4 offers
+  ID=8500: Moroccan and Turkish baths, massages, and more for ultimate ... Expiry=2026-08-31 Lang=en
+  ID=8500: حمام مغربي وتركي ومساج وأكثر لأقصى استرخاء ورفاهية بخصم حتى ... Expiry=2026-08-31 Lang=ar
+  ID=8502: Deep cleansing facials for a glowing skin with up to 44% off... Expiry=2026-08-31 Lang=en
+  ID=8502: استمتعي بباقات تنظيف عميق للبشرة لإشراقة متألقة بخصم حتى 44%... Expiry=2026-08-31 Lang=ar
+
+Sweven Restaurant & Cafe: 4 offers
+  ID=8546: Various choices of the finest international cuisine with up ... Expiry=2026-08-31 Lang=en
+  ID=8546: اختيارات متنوعة من أرقى المطابخ العالمية بخصم حتى 48% في فرو... Expiry=2026-08-31 Lang=ar
+  ID=8547: Enjoy a variety of oriental breakfast meals & drink with up ... Expiry=2026-08-31 Lang=en
+  ID=8547: استمتع بوجبات إفطار شرقي متنوعة مع مشروب بخصم حتى 49% في فرو... Expiry=2026-08-31 Lang=ar
+
+Espressolab: 4 offers
+  ID=8981: Specialty coffee & wide variety of pastries with up to 32% o... Expiry=2026-09-30 Lang=en
+  ID=8981: وقت القهوة اختلف مع قهوة غنية ومخبوزات طازجة بخصم حتى 32% في... Expiry=2026-09-30 Lang=ar
+  ID=9501: Hero of the day: Hot/Iced Coffee with 45% off @Espressolab b... Expiry=2026-09-30 Lang=en
+  ID=9501: عرض اليوم: قهوة ساخنة أو مثلجة بخصم 45% في  فروع Espressolab... Expiry=2026-09-30 Lang=ar
+
+Picual: 4 offers
+  ID=9049: Lunch meals is even better with a variety choices and up to ... Expiry=2026-08-31 Lang=en
+  ID=9049: وجبات غداء أحلى مع اختيارات متنوعة بخصم حتى 41% في مطعم Picu... Expiry=2026-08-31 Lang=ar
+  ID=9050: 2 Pax breakfast tray with 36% off @Picual... Expiry=2026-08-31 Lang=en
+  ID=9050: وجبة فطار لفردين بخصم 36% في Picual... Expiry=2026-08-31 Lang=ar
+
+Blaze Egypt: 4 offers
+  ID=9058: 32% off on a Breakfast experience with a wide variety of cho... Expiry=2026-08-31 Lang=en
+  ID=9058: تجربة إفطار فريدة وغنية بالاختيارات بخصم 32% في مطاعم Blaze!... Expiry=2026-08-31 Lang=ar
+  ID=9062: Premium lunch experience through variety of options & genero... Expiry=2026-08-31 Lang=en
+  ID=9062: وقت الغداء مختلف مع اختيارات متنوعة وأطباق غنية بخصم حتى 50%... Expiry=2026-08-31 Lang=ar
+
+Canelé patisserie: 4 offers
+  ID=9071: Statement desserts and baked goods with up to 26% off @Canel... Expiry=2026-08-31 Lang=en
+  ID=9071: حلويات ومخبوزات مختارة بطعم ولمسة مميزة بخصم حتى 26% في فروع... Expiry=2026-08-31 Lang=ar
+  ID=9473: Make your Mouled celebrations sweeter with a variety of Moul... Expiry=2026-08-26 Lang=en
+  ID=9473: فرحة المولد أحلى مع علب حلاوة متنوعة بخصم 25% في فروع Canelé... Expiry=2026-08-26 Lang=ar
+
+Kok's Cafe & Restaurant: 4 offers
+  ID=9334: Pizza, pasta & main dishes with up to 39% off @Kok's Cafe & ... Expiry=2026-08-31 Lang=en
+  ID=9334: بيتزا وباستا وأطباق رئيسية بخصم حتى 39% في فروع Kok's Cafe &... Expiry=2026-08-31 Lang=ar
+  ID=9339: Variety of breakfast options with 42% off @Kok's Cafe & Rest... Expiry=2026-08-31 Lang=en
+  ID=9339: اختيارات متنوعة من الإفطار الشرقي والفلاحي بخصم 42% في فروع ... Expiry=2026-08-31 Lang=ar
+
+Italy Yacht: 4 offers
+  ID=9335: Enjoy a Varied Breakfast Meal on the Nile with 30% Off @Ital... Expiry=2026-08-31 Lang=en
+  ID=9335: وجبات إفطار متنوعة على النيل بخصم 30% في Italy Yacht، المنيل... Expiry=2026-08-31 Lang=ar
+  ID=9336: Enjoy a Variety of Main Courses with Stunning Nile Views & L... Expiry=2026-08-31 Lang=en
+  ID=9336: أجواء النيل مع أطباق رئيسية متنوعة وحفلات ترفيهية مميزة بخصم... Expiry=2026-08-31 Lang=ar
+
+Filoo: 4 offers
+  ID=9349: A wide selection of sandwiches, pizzas, pasta & main dishes ... Expiry=2026-08-31 Lang=en
+  ID=9349: تشكيلة متنوعة من الساندوتشات، البيتزا، الباستا والأطباق الرئ... Expiry=2026-08-31 Lang=ar
+  ID=9350: Delightful breakfast for every taste with 37% off @Filoo, He... Expiry=2026-08-31 Lang=en
+  ID=9350: إفطار متنوع يناسب كل الأذواق بخصم 37% في Filoo، مصر الجديدة... Expiry=2026-08-31 Lang=ar
+
+Sugar Beauty Center & Spa: 3 offers
+  ID=6728: Bride pampering package with 57% off @Sugar Beauty Center & ... Expiry=2026-08-31 Lang=en
+  ID=7186: Brazilian Hair protein treatment session with 50% @Sugar Bea... Expiry=2026-08-31 Lang=en
+  ID=7199: Pampering packages for your skin & full body with up to 75% ... Expiry=2026-08-31 Lang=en
+
+شوجر بيوتي سنتر & سبا: 3 offers
+  ID=6728: باقة العناية بالعروسة بخصم 57% في شوجر بيوتي سنتر & سبا - ال... Expiry=2026-08-31 Lang=ar
+  ID=7186: جلسة بروتين برازيلي لفرد الشعر بخصم 50% في شوجر بيوتي سنتر &... Expiry=2026-08-31 Lang=ar
+  ID=7199: باقات تنظيف عميق للبشرة والعناية الكاملة للسيدات بخصم حتى 75... Expiry=2026-08-31 Lang=ar
+
+Happy Dolphin & Nile Lily: 3 offers
+  ID=8021: Romantic dinner moments & private Nile cruise for 2 pax with... Expiry=2026-08-31 Lang=en
+  ID=8022: Delicious meal on the Nile view with 40% off at Nile Lily Fl... Expiry=2026-08-31 Lang=en
+  ID=8507: Couple breakfast meal on the Nile with 33% off @Andalusia Re... Expiry=2026-08-31 Lang=en
+
+هابي دولفين & نايل لي لي: 3 offers
+  ID=8021: عشاء رومانسي لفردين وساعة نايل كروز في النيل بخصم 33% على يخ... Expiry=2026-08-31 Lang=ar
+  ID=8022: غداء أو عشاء عالنيل بخصم 40% في مطعم نايل لي لي، المنيل!... Expiry=2026-08-31 Lang=ar
+  ID=8507: إفطار لفردين على النيل بخصم 31% في مطعم أندلسية بداخل هابي د... Expiry=2026-08-31 Lang=ar
+
+Ski Egypt: 3 offers
+  ID=8122: 22% off snow fun & penguin meet @Ski Egypt... Expiry=2026-08-31 Lang=en
+  ID=8596: Learn the art of skiing & snowboarding only with a 25% off @... Expiry=2026-08-31 Lang=en
+  ID=9311: Turn your kids' summer to the coolest experience ever with 2... Expiry=2026-08-31 Lang=en
+
+سكي مصر: 3 offers
+  ID=8122: ألعاب الثلج الممتعة ومقابلة البطاريق بخصم 22٪؜ في سكي مصر... Expiry=2026-08-31 Lang=ar
+  ID=8596: تعلم رياضة التزلج والسنوبورد بخصم 25% في سكي مصر، بداخل مول ... Expiry=2026-08-31 Lang=ar
+  ID=9311: صيف طفلك كله سعادة ومغامرة في الثلج بأمتع الأنشطة بخصم 20% ف... Expiry=2026-08-31 Lang=ar
+
+Guzel Medical Spa: 3 offers
+  ID=8130: Enjoy a variety of Moroccan bath & full body care packages w... Expiry=2026-08-31 Lang=en
+  ID=8131: Get clear skin through deep cleansing & mirror sessions with... Expiry=2026-08-31 Lang=en
+  ID=8132: Various full bridal care packages with up to 41% off @Guzel ... Expiry=2026-08-31 Lang=en
+
+جوزال ميديكال سبا: 3 offers
+  ID=8130: استمتعي بباقات متنوعة من الحمام المغربي وعناية كاملة بالجسم ... Expiry=2026-08-31 Lang=ar
+  ID=8131: احصلي على  بشرة صافية من خلال التنظيف العميق وجلسات الميرور ... Expiry=2026-08-31 Lang=ar
+  ID=8132: باقات متنوعة للعناية بالعروسة بخصم حتى 41% في جوزال ميديكال ... Expiry=2026-08-31 Lang=ar
+
+Despacito: 3 offers
+  ID=8609: A variety of cakes & Western desserts in assorted flavors of... Expiry=2026-08-31 Lang=en
+  ID=8620: Delicious & varied breakfast options with up to 39% off @Des... Expiry=2026-08-31 Lang=en
+  ID=9466: Variety of Mouled sweet boxes with up to 27% off @Despacito,... Expiry=2026-08-26 Lang=en
+
+ديسباسيتو: 3 offers
+  ID=8609: تشكيلة متنوعة من التورتات والحلويات الغربية بأطعمة متنوعة عل... Expiry=2026-08-31 Lang=ar
+  ID=8620: اختيارات فطار شهية ومتنوعة بخصم حتى 39% في فروع ديسباسيتو!... Expiry=2026-08-31 Lang=ar
+  ID=9466: أكبر تشكيلة علب حلاوة المولد بخصم حتى 27% في فروع ديسباسيتو!... Expiry=2026-08-26 Lang=ar
+
+Iglo Clinique: 3 offers
+  ID=9407: Dental care packages with up to 62% off @Iglo Clinique, 5th ... Expiry=2026-08-31 Lang=en
+  ID=9409: Special facial care sessions & derma pen with up to 43% off ... Expiry=2026-08-31 Lang=en
+  ID=9410: Various packages of laser hair removal sessions for ladies w... Expiry=2026-08-31 Lang=en
+
+ايجلو كلينيك: 3 offers
+  ID=9407: باقات العناية بالأسنان بخصم حتى 62% في ايجلو كلينيك، التجمع ... Expiry=2026-08-31 Lang=ar
+  ID=9409: جلسات العناية بالبشرة والديرما بن بخصم حتى 43% في ايجلو كلين... Expiry=2026-08-31 Lang=ar
+  ID=9410: باقات متنوعة لإزالة الشعر بالليزر بخصم حتى 38% في ايجلو كلين... Expiry=2026-08-31 Lang=ar
+
