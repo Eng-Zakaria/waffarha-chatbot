@@ -60,6 +60,14 @@ _MERCHANT_PATTERNS = [
     r"كم\s+سعر\s+عرض\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
     r"بكام\s+عرض\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
     r"خصم\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
+    # NEW: Missing "بكام سعر عرض X" variations - extra "سعر" between بكام/عرض
+    # User-tested query "بكام سعر عرض كنتاكي؟" was previously falling through
+    # to RAG and returning "no offers found" even though KFC has active offers.
+    r"بكام\s+سعر\s+عرض\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
+    r"بكام\s+سعر\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
+    # NEW: Reversed word order "سعر عرض X بكام" / "عرض X بكام"
+    r"سعر\s+عرض\s+([؀-ۿA-Za-z&'’\s]{2,})\s+بكام\b",
+    r"عرض\s+([؀-ۿA-Za-z&'’\s]{2,})\s+بكام\b",
     # NEW: Mixed Arabic/English "discount بتاع KFC" / "price بتاع KFC"
     r"(?:discount|price|cost|بكام|السعر|الخصم)\s+(?:بتاع|بتاع)\s+([؀-ۿA-Za-z&'’\s]{2,})(?:\s|[؟?!.,،]|$)",
     # NEW: Merchant + price/discount queries - "KFC price", "KFC discount", "KFC بكام"
