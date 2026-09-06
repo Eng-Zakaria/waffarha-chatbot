@@ -470,6 +470,7 @@ async def chat(req: ChatRequest):
         _release_generation_slot()
 
     raw_sources = result.get("sources", [])
+    bot_answer = result["answer"]
 
     # NEW: remember only what was actually shown in THIS answer (the top few
     # sources returned to the widget), not the full internal candidate pool
@@ -481,13 +482,17 @@ async def chat(req: ChatRequest):
             # already generated successfully.  Redis is an enhancement for
             # follow-ups, not a dependency for serving a chat response.
             await asyncio.to_thread(session.remember, raw_sources[:3])
+            # NEW: persist the conversation turn so the server-side memory
+            # has full context even if the frontend's localStorage is
+            # cleared or this request lands on a different worker.
+            await asyncio.to_thread(session.remember_turns, query, bot_answer)
         except RedisError as e:
             log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
 
     reply_lang = detect_lang(query)
     sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
     suggestions = _build_suggestions(raw_sources, reply_lang)
-    return {"answer": result["answer"], "sources": sources, "suggestions": suggestions}
+    return {"answer": bot_answer, "sources": sources, "suggestions": suggestions}
 
 
 # ---------------------------------------------------------------------------
@@ -626,6 +631,10 @@ async def chat_stream(req: ChatRequest):
                 # Same best-effort behavior as chat(): a failed memory write
                 # must not discard an answer that already streamed to the user.
                 await asyncio.to_thread(session.remember, raw_sources[:3])
+                # NEW: persist the conversation turn so the server-side memory
+                # has full context even if the frontend's localStorage is
+                # cleared or this request lands on a different worker.
+                await asyncio.to_thread(session.remember_turns, query, cleaned)
             except RedisError as e:
                 log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
 
@@ -660,6 +669,45 @@ def health():
         "generation_in_flight": current,
         "generation_capacity": MAX_CONCURRENT_GENERATIONS,
     }
+
+
+# ---------------------------------------------------------------------------
+# NEW: /api/session/{session_id}/history -- Restore conversation history
+# from server-side session memory. Useful when frontend localStorage is
+# cleared or user switches devices/browsers but the session_id is known.
+# Returns the last N turns in chronological order (oldest first) so the
+# frontend can just render them as if they came from localStorage.
+# ---------------------------------------------------------------------------
+@app.get("/api/session/{session_id}/history")
+async def get_session_history(session_id: str, limit: int = 20):
+    """Return conversation history for a session_id from server-side memory.
+
+    Response format matches what the frontend expects:
+    {
+        "history": [
+            {"role": "user", "content": "..."},
+            {"role": "assistant", "content": "..."}
+        ]
+    }
+    """
+    try:
+        memory_store = await get_memory_store_async()
+    except RedisError as e:
+        log.warning("Redis unavailable while reading session history: %s", e)
+        raise HTTPException(503, "Session memory unavailable")
+
+    session = memory_store.get(session_id) if memory_store else None
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    try:
+        # get_turns returns most-recent-first; reverse for chronological
+        turns = await asyncio.to_thread(session.get_turns, limit)
+        turns = list(reversed(turns))  # oldest first for rendering
+        return {"history": turns}
+    except RedisError as e:
+        log.warning("Redis unavailable while reading session history: %s", e)
+        raise HTTPException(503, "Session memory unavailable")
 
 
 # Serves static/index.html at "/" and static/favicon.* alongside it.

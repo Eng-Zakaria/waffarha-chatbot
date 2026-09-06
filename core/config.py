@@ -195,7 +195,7 @@ MERCHANT_ALIASES = {
     "mcdonald's": "McDonald's",
     "mcd": "McDonald's",
     # English full names
-    "kentucky fried chicken": "KFC",
+
     "asian wok": "Asian Wok",
     "domino's": "Domino's",
     "dominos": "Domino's",
@@ -212,7 +212,24 @@ MERCHANT_ALIASES = {
     "بيتزا هت": "Pizza Hut",
     "برجر كنج": "Burger King",
     "ستاربكس": "Starbucks",
-    "سبل واي": "Subway",
+    "سبلاي": "Subway",
+    # KFC cross-language aliases
+    "kfc": "KFC",
+    "kentucky fried chicken": "KFC",
+    # Arabic transliteration of KFC
+    "كنتaكي": "KFC",
+
+    # Cross-language: English == Arabic for same merchant
+
+
+
+    # Cross-language: English == Arabic for same merchant
+
+
+    # Cross-language: English == Arabic for same merchant
+
+
+    # Cross-language: English == Arabic for same merchant
 }
 
 
@@ -244,6 +261,34 @@ OFFER_DIRECT_ANSWER_SAME_ENTITY_MARGIN = 0.12
 FAQ_DIRECT_ANSWER_NO_GROUNDING_MARGIN = 0.15
 OFFER_DIRECT_ANSWER_NO_GROUNDING_MARGIN = 0.15
 
+# ---------------------------------------------------------------------------
+# HALLUCINATION GUARDS
+# ---------------------------------------------------------------------------
+
+# Prevent the LLM from answering from its own (ungrounded) pre-trained
+# knowledge in production. only set NO_RETRIEVAL_PRODUCTION=True in
+# eval/comparison contexts where no_retrieval mode is intentionally
+# being benchmarked.
+NO_RETRIEVAL_PRODUCTION = os.getenv("NO_RETRIEVAL_PRODUCTION", "true").lower() == "true"
+
+# Strict floor below which we refuse outright rather than send a
+# borderline candidate to the LLM (which would likely hallucinate).
+# Must be >= MIN_RELEVANCE_SCORE (0.30). 0.45 is a safe starting point.
+MIN_RELEVANCE_SCORE_STRICT = float(os.getenv("MIN_RELEVANCE_SCORE_STRICT", "0.45"))
+
+# If the top retrieved doc's combined_score is below this value, run
+# a cheap LLM relevance-classifier before generation to decide whether
+# the retrieved context actually answers the query. Skip the check
+# entirely (i.e. always proceed to generation) when the score is
+# at or above RELEVANCE_CHECK_SCORE to avoid latency on confident matches.
+RELEVANCE_CHECK_SCORE = float(os.getenv("RELEVANCE_CHECK_SCORE", "0.55"))
+
+# Log a "hallucination risk" warning when best_score < this threshold
+# and we fall through to the LLM path anyway (either because the
+# relevance classifier was skipped, the relevance check failed closed,
+# or it returned True).
+HALLUCINATION_RISK_LOG_THRESHOLD = float(os.getenv("HALLUCINATION_RISK_LOG_THRESHOLD", "0.50"))
+
 
 # Project root data directory (not core/data)
 INDEX_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
@@ -257,6 +302,10 @@ MAX_TOKENS = 500
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "1536"))  
 
 HISTORY_TURNS_KEPT = 3
+
+# NEW: max conversation turns to store in server-side session memory
+# (distinct from HISTORY_TURNS_KEPT which is how many turns the LLM sees)
+MAX_SERVER_TURNS = 10
 
 # NEW: fallback for follow-up phrasings the hardcoded word/phrase lists in
 # rag_engine.py (_ANAPHORA_WORDS, _FOLLOWUP_SIGNAL_PHRASES, ...) don't
@@ -276,6 +325,15 @@ FOLLOWUP_LLM_FALLBACK_ENABLED = os.getenv("FOLLOWUP_LLM_FALLBACK_ENABLED", "true
 # to call "fresh". Keep this low -- it's a filter for AMBIGUOUS short
 # questions, not a general follow-up detector.
 FOLLOWUP_LLM_FALLBACK_MAX_CONTENT_WORDS = 4
+
+# NEW: how many content words in a query justify an LLM classification call
+# for follow-up detection. The old _looks_like_followup_text / _OTHER_OFFER_
+# PHRASES lists could never cover every real-world phrasing, so instead of
+# growing them forever we classifying ambiguous short queries against the
+# most-recently-shown offer with the LLM. Queries that are longer than
+# this have enough semantic content to be treated as self-contained even
+# if the rule lists don't match.
+FOLLOWUP_LLM_MAX_CONTENT_WORDS = 8
 
 # NEW: caps how many /api/chat requests this process will have actively
 # generating with Ollama at once (see app.py's _generation_semaphore for

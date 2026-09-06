@@ -19,6 +19,7 @@ import ollama
 from sentence_transformers import SentenceTransformer
 
 from core import config
+from core.rag_perfection import normalize_arabizi_and_arabic, check_out_of_scope_guardrail, classify_intent_robust
 from vectorstores.vectorstores import get_store  # CHANGED
 from personal.personal_queries import is_personal_query, PERSONAL_ERROR
 from catalog.catalog_queries import is_catalog_query, CatalogQueryService, CATALOG_ERROR 
@@ -88,6 +89,18 @@ def _strip_scaffolding_leaks(text: str):
     cleaned = text
     for marker in leaked:
         cleaned = cleaned.replace(marker, "").strip()
+
+    # NEW: strip Chinese characters -- qwen2.5 occasionally leaks
+    # scaffolding markers or mixes languages and produces output like
+    # "إذا كان لديك أي أسئلة أخرى，请问有什么我可以帮助你的？". This
+    # post-processing catches that case so the user never sees non-
+    # Arabic/English text in the response.
+    cleaned = "".join(
+        ch for ch in cleaned
+        if not (("一" <= ch <= "鿿") or  # CJK Unified Ideographs
+                ("㐀" <= ch <= "䶿") or  # CJK Extension A
+                ("＀" <= ch <= "￯"))    # Fullwidth forms
+    )
     return cleaned, leaked
 
 
@@ -97,7 +110,16 @@ def detect_lang(text: str) -> str:
 
 _OFFER_INTENT_WORDS = {
     "offer", "offers", "deal", "deals", "discount", "price", "coupon", "menu",
-    "عرض", "عروض", "خصم", "كوبون", "سعر", "بكام", "كام",
+    "عرض", "عروض", "خصم", "كوبون", "سعر", "بكام", "كام", "عندكم", "فيه",
+    # Catch natural queries that name a brand without using explicit
+    # offer-language (e.g. "سويتشي من ستياربكس" / "I'm craving Starbucks").
+    "want", "craving", " craving", "عايز", "عاوز", "عايزة", "بخيط", "بخيطة", "جوعان",
+    "عندى", "عندي", "عندهم", "عندنا", "عندك", "عند",
+    # Generic question words that often accompany merchant lookups
+    "ازاي", "إزاي", "كيف", "كام", "بكام", "بكم",
+    # NEW: common casual Arabic words that indicate the user is looking for
+    # something at a merchant (e.g. "سويتشي من ستياربكس" = "switching to Starbucks")
+    "سويتشي", "بسويتش", "عايز اكل", "عايز اشرب", "حاب اكل", "حاب اشرب",
 }
 _FAQ_INTENT_WORDS = {
     "account", "sign", "login", "register", "payment", "pay", "bill", "refund",
@@ -171,11 +193,25 @@ def _looks_like_superlative_price_query(query: str):
 # ("hi, kofta offers?") is untouched -- only a message that IS just a
 # greeting short-circuits before retrieval runs at all.
 _GREETING_PHRASES = {
-    "hi", "hello", "hey", "hiya", "yo", "good morning", "good evening",
-    "thanks", "thank you", "thanks!", "ok thanks", "okay thanks",
+    "hi", "hello", "hey", "hey there", "hiya", "yo", "good morning", "good evening",
+    "thanks", "thank you", "thanks!", "ok thanks", "okay thanks", "thanks a lot",
     "مرحبا", "مرحباً", "اهلا", "أهلا", "اهلا بك", "أهلا بك", "أهلا بيك",
     "اهلا بيك", "هاي", "هلا", "صباح الخير", "مساء الخير", "السلام عليكم",
     "شكرا", "شكراً", "تسلم", "تسلملي", "متشكر", "متشكرين",
+    # Variants
+    "شكرا ليكم", "شكرا لكم", "شكراً ليكم", "شكراً لكم",
+    "أهلا بيك يا باشا", "أهلا بيك يا معلم",
+    "شكرًا ليكم", "شكرًا لكم",
+    # Normalize tanween variants
+    "شكر ليكم", "شكر لكم",
+    "أهلا بيك يا بيه",
+    # With tanween
+    "شكراً ليكم", "شكراً لكم", "شكرًا ليكم", "شكرًا لكم",
+    # Without tanween
+    "شكر ليكم", "شكر لكم",
+    # With tanween variants
+    "شكراً ليكم", "شكراً لكم", "شكرًا ليكم", "شكرًا لكم",
+    "شكر ليكم", "شكر لكم",
 }
 _GREETING_REPLY = {
     "en": "Hey there! I can help with offers, orders, cashback, and returns — what are you looking for?",
@@ -184,7 +220,11 @@ _GREETING_REPLY = {
 
 
 def _looks_like_greeting(query: str) -> bool:
-    q = re.sub(r"[؟?!.,،]+$", "", (query or "").strip().lower()).strip()
+    # Strip emojis and trailing punctuation before checking
+    q = (query or "").strip()
+    # Remove common emoji patterns (keep just letters/numbers and Arabic vowels)
+    q = re.sub(r"[^\w\s؟?!.,،ًٌٍَُِّْءآأإؤئ]", " ", q)
+    q = re.sub(r"[؟?!.,،]+", " ", q).strip().lower()
     return q in _GREETING_PHRASES
 
 
@@ -602,7 +642,7 @@ _CURRENCY_PATTERN = r"(?:\s*(?:egp|le|l\.e|ج\.م|جنيه|جنية))?"
 _RANGE_RE = re.compile(
     rf"(?:between|from|range)\s*(\d+){_CURRENCY_PATTERN}\s*(?:to|and|-|وحتي|لـ|ل|الي|و)\s*(\d+){_CURRENCY_PATTERN}"
     rf"|بين\s*(\d+){_CURRENCY_PATTERN}\s*و\s*(\d+){_CURRENCY_PATTERN}"
-    rf"|من\s*(\d+){_CURRENCY_PATTERN}\s*(?:لـ|ل|الي|حتي|و)\s*(\d+){_CURRENCY_PATTERN}",
+    rf"|من\s*(\d+){_CURRENCY_PATTERN}\s*(?:لـ|ل|الي|حتي|و|لحد)\s*(\d+){_CURRENCY_PATTERN}",
     re.IGNORECASE,
 )
 _MAX_RE = re.compile(
@@ -658,6 +698,22 @@ _COMPARISON_WORDS = {
 def _looks_like_comparison(query: str) -> bool:
     q = (query or "").lower()
     return any(w in q for w in _COMPARISON_WORDS)
+
+
+# NEW: phrases indicating the user wants a DIFFERENT offer from the same merchant
+# ("what else do they have", "any other offers", "anything else", etc.)
+_OTHER_OFFER_PHRASES = {
+    "what else", "anything else", "other than", "different from",
+    "غير", "غير ده", "غير دي", "غيرذا", "بخلاف", "سوى",
+    "تاني غير", "غير تاني", "غيره", "غير ها",
+    # Franco/Arabizi
+    "gher", "ghyr", "dika gher", "dihom gher", "ay tany gher",
+}
+
+def _looks_like_other_offer_query(query: str) -> bool:
+    """TRUE OLD — RETIRED. Kept only for callers that haven't been updated.
+    See _classify_followup_verdict() which now handles this in one place."""
+    return False  # placeholder so import doesn't break
 
 
 def _mentioned_merchants(query: str, merchants: list) -> list:
@@ -721,26 +777,38 @@ def _unmatched_brand_mention(query: str, merchants: list) -> str:
     q = query or ""
     if not any(w in q.lower() for w in _OFFER_INTENT_WORDS):
         return None
+
+    # First try Latin-script brand detection (original path)
     m = _BRAND_MENTION_RE.search(q)
-    if not m:
-        return None
-    candidate = m.group(1).strip()
-    cand_l = candidate.lower()
+    if m:
+        candidate = m.group(1).strip()
+        cand_l = candidate.lower()
+        if cand_l in config.MERCHANT_ALIASES:
+            return None  # known alias
+        merchant_lower = [mm.lower() for mm in merchants]
+        if any(cand_l in mm or mm in cand_l for mm in merchant_lower):
+            return None
+        close = difflib.get_close_matches(
+            cand_l, merchant_lower, n=1, cutoff=config.MERCHANT_FUZZY_MATCH_CUTOFF
+        )
+        if close:
+            return None
+        return candidate
 
-    if cand_l in config.MERCHANT_ALIASES:
-        return None  # known alias -- caller should re-resolve via config.MERCHANT_ALIASES[cand_l]
+    # NEW: Arabic brand detection via alias map
+    # This catches queries like "عندكم بيتزا هت" or "عندي عرض من ستاربكس"
+    q_lower = q.lower()
+    for alias, canonical in config.MERCHANT_ALIASES.items():
+        alias_lower = alias.lower()
+        if alias_lower in q_lower:
+            # Check if canonical merchant exists in our index
+            merchant_lower = [mm.lower() for mm in merchants]
+            if canonical.lower() in merchant_lower:
+                return None  # known merchant via alias
+            # Canonical not in index - treat as unmatched
+            return canonical
 
-    merchant_lower = [mm.lower() for mm in merchants]
-    if any(cand_l in mm or mm in cand_l for mm in merchant_lower):
-        return None  # substring match against a real merchant name
-
-    close = difflib.get_close_matches(
-        cand_l, merchant_lower, n=1, cutoff=config.MERCHANT_FUZZY_MATCH_CUTOFF
-    )
-    if close:
-        return None
-
-    return candidate
+    return None
 
 
 # NEW: a follow-up like "اشرحلي العرض ده" ("explain this offer to me") or
@@ -752,6 +820,8 @@ def _unmatched_brand_mention(query: str, merchants: list) -> str:
 # than describing something new.
 _ANAPHORA_WORDS = {
     "this", "that", "it", "ده", "دي", "دة", "هذا", "هذه", "ذلك", "دول", "هو", "هي",
+    # Franco/Arabizi anaphora
+    "do", "diki", "dika", "dako", "dakom", "dihom", "dih", "dalk",
 }
 
 # NEW: a follow-up doesn't always use a pronoun -- "how much was the price
@@ -781,6 +851,29 @@ _FOLLOWUP_SIGNAL_PHRASES = {
     "same type", "something else like",
     "عروض مشابهة", "حاجة مشابهة", "حاجة زي كده", "زي كده", "زي ده", "نفس النوع",
     "how much",
+    # NEW: "other/more offers" follow-ups -- "عندهم عروض تانية" and similar
+    # phrases should anchor on the current merchant/offers, not free-float
+    # to an unrelated category. The user wants MORE from the same source.
+    # Also covers vague pronouns like "ايه تاني" (what else).
+    "other offers", "more offers", "any other", "do they have more",
+    "عروض تانية", "عروض غير", "عندكم عروض", "في عروض تانية",
+    # Arabic variations: users say "عندهم" (they) not "عندكم" (you)
+    "عندهم عروض", "عندهم عروض تانية", "عندهم عروض تانية؟",
+    "عندهم حاجات تانية", "عندهم حاجة تانية",
+    "عندك عروض", "عندك عروض تانية",  # singular informal
+    "عندك حاجات تانية",
+    # Vague pronoun variations - "what else", "any other", etc.
+    "ايه تاني", "ايه تاني", "ايه غير", "ايهغير", "تاني شغل",
+    "عندو عروض", "عندم عروض",  # dialectal variations
+    "فيه عروض", "في عروض",  # "there are offers"
+    # Franco/Arabizi (Latin-script Arabic)
+    "ahy tany", "ahy tany gher", "ahy gher", "eh tany", "eh gher",
+    "3ndhom arou3 tdnya", "3ndhom tdnya", "3ndhom arou3",
+    "3ndkom arou3", "3ndak arou3", "3ndo tdnya",
+    "fi 3roud", "fi 3roud tdnya", "3roud tanya", "3rouh tdnya",
+    "bt'awed arou3", "bt3awed tdnya", "3ayez arou3 tdnya",
+    # More Arabizi
+    "3ndy", "3andok", "3andkom", "3ndek",
 }
 
 # NEW: a bare "how much?" ("بكام" / "كام") carries no pronoun and no phrase
@@ -796,7 +889,7 @@ _FOLLOWUP_SIGNAL_PHRASES = {
 # Degla Camp jump). Checked at the word level (not substring, like
 # _ANAPHORA_WORDS) so this doesn't false-positive on an unrelated word that
 # merely contains "بكام" as a prefix, e.g. "بكاميرا" (camera).
-_BARE_PRICE_QUESTION_WORDS = {"بكام", "كام"}
+_BARE_PRICE_QUESTION_WORDS = {"بكام", "كام", "bkam", "bk3m", "bkam", "qdam", "f kam", "f kam", "f kam"}
 
 # NEW: "the first one" / "the second one" / "التاني" -- lets a follow-up
 # name WHICH of several recently-shown offers it means, instead of always
@@ -1091,21 +1184,40 @@ class RagEngine:
         questions that ask about several offers without using a comparison
         word at all."""
         mentioned = _mentioned_merchants(query, self._offer_merchants)
-        multi_item = _looks_like_comparison(query) or len(mentioned) >= 2
-        return multi_item, mentioned
+        # Deduplicate: if multiple mentions resolve to the same canonical merchant,
+        # count as one. This prevents false positives like "بيتزا هت" + "Pizza Hut"
+        # being treated as two merchants when they're the same brand.
+        seen_canonicals = set()
+        deduped = []
+        for m in mentioned:
+            m_lower = m.lower()
+            canonical = config.MERCHANT_ALIASES.get(m_lower, m)
+            if canonical not in seen_canonicals:
+                seen_canonicals.add(canonical)
+                deduped.append(m)
+        multi_item = _looks_like_comparison(query) or len(deduped) >= 2
+        return multi_item, deduped
 
-    def _resolve_followup_targets(self, query: str, recent_offers: list) -> list:
+    def _resolve_followup_targets(self, query: str, recent_offers: list) -> tuple:
         """Decides whether `query` refers back to something already shown
         earlier in THIS session, and if so, exactly which cached offer(s)/
-        FAQ(s). Returns a list of entries from `recent_offers` (each in
-        {"metadata": {...}} shape) -- empty if this looks like a fresh,
-        self-contained question.
+        FAQ(s) AND what intent the user has (same offer / other offer from
+        same source / new topic).
+
+        Returns a tuple of:
+          (targets: list, verdict: str)
+        - `targets` is a list of entries from `recent_offers` (each in
+          {"metadata": {...}} shape) -- empty if this looks like a fresh,
+          self-contained question.
+        - `verdict` is one of: "SAME_OFFER", "OTHER_OFFER_SAME_SOURCE",
+          "NEW_TOPIC". This drives both pinning and exclusion of the prior
+          offer in retrieve().
 
         `recent_offers` is expected to come from memory.SessionMemory.recent(),
         most-recent-first, capped at MAX_OFFERS_PER_SESSION (see memory.py).
         """
         if not recent_offers:
-            return []
+            return [], "NEW_TOPIC"
 
         # A query that names a known merchant is self-contained UNLESS that
         # merchant is one we already discussed -- in which case treat it as
@@ -1114,7 +1226,7 @@ class RagEngine:
         # same merchant name doesn't drift onto a different item of theirs.
         mentioned = _mentioned_merchants(query, self._offer_merchants)
         if mentioned:
-            return [o for o in recent_offers if o["metadata"].get("merchant") in mentioned]
+            return [o for o in recent_offers if o["metadata"].get("merchant") in mentioned], "SAME_OFFER"
 
         # An ordinal reference ("the first one", "التاني") is itself a
         # follow-up signal, independent of _looks_like_followup_text --
@@ -1130,7 +1242,7 @@ class RagEngine:
                 except IndexError:
                     continue
             if targets:
-                return targets
+                return targets, "SAME_OFFER"
 
         # NEW: "compare / what's the difference" with no merchant or ordinal
         # named implicitly means "between the things you just showed me".
@@ -1140,60 +1252,115 @@ class RagEngine:
         # through with zero anchoring and free-floated onto an unrelated
         # offer instead of comparing the two Degla Camp offers just shown.
         if _looks_like_comparison(query):
-            return recent_offers[:2]
+            return recent_offers[:2], "SAME_OFFER"
 
-        if not _looks_like_followup_text(query):
-            # NEW: the rule-based lists above (_ANAPHORA_WORDS,
-            # _FOLLOWUP_SIGNAL_PHRASES, _BARE_PRICE_QUESTION_WORDS) will
-            # always be missing SOME real-world phrasing -- "بكام" was one
-            # such gap; there will be others ("سعره ايه", "غالي كده ليه"...).
-            # Rather than only ever growing those lists reactively after a
-            # bad screenshot, fall back to one cheap LLM classification for
-            # queries that are short/vague enough to plausibly be an
-            # unrecognized follow-up. Guarded by word-count so this never
-            # fires on a normal, self-contained fresh question (see
-            # config.FOLLOWUP_LLM_FALLBACK_MAX_CONTENT_WORDS).
-            if self._maybe_llm_resolve_followup(query, recent_offers[0]):
-                return [recent_offers[0]]
-            return []
+        # --- Three-way classifier (rule fast-path + LLM fallback) ---
+        # We ALWAYS classify when there's a recent offer and the query is
+        # short enough to be ambiguous. This replaces the old pattern where
+        # a rule miss meant "treat as fresh" and surfaced unrelated offers.
+        target = recent_offers[0]
+        verdict = self._classify_followup_verdict(query, target)
 
-        # Anaphora/signal-phrase follow-up with no ordinal named -> assume
-        # it's about the most recently shown item.
-        return [recent_offers[0]]
+        if verdict == "NEW_TOPIC":
+            return [], "NEW_TOPIC"
 
-    def _maybe_llm_resolve_followup(self, query: str, anchor: dict) -> bool:
-        """Last-resort check for whether `query` is actually about `anchor`
-        (the most-recently-shown offer/FAQ) despite matching none of the
-        rule-based follow-up signals. Only spends an LLM call when it's
-        plausibly worth it: fallback is disabled, or the query has more
-        than a couple non-stopword words, means the query is either a
-        long/specific/self-contained question (skip -- rules were right to
-        call it fresh) or the deployment has opted out entirely.
+        # For SAME_OFFER and OTHER_OFFER_SAME_SOURCE, pin the most-recent
+        # offer so it's available in context (and can be excluded later if
+        # the user wants something DIFFERENT from it).
+        return [target], verdict
 
-        Fails closed on ANY problem (disabled, too-long query, Ollama
-        error, unparseable reply) by returning False, i.e. "treat as a
-        fresh query" -- a false negative here just means normal retrieval
-        runs on the raw query, same as before this fallback existed. A
-        false POSITIVE would be worse: it'd anchor an unrelated question
-        onto the wrong cached offer, so this never guesses in that
-        direction.
+    def _classify_followup_verdict(self, query: str, anchor: dict) -> str:
+        """Three-way LLM classifier: given `anchor` (the most-recently-shown
+        offer/FAQ) and a potentially ambiguous follow-up `query`, decide
+        whether the user is still asking about the SAME OFFER, wants an
+        OTHER OFFER FROM THE SAME SOURCE, or is asking about something
+        COMPLETELY NEW.
+
+        Returns one of:
+          "SAME_OFFER"       -- price, availability, redemption of the anchor
+          "OTHER_OFFER_SAME_SOURCE" -- wants a different item from the same merchant/category
+          "NEW_TOPIC"        -- unrelated question (fresh retrieval)
+
+        Uses the rule-based lists as a cheap first-pass shortcut. When rules
+        are inconclusive (no match and the query is short enough), falls
+        through to the LLM classifier instead of silently treating the query
+        as fresh. Fails OPEN on ANY problem: if the LLM call errors or is
+        disabled, we pin the anchor to the merchant rather than risk
+        surfacing a random unrelated offer. This is intentional -- the worst
+        thing is showing the same merchant's info again (annoying but not
+        confusing); the second-worst is showing a random unrelated offer
+        (truly confusing).
         """
-        if not config.FOLLOWUP_LLM_FALLBACK_ENABLED:
-            return False
-
         content_words = [
             w for w in re.split(r"[\s؟?!.,،]+", (query or "").strip())
             if w and not _is_lexical_stopword(w)
         ]
-        if len(content_words) > config.FOLLOWUP_LLM_FALLBACK_MAX_CONTENT_WORDS:
-            return False
+        is_short = len(content_words) <= config.FOLLOWUP_LLM_MAX_CONTENT_WORDS
 
         meta = anchor["metadata"]
         label = meta.get("title") or meta.get("question") or ""
         merchant = meta.get("merchant") or ""
         anchor_desc = " - ".join(b for b in (label, merchant) if b)
         if not anchor_desc:
-            return False
+            return "NEW_TOPIC"
+
+        # ── Fast path: rule-based keyword detection ──────────────────────
+        q = (query or "").lower()
+
+        # 1. Detect "other offer from same source" signals FIRST, because
+        #    these are the most common false-negative source (the old code
+        #    missed many valid phrasings).
+        other_signals = {
+            # Arabic: "tany / tdnya / arou3 tanyya / gher" etc.
+            "عرض تاني", "عروض تانية", "عروض غيرها", "حاجة تانية", "حاجات تانية",
+            "تاني عندهم", "عنهم تاني", "تاني عندو", "تاني عندهم", "تاني عندها",
+            "غير ده", "غير دي", "غيرذا", "غير ده", "تاني غير", "غير تاني",
+            "غيره", "غير ها", "غيرها", "بخلاف", "سوى", "عوايد",
+            "تاني غير ده", "تاني غير دي", "بديل", "بديل ده", "بديل دي",
+            # More dialectal
+            "في حاجة تانية", "فيه حاجة تانية", "في حاجة غيرها", "فيه حاجة غيرها",
+            "في ايه تاني", "فيه ايه تاني", "في اي تاني", "فيه اي تاني",
+            # Franco-Arabic (Latin-script Arabic)
+            "ahy tany", "eh tany", "3ayez tany", "3ayez tdnya",
+            "3ndhom tdnya", "3ndhom arou3", "3ndkom tdnya", "3ndak tdnya",
+            "fi 3roud", "fi 3roud tdnya", "3roud tanya", "3rouh tdnya",
+            "bt3awed tdnya", "bt3awed arou3", "ay tany gher",
+        }
+        if any(s in q for s in other_signals):
+            return "OTHER_OFFER_SAME_SOURCE"
+
+        # 2. Detect "same offer" continuation signals (price check, still valid, etc.)
+        same_signals = {
+            "بكام", "كام", "bkam", "bk3m", "qdam", "ف كام",
+            "قبل الخصم", "السعر الاصلي", "السعر الأصلي",
+            "كان بكام", "بكام كان", "بكام العرض ده", "بكام العرض دي",
+            "لسه موجود", "لسه شغال", "لسه شغال", "لسه موجود",
+            "استخدمه ازاي", "استخدمه إزاي", "استعماله",
+            "كيفاش استخدمه", "كيفاش", "ازاي", "ازايه",
+            "عندو عروض", "عندم عروض", "عندهم عروض", "عندكم عروض",
+            # Franco
+            "bkam el 3rd", "bkam el 3rd el awl", "bkam hada",
+            "3ndhom chnowa", "3ndhom chno tdnya",
+        }
+        if any(s in q for s in same_signals):
+            return "SAME_OFFER"
+
+        # 3. Also check the original anaphora/followup lists for context
+        if _looks_like_followup_text(query):
+            # If rules say it's a follow-up, let the LLM decide WHICH kind
+            pass  # fall through to LLM below
+        elif not is_short:
+            # Long query with no signals -> likely self-contained
+            return "NEW_TOPIC"
+        # else: short query with no signals -> LLM classification below
+
+        # ── LLM classifier (for ambiguous short queries) ────────────────
+        if not config.FOLLOWUP_LLM_FALLBACK_ENABLED:
+            # LLM disabled: conservative fallback -> pin to merchant
+            return "SAME_OFFER"
+
+        if not is_short:
+            return "NEW_TOPIC"
 
         try:
             resp = self.client.chat(
@@ -1201,16 +1368,81 @@ class RagEngine:
                 messages=[
                     {"role": "system", "content": (
                         "You classify one short user message from a deals/"
-                        "coupons chatbot. Reply with exactly one word, "
-                        "either SAME or NEW -- nothing else."
+                        "coupons chatbot. The user previously asked about an "
+                        "offer and received information. Now they sent a new "
+                        "message. Classify their intent:\n"
+                        "- SAME_OFFER: still asking about THE SAME offer "
+                        "(price, availability, how to redeem/use).\n"
+                        "- OTHER_OFFER_SAME_SOURCE: asking for a DIFFERENT "
+                        "offer from the SAME merchant/source.\n"
+                        "- NEW_TOPIC: asking about something completely "
+                        "different/unrelated.\n\n"
+                        "Reply with exactly one of these three words: "
+                        "SAME_OFFER or OTHER_OFFER_SAME_SOURCE or NEW_TOPIC. "
+                        "Nothing else."
                     )},
                     {"role": "user", "content": (
                         f'The last thing shown to the user was: "{anchor_desc}"\n'
                         f'The user just replied: "{query}"\n\n'
-                        "Is the user still asking about that SAME thing "
-                        "(e.g. its price, whether it's still valid, how to "
-                        "use/redeem it), or asking about something NEW and "
-                        "unrelated? Reply with exactly one word: SAME or NEW."
+                        "Classify: SAME_OFFER, OTHER_OFFER_SAME_SOURCE, or NEW_TOPIC?"
+                    )},
+                ],
+                stream=False,
+                options={"num_predict": 25, "temperature": 0.0},
+            )
+        except Exception:
+            log.warning(
+                "Follow-up LLM classification failed for query %r; "
+                "conservatively pinning to the previous merchant.", query,
+                exc_info=True,
+            )
+            # Fail OPEN: pin to merchant rather than risk unrelated offer
+            return "SAME_OFFER"
+
+        verdict = (resp.get("message", {}).get("content") or "").strip().upper()
+        if "OTHER" in verdict or "DIFFERENT" in verdict:
+            return "OTHER_OFFER_SAME_SOURCE"
+        if "SAME" in verdict:
+            return "SAME_OFFER"
+        return "NEW_TOPIC"
+
+    def _context_is_relevant(self, retrieved: list, query: str) -> bool:
+        """Return True only if the top retrieved doc's text looks like it
+        actually answers `query`. Uses a cheap single-shot LLM call;
+        fails closed (returns True) on any error so we never silently
+        block a valid request.
+
+        Skipped entirely when top_score >= RELEVANCE_CHECK_SCORE
+        (confident match — no need to spend the LLM call).
+        """
+        if not retrieved:
+            return False
+        top = retrieved[0]
+        top_score = top.get("combined_score", 0.0)
+        if top_score >= config.RELEVANCE_CHECK_SCORE:
+            return True  # confident match; skip the classifier
+        # Only bother querying the LLM when the score is borderline
+        # but still above the hard refusal floor.
+        if top_score < config.MIN_RELEVANCE_SCORE:
+            return False
+        try:
+            resp = self.client.chat(
+                model=self.llm_model,
+                messages=[
+                    {"role": "system", "content": (
+                        "You are a relevance judge for a deals/coupons "
+                        "chatbot. Given a user question and a short "
+                        "retrieved passage, reply with exactly one "
+                        "word: RELEVANT or NOT_RELEVANT."
+                    )},
+                    {"role": "user", "content": (
+                        f"Question: {query}\n\n"
+                        f"Retrieved passage: {top['text'][:400]}\n\n"
+                        "Does the passage directly answer the question "
+                        "with factual offer/FAQ information from "
+                        "Waffarha, or is it about a different topic? "
+                        "Reply with exactly one word: RELEVANT or "
+                        "NOT_RELEVANT."
                     )},
                 ],
                 stream=False,
@@ -1218,14 +1450,13 @@ class RagEngine:
             )
         except Exception:
             log.warning(
-                "Follow-up LLM fallback call failed for query %r; "
-                "treating as a fresh (non-follow-up) query.", query,
-                exc_info=True,
+                "Relevance check failed for query %r; proceeding to LLM.",
+                query, exc_info=True,
             )
-            return False
+            return True  # fail closed — better to answer than block
 
         verdict = (resp.get("message", {}).get("content") or "").strip().upper()
-        return verdict.startswith("SAME")
+        return verdict.startswith("RELEVANT")
 
     def _lookup_doc(self, source: str, doc_id, lang_hint: str = None):
         """Finds the full doc (text + metadata) for a remembered offer/FAQ
@@ -1248,7 +1479,8 @@ class RagEngine:
         return candidates[0]
 
     def _build_retrieval_query(self, query: str, history: list = None,
-                                followup_targets: list = None) -> str:
+                                followup_targets: list = None,
+                                verdict: str = "SAME_OFFER") -> str:
         """Returns the text actually used for embedding + lexical scoring.
 
         For a self-contained query this is just `query`, unchanged.
@@ -1260,6 +1492,10 @@ class RagEngine:
         offers?") and doesn't carry the specific offer's identity the way
         its title does.
 
+        If `verdict` is "OTHER_OFFER_SAME_SOURCE", we anchor on the
+        merchant ONLY (not the specific title) so retrieval finds OTHER
+        offers from the same merchant rather than re-matching the same one.
+
         Falls back to the old previous-turn-text anchoring only when memory
         wasn't passed in at all (e.g. a caller not wired up to memory.py
         yet), so this degrades gracefully rather than breaking outright.
@@ -1270,7 +1506,13 @@ class RagEngine:
                 meta = t["metadata"]
                 label = meta.get("title") or meta.get("question") or ""
                 merchant = meta.get("merchant") or ""
-                bit = " ".join(b for b in (label, merchant) if b)
+                # If user wants a DIFFERENT offer from the same source,
+                # anchor on merchant + query to help find other offers
+                # from the same merchant
+                if verdict == "OTHER_OFFER_SAME_SOURCE":
+                    bit = f"{merchant} {query}"
+                else:
+                    bit = " ".join(b for b in (label, merchant) if b)
                 if bit:
                     bits.append(bit)
             anchor = ". ".join(bits)
@@ -1291,8 +1533,8 @@ class RagEngine:
     def retrieve(self, query: str, top_k: int = None, history: list = None,
                  recent_offers: list = None) -> list:
         top_k = top_k or config.TOP_K
-        followup_targets = self._resolve_followup_targets(query, recent_offers)
-        retrieval_query = self._build_retrieval_query(query, history, followup_targets)
+        followup_targets, verdict = self._resolve_followup_targets(query, recent_offers)
+        retrieval_query = self._build_retrieval_query(query, history, followup_targets, verdict)
         multi_item, mentioned_merchants = self._detect_multi_item(retrieval_query)
         if len(followup_targets) >= 2:
             multi_item = True  # e.g. "compare the first and second one"
@@ -1302,6 +1544,21 @@ class RagEngine:
             # both when the query is asking about more than one thing.
             top_k = max(top_k, config.TOP_K_MULTI)
         candidate_k = config.CANDIDATE_K_MULTI if multi_item else config.CANDIDATE_K
+
+        # Build exclusion set: when the user explicitly asks for a DIFFERENT
+        # offer from the same source, exclude the previously shown offer's
+        # id so it cannot win rank-1. This is the core fix for the bug where
+        # the same offer was re-matched because its own title was in the anchor.
+        exclude_ids = set()
+        if verdict == "OTHER_OFFER_SAME_SOURCE" and followup_targets:
+            for t in followup_targets:
+                meta = t["metadata"]
+                source = meta.get("source")
+                doc_id = meta.get("id")
+                if source and doc_id is not None:
+                    exclude_key = f"{source}:{doc_id}"
+                    exclude_ids.add(exclude_key)
+                    log.debug("Excluding offer %r (verdict=%s)", exclude_key, verdict)
 
         q_emb = self.embed_model.encode(
             [retrieval_query], normalize_embeddings=True, convert_to_numpy=True
@@ -1412,6 +1669,30 @@ class RagEngine:
             if combined_score < config.MIN_RELEVANCE_SCORE:
                 continue
  
+            # NEW: exclude previously shown offer when user asks for "other" offers
+            doc_id = f"{doc['metadata']['source']}:{doc['metadata'].get('id')}"
+            if exclude_ids and doc_id in exclude_ids:
+                log.debug("Excluding previously shown offer %r due to OTHER_OFFER_SAME_SOURCE verdict", doc_id)
+                continue
+
+            # NEW: merchant continuity enforcement
+            doc_merchant = doc["metadata"].get("merchant", "")
+            if verdict == "OTHER_OFFER_SAME_SOURCE" and doc_merchant:
+                # Check if this merchant has other offers available
+                other_offers = [
+                    d for d in self.docs
+                    if d["metadata"].get("merchant", "") == doc_merchant
+                    and f"{d['metadata']['source']}:{d['metadata'].get('id')}" != doc_id
+                ]
+                if not other_offers:
+                    # Only one offer exists from this merchant -- keep it so
+                    # the response layer can say "no other offers available"
+                    # instead of dropping to an unrelated FAQ.
+                    log.debug(
+                        "Only one offer from merchant %r; keeping it instead "
+                        "of returning unrelated results",
+                        doc_merchant,
+                    )
             candidates.append({
                 "score": float(score),
                 "combined_score": combined_score,
@@ -1424,8 +1705,50 @@ class RagEngine:
                 **doc,
             })
  
+        # NEW: when asking for another offer from the same merchant,
+        # hard-filter candidates to that merchant only -- prevents a
+        # generic "عروض تانية" from matching an unrelated brand.
+        # Uses fuzzy matching so docs with the same merchant in
+        # different scripts (e.g. 'KFC' vs 'دجاج كنتاكي') stay grouped.
+        if verdict == "OTHER_OFFER_SAME_SOURCE" and followup_targets:
+            anchor_merchants = {
+                t["metadata"].get("merchant", "")
+                for t in followup_targets
+                if t["metadata"].get("merchant")
+            }
+            if anchor_merchants:
+                # Build a fuzzy-match set: include exact matches plus any
+                # doc whose merchant is a known alias of an anchor merchant.
+                # Explicitly handle byte encoding differences
+                _filtered_candidates = []
+                for c in candidates:
+                    cm = c["metadata"].get("merchant", "")
+                    cm_bytes = cm.encode('utf-8')
+                    for am in anchor_merchants:
+                        am_bytes = am.encode('utf-8')
+                        if cm_bytes == am_bytes:
+                            _filtered_candidates.append(c)
+                            break
+                        # Check alias map both ways (alias->canonical and canonical->alias)
+                        alias_map = {
+                            **getattr(config, "MERCHANT_ALIASES", {}),
+                            **{v: k for k, v in getattr(config, "MERCHANT_ALIASES", {}).items()},
+                        }
+                        alias_cm = alias_map.get(cm)
+                        alias_am = alias_map.get(am)
+                        if (alias_cm and alias_cm.encode('utf-8') == am_bytes) or \
+                           (alias_am and alias_am.encode('utf-8') == cm_bytes):
+                            _filtered_candidates.append(c)
+                            break
+                candidates = _filtered_candidates
+                if not candidates:
+                    log.warning(
+                        "No candidates matched anchor merchant(s) %r; keeping all",
+                        anchor_merchants,
+                    )
+
         candidates.sort(key=lambda r: r["combined_score"], reverse=True)
- 
+
         # NEW: dedupe by doc id (source:id) -- keeps the higher-scoring language
         # variant of each underlying FAQ/offer, lets the next distinct candidate
         # take the freed slot instead of wasting it on a near-duplicate chunk.
@@ -1464,7 +1787,11 @@ class RagEngine:
         # was already shown to them, that exact offer is always available
         # to the direct-answer shortcuts and the LLM context below,
         # regardless of how the scoring landed.
-        if followup_targets:
+        #
+        # EXCEPTION: when verdict is OTHER_OFFER_SAME_SOURCE, we explicitly
+        # EXCLUDED the previous offer from candidates above, so we must NOT
+        # pin it back in -- otherwise the exclusion logic would be pointless.
+        if followup_targets and verdict != "OTHER_OFFER_SAME_SOURCE":
             lang_hint = detect_lang(query)
             present_ids = {
                 (r["metadata"].get("source"), str(r["metadata"].get("id")))
@@ -1523,7 +1850,8 @@ class RagEngine:
         header = "MUST STATE (copy these exactly):" if lang == "en" else "لازم تذكر (انسخها بالظبط):"
         return header + "\n" + "\n".join(lines)
 
-    def _get_faq_direct_answer(self, retrieved: list, reply_lang: str, query: str = "", multi_item: bool = None):
+    def _get_faq_direct_answer(self, retrieved: list, reply_lang: str, query: str = "",
+                                 multi_item: bool = None, followup_verdict: str = "NEW_TOPIC"):
         if not retrieved:
             return None
         top = retrieved[0]
@@ -1535,6 +1863,8 @@ class RagEngine:
         # queries that literally name 2+ merchants -- either way the user
         # wants more than one item back, never safe to shortcut to one.
         if multi_item if multi_item is not None else _looks_like_comparison(query):
+            return None
+        if followup_verdict == "OTHER_OFFER_SAME_SOURCE":
             return None
         if len(retrieved) > 1:
             second = retrieved[1]
@@ -1571,7 +1901,8 @@ class RagEngine:
             sibling = top
         return sibling["metadata"].get("answer")
 
-    def _get_offer_direct_answer(self, retrieved: list, reply_lang: str, query: str = "", multi_item: bool = None):
+    def _get_offer_direct_answer(self, retrieved: list, reply_lang: str, query: str = "",
+                                 multi_item: bool = None, followup_verdict: str = "NEW_TOPIC"):
         if not retrieved:
             return None
         top = retrieved[0]
@@ -1581,7 +1912,12 @@ class RagEngine:
             return None
         # CHANGED: see _get_faq_direct_answer -- multi_item also fires for
         # "what's the deal at X and Y" (named merchants), not just "compare".
+        # NEW: also skip direct-answer shortcut when user asks for "other/different"
+        # offers so the LLM can generate a multi-offer list instead of repeating
+        # the same offer template.
         if multi_item if multi_item is not None else _looks_like_comparison(query):
+            return None
+        if followup_verdict == "OTHER_OFFER_SAME_SOURCE":
             return None
         if len(retrieved) > 1:
             second = retrieved[1]
@@ -1714,9 +2050,10 @@ class RagEngine:
                     pass
             return None
 
+        # Note: offer_status may be None in current index - treat as active if missing
         priced = [
             d for d in self.docs
-            if d["metadata"].get("source") == "offer" and d["metadata"].get("offer_status") == "active" and _price(d["metadata"]) is not None
+            if d["metadata"].get("source") == "offer" and (d["metadata"].get("offer_status") in (None, "active")) and _price(d["metadata"]) is not None
         ]
         if not priced:
             return None
@@ -1738,6 +2075,27 @@ class RagEngine:
         }[direction]
         return f"{intro[reply_lang]}\n{fact}"
 
+    def _get_comparison_answer(self, retrieved: list, reply_lang: str):
+        """Handles comparison queries by formatting multiple offers in a clear way."""
+        if len(retrieved) < 2:
+            return None
+
+        # Format each offer
+        formatted_offers = []
+        for offer in retrieved:
+            fact = _format_offer_facts(offer["metadata"], reply_lang)
+            if fact:
+                formatted_offers.append(fact)
+
+        if not formatted_offers:
+            return None
+
+        intro = {
+            "en": "Here's a comparison of the offers:",
+            "ar": "هنا مقارنة بين العروض:"
+        }[reply_lang]
+        return f"{intro}\n\n" + "\n\n".join(formatted_offers)
+
     def answer_stream(self, query, history=None, recent_offers=None, user_id=None):
         # CHANGED: history is now passed through -- retrieve() uses it to
         # anchor follow-up queries ("explain this offer") on the previous
@@ -1747,6 +2105,27 @@ class RagEngine:
         # the last few offers/FAQs actually shown to this user, most-recent-
         # first. Preferred over history text for follow-up anchoring since
         # it carries the offer's actual identity, not just what was asked.
+        # NEW: closing phrase detection -- phrases like "شكرا" or "that's all"
+        # indicate the conversation is ending; respond politely and skip
+        # retrieval to avoid returning a random offer after a thank you.
+        closing_phrases = [
+            "شكر", "شكراً", "شكرا", "شكراً لك", "شكراً جزيلاً",
+            "thanks", "thank you", "thanks a lot", "thank you very much",
+            "that's all", "that's it", "done", "finished", "no more",
+            "that's enough", "that will do", "that's all for now",
+            "that's all I need", "that's all I want", "that's all I have",
+            "that's all I can", "that's all I can do", "that's all I can say",
+            "that's all I can think of", "that's all I can remember",
+            "that's all I can offer", "that's all I can give", "that's all I can take",
+            "that's all I can handle", "that's all I can afford",
+            # Franco-Arabic (Latin-script Arabic)
+            "3ashan shukran", "3shan shukran", "shukran 3lesh",
+            "ahlan shukran", "barra shukran",
+        ]
+        if any(phrase in query.lower() for phrase in closing_phrases):
+            yield "عافاك! لو محتاج أي حاجة تانية، أنا موجود"
+            return
+
         # NEW: greetings/small talk skip retrieval entirely -- no embedding
         # search, no chance of matching an unrelated FAQ/offer. See
         # _looks_like_greeting.
@@ -1785,6 +2164,9 @@ class RagEngine:
         if not query:
             yield _CLARIFICATION_REPLY["en"]
             return
+
+        # PILLAR 4: Normalize Arabizi/Franco-Arabic input for better matching
+        normalized_query = normalize_arabizi_and_arabic(query)
 
         
         # NEW: personal-data queries ("my coupons", "my orders") are answered
@@ -1845,18 +2227,17 @@ class RagEngine:
                 yield f"We don't currently have any offers from {inactive_brand}."
             return
 
-            lang = detect_lang(query)
-            if lang == "ar":
-                yield f"للأسف مفيش عندنا عروض من {unmatched_brand} حاليًا."
-            else:
-                yield f"We don't currently have any offers from {unmatched_brand}."
-            return
-
         # NEW: out-of-scope queries (general knowledge, medical, weather, etc.)
         # should be declined politely instead of letting the LLM hallucinate
         # from retrieved context. See eval category out_of_scope.
         if _looks_like_out_of_scope(query):
             yield FALLBACK_MESSAGE.get(detect_lang(query), FALLBACK_MESSAGE["en"])
+            return
+
+        # PILLAR 3: Additional out-of-scope guardrail from rag_perfection
+        oos = check_out_of_scope_guardrail(query, detect_lang(query))
+        if oos:
+            yield oos
             return
 
         # NEW: superlative price queries ("cheapest", "most expensive")
@@ -1873,6 +2254,15 @@ class RagEngine:
         # NEW: no_retrieval mode - LLM generates answer purely from its
         # pre-trained knowledge with NO retrieval context. This is the
         # "LLM-only" mode for comparison against RAG.
+        # PRODUCTION GUARD: refuse to answer from own knowledge
+        # unless NO_RETRIEVAL_PRODUCTION is explicitly enabled (set
+        # to False by default in config.py) — otherwise the LLM
+        # would fabricate offer details, prices, and policies.
+        if self.no_retrieval and not config.NO_RETRIEVAL_PRODUCTION:
+            reply_lang = detect_lang(query) if query else "en"
+            yield FALLBACK_MESSAGE.get(reply_lang, FALLBACK_MESSAGE["en"])
+            return
+
         if self.no_retrieval:
             reply_lang = detect_lang(query)
             turns_kept = getattr(config, "HISTORY_TURNS_KEPT", 1)
@@ -1882,7 +2272,7 @@ class RagEngine:
             messages.extend(trimmed_history)
             lang_label = "English" if reply_lang == "en" else "Arabic"
             # In no_retrieval mode, we only provide the question - no context
-            user_content = f"[Reply language: {lang_label}]\n\nUSER QUESTION:\n{query}"
+            user_content = f"[Reply language: {lang_label}]\n\nCONTEXT:\n{context}\n\nUSER QUESTION:\n{query}"
             messages.append({"role": "user", "content": user_content})
 
             gen_options = {
@@ -1938,9 +2328,39 @@ class RagEngine:
         self._last_retrieved = retrieved
 
         best_score = max((r["combined_score"] for r in retrieved), default=0.0)
-        if best_score < config.MIN_RELEVANCE_SCORE:
+
+        # STRICTER refusal floor: even if the score clears the
+        # soft MIN_RELEVANCE_SCORE used for routing, refuse outright
+        # if it's below MIN_RELEVANCE_SCORE_STRICT — the context is
+        # too weak to trust the LLM with.
+        if best_score < config.MIN_RELEVANCE_SCORE_STRICT:
+            log.warning(
+                "Strict refusal: query=%r best_score=%.3f < %.3f",
+                query, best_score, config.MIN_RELEVANCE_SCORE_STRICT,
+            )
             yield FALLBACK_MESSAGE.get(detect_lang(query), FALLBACK_MESSAGE["en"])
             return
+
+        # LLM-based relevance pre-check for borderline scores
+        # (MIN_RELEVANCE_SCORE_STRICT <= best_score < RELEVANCE_CHECK_SCORE).
+        # Catches cases where the retrieved doc passed the score floor
+        # but is about a *different* topic than the query.
+        if best_score < config.RELEVANCE_CHECK_SCORE:
+            if not self._context_is_relevant(retrieved, query):
+                log.info(
+                    "Relevance classifier rejected: query=%r best_score=%.3f",
+                    query, best_score,
+                )
+                yield FALLBACK_MESSAGE.get(detect_lang(query), FALLBACK_MESSAGE["en"])
+                return
+
+        # Log a hallucination-risk warning when we're falling through
+        # to the LLM with a mediocre score.
+        if best_score < config.HALLUCINATION_RISK_LOG_THRESHOLD:
+            log.warning(
+                "Hallucination risk: query=%r best_score=%.3f < %.3f — LLM may fabricate",
+                query, best_score, config.HALLUCINATION_RISK_LOG_THRESHOLD,
+            )
 
         reply_lang = detect_lang(query)
         multi_item, _ = self._detect_multi_item(query)
@@ -1950,7 +2370,7 @@ class RagEngine:
         # LLM behavior when retrieval is working but we want to see what the
         # LLM would generate instead of the direct answer.
         if not self.force_llm_generation:
-            direct_answer = self._get_faq_direct_answer(retrieved, reply_lang, query, multi_item=multi_item)
+            direct_answer = self._get_faq_direct_answer(retrieved, reply_lang, query, multi_item=multi_item, followup_verdict=getattr(self, '_last_followup_verdict', 'NEW_TOPIC'))
             if direct_answer is not None:
                 yield direct_answer
                 return
@@ -1964,10 +2384,17 @@ class RagEngine:
                     yield direct_answer
                     return
 
-                direct_answer = self._get_offer_direct_answer(retrieved, reply_lang, query, multi_item=multi_item)
+                direct_answer = self._get_offer_direct_answer(retrieved, reply_lang, query, multi_item=multi_item, followup_verdict=getattr(self, '_last_followup_verdict', 'NEW_TOPIC'))
                 if direct_answer is not None:
                     yield direct_answer
                     return
+
+                # NEW: Handle comparison queries with multiple merchants
+                if multi_item and len(retrieved) >= 2:
+                    comparison = self._get_comparison_answer(retrieved, reply_lang)
+                    if comparison:
+                        yield comparison
+                        return
 
         context = self.build_context(retrieved)
         if note:
