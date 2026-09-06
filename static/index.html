@@ -324,6 +324,85 @@
   @media (prefers-reduced-motion: reduce){
     *{ animation:none !important; transition:none !important; }
   }
+  /* =========================
+   Offer Cards
+   ========================= */
+
+.offers-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 14px;
+    width: 100%;
+}
+
+.offer-card {
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 14px;
+    padding: 14px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.offer-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.10);
+}
+
+.offer-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.4;
+    margin-bottom: 6px;
+}
+
+.offer-merchant {
+    font-size: 13px;
+    opacity: 0.7;
+    margin-bottom: 10px;
+}
+
+.offer-price-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.offer-price {
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.offer-old-price {
+    font-size: 13px;
+    text-decoration: line-through;
+    opacity: 0.55;
+}
+
+.offer-discount {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 2px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: #f3f4f6;
+}
+
+.offer-expiry {
+    font-size: 12px;
+    opacity: 0.65;
+    margin-top: 10px;
+}
+
+/* Mobile */
+@media (max-width: 600px) {
+    .offers-container {
+        grid-template-columns: 1fr;
+    }
+}
 </style>
 </head>
 <body>
@@ -751,8 +830,11 @@ function removeTyping(){
 // and persists the finished message. Shared by both the live-SSE path and
 // the non-streaming fallback below, so the chip/history behavior stays
 // identical no matter which path rendered the text.
-function finalizeBotBubble(row, bubbleEl, fullText, sources, suggestions, time){
+function finalizeBotBubble(row, bubbleEl, fullText, sources, suggestions, time, responseType = 'text',offers = []){
   bubbleEl.innerHTML = formatMessage(fullText);
+  if(responseType === 'offers' && offers.length){
+    renderOfferCards(row, offers);
+}
   const wrap = row.querySelector('.bubble-wrap');
   if(sources && sources.length){
     const srcRow = document.createElement('div');
@@ -796,7 +878,64 @@ function finalizeBotBubble(row, bubbleEl, fullText, sources, suggestions, time){
     saveChats();
   }
 }
+function renderOfferCards(row, offers) {
+    if (!offers || !offers.length) return;
 
+    const wrap = row.querySelector('.bubble-wrap');
+    if (!wrap) return;
+
+    const container = document.createElement('div');
+    container.className = 'offers-container';
+
+    offers.forEach(offer => {
+        const card = document.createElement('div');
+        card.className = 'offer-card';
+
+        card.innerHTML = `
+            <div class="offer-card-title">
+                ${escapeHtml(offer.title || 'Offer')}
+            </div>
+
+            ${offer.merchant ? `
+                <div class="offer-merchant">
+                    ${escapeHtml(offer.merchant)}
+                </div>
+            ` : ''}
+
+            ${offer.price || offer.old_price ? `
+                <div class="offer-price-row">
+                    ${offer.price ? `
+                        <span class="offer-price">
+                            ${escapeHtml(String(offer.price))} EGP
+                        </span>
+                    ` : ''}
+
+                    ${offer.old_price ? `
+                        <span class="offer-old-price">
+                            ${escapeHtml(String(offer.old_price))} EGP
+                        </span>
+                    ` : ''}
+                </div>
+            ` : ''}
+
+            ${offer.discount ? `
+                <div class="offer-discount">
+                    ${escapeHtml(String(offer.discount))}% OFF
+                </div>
+            ` : ''}
+
+            ${offer.expiry ? `
+                <div class="offer-expiry">
+                    Valid until ${escapeHtml(String(offer.expiry))}
+                </div>
+            ` : ''}
+        `;
+
+        container.appendChild(card);
+    });
+
+    wrap.appendChild(container);
+}
 // Non-streaming fallback: renders a fully-formed answer with the old
 // word-by-word typewriter effect. Kept around for /api/chat (still used by
 // run_eval.py / run_full_eval.py against RagEngine directly, unaffected by
@@ -898,6 +1037,8 @@ async function streamBotMessageLive(userText){
   let sources = [];
   let suggestions = [];
   let sawError = false;
+  let responseType = 'text';
+  let offers = [];
 
   // Typing indicator stays up through the network round-trip (connection +
   // retrieval on the server, before the first SSE frame arrives) -- only
@@ -963,6 +1104,8 @@ async function streamBotMessageLive(userText){
       try{ data = JSON.parse(dataMatch[1]); } catch(e){ continue; }
 
       if(eventName === 'meta'){
+        responseType = data.type || 'text';
+        offers = data.offers || [];
         sources = data.sources || [];
         suggestions = data.suggestions || [];
       } else if(eventName === 'token'){
@@ -982,7 +1125,15 @@ async function streamBotMessageLive(userText){
     full = CHAT_API_ERROR[lang] || CHAT_API_ERROR.en;
   }
 
-  finalizeBotBubble(row, bubbleEl, full, sources, suggestions, time);
+  finalizeBotBubble(
+    row,
+    bubbleEl,
+    full,
+    sources,
+    suggestions,
+    time,
+    responseType,
+    offers);
 }
 
 async function submitMessage(text){

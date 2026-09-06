@@ -268,9 +268,21 @@ class SourceCard(BaseModel):
     snippet: str
 
 
+class OfferCard(BaseModel):
+    id: Optional[str] = None
+    title: str
+    merchant: Optional[str] = None
+    price: Optional[str] = None
+    old_price: Optional[str] = None
+    discount: Optional[str] = None
+    expiry: Optional[str] = None
+
+
 class ChatResponse(BaseModel):
     answer: str
-    sources: List[SourceCard]
+    type: str = "text"
+    offers: List[OfferCard] = []
+    sources: List[SourceCard] = []
     suggestions: List[str] = []
 
 
