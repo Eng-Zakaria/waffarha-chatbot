@@ -34,10 +34,13 @@ import argparse
 import datetime
 import json
 import os
+import io
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config  # noqa: E402
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from core import config  # noqa: E402
 
 _PARTNER_COLUMNS = [
     "part_id", "part_name_en", "part_name_ar", "status",

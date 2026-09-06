@@ -13,38 +13,37 @@ Usage:
 """
 
 import argparse
+import io
 import json
+import os
 import sys
 from datetime import datetime, date
 from decimal import Decimal
 
-import clickhouse_connect
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from core import config as _cfg
 
 # ---------------------------------------------------------------------------
-# Connection config — replace with your real values, or better, load from
-# environment variables / a secrets manager instead of hardcoding.
+# Use the project's shared ClickHouse config (from .env) so this script
+# stays in sync with fetch_offers_clickhouse.py and the rest of the pipeline.
 # ---------------------------------------------------------------------------
-
-CH_CONFIG = {
-    "host": "localhost",      # e.g. "your-clickhouse-host.cloud"
-    "port": 8443,             # 8443 for https, 8123 for http (adjust as needed)
-    "username": "default",
-    "password": "",           # do not hardcode in production
-    "database": "main",
-    "secure": True,           # set False if not using TLS
-}
-
 
 def get_client():
-    """Create a ClickHouse client connection."""
-    return clickhouse_connect.get_client(**CH_CONFIG)
+    """Create a ClickHouse client connection using config.get_clickhouse_client()."""
+    return _cfg.get_clickhouse_client()
 
 
 def fetch_offers_fct_coupons(client, user_id: int, limit: int = 50, status: int | None = None):
     """
     Query the newer fact table (fct_coupons) joined with dim_offers / dim_partners.
     """
-    query = """
+    # Use f-string for the optional status clause (no ClickHouse type annotations there);
+    # all literal parameters go through the parameters dict so clickhouse-connect
+    # handles {param:Type} syntax without Python's str.format() interfering.
+    status_filter = f"AND c.coupon_status = {{status:Int32}}" if status is not None else ""
+    query = f"""
         SELECT
             c.coupon_id,
             c.voucher_sn,
@@ -60,18 +59,14 @@ def fetch_offers_fct_coupons(client, user_id: int, limit: int = 50, status: int 
         FROM main.fct_coupons AS c
         LEFT JOIN main.dim_offers AS o ON c.offer_id = o.offer_id
         LEFT JOIN main.dim_partners AS p ON c.partner_id = p.part_id
-        WHERE c.user_id = {user_id:Int32}
-        {status_clause}
+        WHERE c.user_id = {{user_id:Int32}}
+        {status_filter}
         ORDER BY c.created_at DESC
-        LIMIT {limit:UInt32}
+        LIMIT {{limit:UInt32}}
     """
     params = {"user_id": user_id, "limit": limit}
-    status_clause = ""
     if status is not None:
-        status_clause = "AND c.coupon_status = {status:Int32}"
         params["status"] = status
-
-    query = query.format(status_clause=status_clause)
     result = client.query(query, parameters=params)
     return result.result_rows, result.column_names
 
@@ -81,7 +76,8 @@ def fetch_offers_coupons_new(client, user_id: int, limit: int = 50, status: int 
     Query the legacy table (coupons_new) — uses users_id instead of user_id,
     and no direct partner join available in this schema.
     """
-    query = """
+    status_filter = f"AND c.coupon_status = {{status:Int32}}" if status is not None else ""
+    query = f"""
         SELECT
             c.coupon_id,
             c.voucher_sn,
@@ -95,18 +91,14 @@ def fetch_offers_coupons_new(client, user_id: int, limit: int = 50, status: int 
             o.offer_brief_ar
         FROM main.coupons_new AS c
         LEFT JOIN main.dim_offers AS o ON c.offer_id = o.offer_id
-        WHERE c.users_id = {user_id:Int32}
-        {status_clause}
+        WHERE c.users_id = {{user_id:Int32}}
+        {status_filter}
         ORDER BY c.created DESC
-        LIMIT {limit:UInt32}
+        LIMIT {{limit:UInt32}}
     """
     params = {"user_id": user_id, "limit": limit}
-    status_clause = ""
     if status is not None:
-        status_clause = "AND c.coupon_status = {status:Int32}"
         params["status"] = status
-
-    query = query.format(status_clause=status_clause)
     result = client.query(query, parameters=params)
     return result.result_rows, result.column_names
 

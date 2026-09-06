@@ -35,10 +35,13 @@ Requires: CLICKHOUSE_PASSWORD (and friends) in .env -- see config.py.
 import argparse
 import json
 import os
+import io
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config  # noqa: E402
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from core import config  # noqa: E402
 
 _COLUMNS = ["pur_status_id", "pur_status_name", "pur_status_status", "pur_status_name_ar"]
 _QUERY = f"SELECT {', '.join(_COLUMNS)} FROM main.dim_purchasing_status"

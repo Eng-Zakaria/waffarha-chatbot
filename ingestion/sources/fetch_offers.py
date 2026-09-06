@@ -18,9 +18,9 @@ import time
 
 import requests
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import config 
-from config import get_security_key
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from core import config
+from core.config import get_security_key
 
 
 def fetch_page(section_id: int, page: int, lang: str) -> dict:
