@@ -51,8 +51,7 @@ CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "main")
 # handshake. Still fully overridable via CLICKHOUSE_SECURE if you ever point
 # this at a plain-HTTP host on port 443 for some reason.
 CLICKHOUSE_SECURE = os.getenv("CLICKHOUSE_SECURE", "true" if CLICKHOUSE_PORT == 443 else "false").lower() == "true"
-_clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD")
-
+_clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "clickhouse123")
 
 def get_clickhouse_client():
     """Returns a connected clickhouse_connect client. Deferred import (like
@@ -75,7 +74,7 @@ def get_clickhouse_client():
         host=CLICKHOUSE_HOST,
         port=CLICKHOUSE_PORT,
         username=CLICKHOUSE_USERNAME,
-        password=_clickhouse_password or "",
+        password=_clickhouse_password,
         database=CLICKHOUSE_DATABASE,
         secure=CLICKHOUSE_SECURE,
     )
@@ -252,7 +251,7 @@ DOCS_PATH = os.path.join(INDEX_DIR, "docs.pkl")
 
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
 MAX_TOKENS = 500         
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "1536"))  
 
