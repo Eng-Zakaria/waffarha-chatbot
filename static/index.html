@@ -360,6 +360,12 @@
 .offer-merchant {
     font-size: 13px;
     opacity: 0.7;
+    margin-bottom: 4px;
+}
+
+.offer-category {
+    font-size: 13px;
+    opacity: 0.6;
     margin-bottom: 10px;
 }
 
@@ -395,6 +401,16 @@
     font-size: 12px;
     opacity: 0.65;
     margin-top: 10px;
+}
+
+.offer-expiry a {
+    color: #f97316;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.offer-expiry a:hover {
+    text-decoration: underline;
 }
 
 /* Mobile */
@@ -738,6 +754,15 @@ function formatTime(ts){
   return d.toLocaleTimeString(lang === 'ar' ? 'ar-EG' : 'en-US', { hour: '2-digit', minute: '2-digit' });
 }
 
+function escapeHtml(str){
+  return String(str == null ? '' : str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function renderWelcome(){
   const s = STRINGS[lang];
   chatInner.innerHTML = `
@@ -891,46 +916,42 @@ function renderOfferCards(row, offers) {
         const card = document.createElement('div');
         card.className = 'offer-card';
 
-        card.innerHTML = `
-            <div class="offer-card-title">
-                ${escapeHtml(offer.title || 'Offer')}
-            </div>
+        // Backend already sends price/old_price WITH currency label
+        // (e.g. "60 جنيه" or "60 EGP"), so render them verbatim.
+        const price = offer.price || '';
+        const oldPrice = offer.old_price || '';
+        const discount = offer.discount || '';
+        const hasOld = !!oldPrice;
+        const hasDiscount = !!discount;
+        const isAr = /[\u0600-\u06FF]/.test(price) ||
+                     (offer.merchant && /[\u0600-\u06FF]/.test(offer.merchant));
 
-            ${offer.merchant ? `
-                <div class="offer-merchant">
-                    ${escapeHtml(offer.merchant)}
-                </div>
-            ` : ''}
-
-            ${offer.price || offer.old_price ? `
-                <div class="offer-price-row">
-                    ${offer.price ? `
-                        <span class="offer-price">
-                            ${escapeHtml(String(offer.price))} EGP
-                        </span>
-                    ` : ''}
-
-                    ${offer.old_price ? `
-                        <span class="offer-old-price">
-                            ${escapeHtml(String(offer.old_price))} EGP
-                        </span>
-                    ` : ''}
-                </div>
-            ` : ''}
-
-            ${offer.discount ? `
-                <div class="offer-discount">
-                    ${escapeHtml(String(offer.discount))}% OFF
-                </div>
-            ` : ''}
-
-            ${offer.expiry ? `
-                <div class="offer-expiry">
-                    Valid until ${escapeHtml(String(offer.expiry))}
-                </div>
-            ` : ''}
-        `;
-
+        let html = '';
+        html += `<div class="offer-card-title">🏷️ ${escapeHtml(offer.title || 'Offer')}</div>`;
+        if (offer.merchant) {
+            html += `<div class="offer-merchant">${isAr ? 'المتجر:' : 'Merchant:'} ${escapeHtml(offer.merchant)}</div>`;
+        }
+        if (offer.category) {
+            const catLabel = isAr ? 'الفئة:' : 'Category:';
+            html += `<div class="offer-category">${catLabel} ${escapeHtml(offer.category)}</div>`;
+        }
+        if (price || oldPrice) {
+            html += `<div class="offer-price-row">`;
+            if (price) html += `<span class="offer-price">${escapeHtml(price)}</span>`;
+            if (oldPrice && oldPrice !== price) {
+                html += `<span class="offer-old-price">${escapeHtml(oldPrice)}</span>`;
+            }
+            html += `</div>`;
+        }
+        if (hasDiscount) {
+            html += `<div class="offer-discount">${isAr ? '🔥 خصم' : '🔥 Save'} ${escapeHtml(discount)}</div>`;
+        }
+        if (offer.url) {
+            html += `<div class="offer-expiry"><a href="${escapeHtml(offer.url)}" target="_blank" rel="noopener noreferrer">📍 🔗 ${isAr ? 'رابط العرض' : 'Offer link'}</a></div>`;
+        } else if (offer.expiry) {
+            html += `<div class="offer-expiry">${isAr ? 'صالح حتى' : 'Valid until'} ${escapeHtml(offer.expiry)}</div>`;
+        }
+        card.innerHTML = html;
         container.appendChild(card);
     });
 
