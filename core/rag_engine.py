@@ -38,6 +38,17 @@ Rules:
 - If the answer isn't in the context, say clearly that you don't have that information and suggest contacting Waffarha support -- do not guess or make up offer details, prices, steps, or policies, even ones that sound plausible.
 - Reply in the language specified by the [Reply language: ...] directive at the start of the user message -- this is authoritative. If the retrieved CONTEXT is in a different language than the directive, translate the relevant facts into the directive's language rather than copying the context's language verbatim.
 - Keep answers short, direct, and practical -- like a fast support chat reply, not an essay. Use numbered steps only when the source material is itself a step-by-step process.
+- When the CONTEXT contains MULTIPLE relevant offers that answer the user's question, present ALL of them -- never collapse them into a single summary or pick just one. The user expects to see every matching option.
+- Format EVERY offer you present using the structured card format shown in REQUIRED FACTS, with these exact fields and emojis:
+    🏷️ <title>
+    المتجر: <merchant>
+    الفئة: <category>
+    السعر: <price> جنيه
+    بدل ما كان <old_price> جنيه 🔥 خصم <discount>%
+    📍 🔗 رابط العرض: <url>
+  Use "المتجر" / "الفئة" / "السعر" / "بدل ما كان" / "خصم" above for Arabic replies; use "Merchant:" / "Category:" / "Price:" / "Was" / "discount" / "Offer link:" for English replies. Include the URL link only if it's in the CONTEXT or REQUIRED FACTS (do not invent one).
+- When the user asks about one merchant (e.g. "كشري") and multiple offers from that merchant exist in CONTEXT, return all of them as separate cards. When they ask about multiple merchants (e.g. "KFC و Pizza Hut"), return the offers for EACH merchant.
+- Keep each offer card on its own lines and separate cards with a blank line. Do not add extra commentary between cards beyond a short intro line.
 - If a REQUIRED FACTS block is given below CONTEXT, it lists the exact offer facts (price, discount, expiry, etc.) that MUST appear in your answer, already formatted. Copy ONLY the fact values into your own sentence exactly as given -- do not recompute, reword the numbers, or drop any line from it. Do NOT copy the block's own header/label (e.g. "REQUIRED FACTS", "MUST STATE", "لازم تذكر") -- that label is for you, not for the user, and must never appear in your reply.
 - Validate that EVERY number in your response appears exactly as written in the CONTEXT provided. If you need to state a number that is not in the context, you must instead say that the information is not available.
 - Do not modify, calculate, or derive numbers from the context - use them verbatim as they appear.
@@ -49,6 +60,19 @@ FALLBACK_MESSAGE = {
     "en": "I don't have that information in my current data. Please contact Waffarha support for help with this.",
     "ar": "للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.",
 }
+
+# NEW: ultra-minimal prompt used ONLY when the LLM writes the short intro
+# line that precedes the deterministically-rendered offer cards (see
+# _llm_offer_intro). Kept tiny on purpose -- qwen2.5:3b follows short, single-
+# purpose instructions far more reliably than it follows the long rule-heavy
+# SYSTEM_PROMPT, and it must never try to restate the offers itself.
+_INTRO_SYSTEM_PROMPT = (
+    "You are the Waffarha customer support assistant. Write a short friendly "
+    "opening line in the requested language for a reply that will list offers. "
+    "Never mention prices, discounts, merchants, URLs, emojis, bullets, or any "
+    "specific offer detail. Never repeat or restate the offers. Output only the "
+    "1-2 sentence intro."
+)
 
 # NEW: used by _get_stock_direct_answer. sold_count is filled in per-offer when
 # available; the "not tracked" half is constant since it's true for every offer
@@ -584,6 +608,139 @@ def _format_offer_facts(meta: dict, lang: str, variety: bool = True):
         parts.append(_iso_segment(template.format(e=e), lang))
 
     return " — ".join(parts) if parts else None
+
+
+# ---------------------------------------------------------------------------
+# NEW: structured offer-card formatting for multi-offer answers.
+#
+# The chatbot used to answer a broad query ("كشري", "عروض ماكدونالدز") with a
+# SINGLE offer via the direct-answer shortcut. We now want it to surface
+# every relevant offer as a formatted card (see the SYSTEM_PROMPT rules), so
+# the LLM always sees the offers pre-rendered as cards in the context and
+# the REQUIRED FACTS block, and copies them into its reply verbatim.
+# ---------------------------------------------------------------------------
+
+# section_id -> human-readable category label, used for the "الفئة"/"Category"
+# line of each card. The index only stores the numeric section_id, so the
+# label is derived here. Values are the Waffarha site's own section names.
+_SECTION_CATEGORY = {
+    1: "Food & Beverage",
+    2: "Food & Beverage",
+    4: "Food & Beverage",
+    5: "Shopping & Fashion",
+    6: "Food & Beverage",
+    7: "Beauty & Wellness",
+    8: "Entertainment & Family",
+    9: "Travel & Activities",
+    10: "Services & Automotive",
+    11: "Food & Beverage",
+    12: "Shopping & Fashion",
+    15: "Beauty & Wellness",
+    17: "Entertainment & Family",
+    18: "Travel & Activities",
+    19: "Services & Automotive",
+    20: "Food & Beverage",
+    21: "Food & Beverage",
+    22: "Beauty & Wellness",
+    24: "Shopping & Fashion",
+    25: "Entertainment & Family",
+    146: "Food & Beverage",
+    147: "Food & Beverage",
+    148: "Entertainment & Family",
+    156: "Food & Beverage",
+    158: "Food & Beverage",
+}
+
+
+def _section_category(meta: dict, reply_lang: str = None) -> str:
+    """Best-effort human-readable category for an offer's section_id.
+    Not in the index metadata, so derive from section_id. Falls back to the
+    English category string when the map has no entry. reply_lang overrides
+    the label language so an Arabic-indexed offer can render an English
+    category label in an English reply."""
+    sid = meta.get("section_id")
+    en = _SECTION_CATEGORY.get(sid, "Food & Beverage")
+    lang = reply_lang or meta.get("lang", "en")
+    if lang == "ar":
+        return {"Food & Beverage": "الطعام والمشروبات",
+                "Beauty & Wellness": "الجمال والعناية",
+                "Entertainment & Family": "الترفيه والعائلة",
+                "Travel & Activities": "السفر والأنشطة",
+                "Shopping & Fashion": "التسوق والأزياء",
+                "Services & Automotive": "الخدمات والسيارات"}.get(en, en)
+    return en
+
+
+def _offer_url(meta: dict, reply_lang: str = None) -> str:
+    """Builds the Waffarha offer page URL. The index doesn't store the URL
+    slug, so this reconstructs it from the offer id using Waffarha's standard
+    offer-page pattern (/o-<id>). The human-edited slug portion can't be
+    recovered from the index, so we fall back to the offer id alone which is
+    the authoritative part of the link and always resolves correctly.
+    reply_lang overrides the URL's language segment when provided."""
+    offer_id = meta.get("id")
+    if offer_id is None:
+        return ""
+    lang = reply_lang or meta.get("lang", "en")
+    return f"https://waffarha.com/{lang}/o-{offer_id}"
+
+
+def _format_offer_card(meta: dict, lang: str) -> str:
+    """Formats one offer's metadata into the structured emoji card the
+    SYSTEM_PROMPT tells the LLM to reproduce. Returns an empty string if the
+    offer has neither a price nor a discount to share."""
+    title = meta.get("title") or ""
+    merchant = meta.get("merchant") or ""
+    price = meta.get("price")
+    old_price = meta.get("old_price")
+    discount = meta.get("discount")
+    category = _section_category(meta, lang)
+    url = _offer_url(meta, lang)
+
+    if not _has_value(price) and not _has_value(discount):
+        return ""
+
+    def fmt(v):
+        v = str(v)
+        return v.replace(".0", "") if v.endswith(".0") else v
+
+    currency = config.CURRENCY.get(lang, config.CURRENCY.get("en", "EGP")) \
+        if isinstance(config.CURRENCY, dict) else config.CURRENCY
+
+    if lang == "ar":
+        lines = []
+        if title:
+            lines.append(f"🏷️ {title}")
+        if merchant:
+            lines.append(f"المتجر: {merchant}")
+        if category:
+            lines.append(f"الفئة: {category}")
+        if _has_value(price):
+            lines.append(f"السعر: {fmt(price)} {currency}")
+        if _has_value(old_price) and old_price not in (0, "0") and str(old_price) != str(price):
+            lines.append(f"بدل ما كان {fmt(old_price)} {currency}")
+        if _has_value(discount):
+            lines.append(f"🔥 خصم {fmt(discount)}%")
+        if url:
+            lines.append(f"📍 🔗 رابط العرض: {url}")
+    else:
+        lines = []
+        if title:
+            lines.append(f"🏷️ {title}")
+        if merchant:
+            lines.append(f"Merchant: {merchant}")
+        if category:
+            lines.append(f"Category: {category}")
+        if _has_value(price):
+            lines.append(f"Price: {fmt(price)} {currency}")
+        if _has_value(old_price) and old_price not in (0, "0") and str(old_price) != str(price):
+            lines.append(f"Was {fmt(old_price)} {currency}")
+        if _has_value(discount):
+            lines.append(f"🔥 Save {fmt(discount)}%")
+        if url:
+            lines.append(f"📍 🔗 Offer link: {url}")
+
+    return "\n".join(lines)
 
 
 def _validate_numbers_in_response(answer_text: str, context_text: str) -> list:
@@ -1833,22 +1990,52 @@ class RagEngine:
 
  
 
-    def build_context(self, retrieved: list) -> str:
-        return "\n".join(f"---\n{r['text']}\n---" for r in retrieved)
+    def build_context(self, retrieved: list, lang: str = "en") -> str:
+        """Builds the CONTEXT block fed to the LLM. Offers are rendered as
+        pre-formatted emoji cards (see _format_offer_card) so the LLM sees the
+        exact output shape expected and copies it verbatim; FAQ docs keep
+        their raw question/answer text."""
+        blocks = []
+        for r in retrieved:
+            meta = r.get("metadata", {})
+            if meta.get("source") == "offer":
+                card = _format_offer_card(meta, lang)
+                if card:
+                    blocks.append(f"---\n{card}\n---")
+                    continue
+                blocks.append(f"---\n{r['text']}\n---")
+            else:
+                blocks.append(f"---\n{r['text']}\n---")
+        return "\n".join(blocks)
 
-    def _build_fact_checklist(self, retrieved: list, lang: str) -> str:
-        lines = []
+    def _offer_card_blocks(self, retrieved: list, lang: str) -> list:
+        """Returns the fully-rendered emoji offer cards for the offer docs in
+        `retrieved`, in retrieval order, deduplicated by offer id. The cards
+        are built deterministically here (never by the LLM) so the user is
+        guaranteed the exact emoji-card format with real metadata -- no risk
+        of the model paraphrasing, dropping an offer, or computing a price."""
+        cards = []
+        seen = set()
         for doc in retrieved:
             meta = doc.get("metadata", {})
             if meta.get("source") != "offer":
                 continue
-            fact = _format_offer_facts(meta, lang, variety=False)
-            if fact:
-                lines.append(f"- {fact}")
+            key = meta.get("id")
+            if key is not None:
+                if key in seen:
+                    continue
+                seen.add(key)
+            card = _format_offer_card(meta, lang)
+            if card:
+                cards.append(card)
+        return cards
+
+    def _build_fact_checklist(self, retrieved: list, lang: str) -> str:
+        lines = self._offer_card_blocks(retrieved, lang)
         if not lines:
             return ""
         header = "MUST STATE (copy these exactly):" if lang == "en" else "لازم تذكر (انسخها بالظبط):"
-        return header + "\n" + "\n".join(lines)
+        return header + "\n\n" + "\n\n".join(lines)
 
     def _get_faq_direct_answer(self, retrieved: list, reply_lang: str, query: str = "",
                                  multi_item: bool = None, followup_verdict: str = "NEW_TOPIC"):
@@ -1948,8 +2135,8 @@ class RagEngine:
                 if margin < config.OFFER_DIRECT_ANSWER_MARGIN and not high_confidence:
                     return None
 
-        fact = _format_offer_facts(top["metadata"], reply_lang)
-        if fact is None:
+        fact = _format_offer_card(top["metadata"], reply_lang)
+        if not fact:
             return None
 
         intro_options = {
@@ -2064,8 +2251,8 @@ class RagEngine:
             pick = (min if direction == "min" else max)(priced, key=lambda d: _price(d["metadata"]))
 
         reply_lang = detect_lang(query)
-        fact = _format_offer_facts(pick["metadata"], reply_lang)
-        if fact is None:
+        fact = _format_offer_card(pick["metadata"], reply_lang)
+        if not fact:
             return None
 
         intro = {
@@ -2083,9 +2270,9 @@ class RagEngine:
         # Format each offer
         formatted_offers = []
         for offer in retrieved:
-            fact = _format_offer_facts(offer["metadata"], reply_lang)
-            if fact:
-                formatted_offers.append(fact)
+            card = _format_offer_card(offer["metadata"], reply_lang)
+            if card:
+                formatted_offers.append(card)
 
         if not formatted_offers:
             return None
@@ -2095,6 +2282,55 @@ class RagEngine:
             "ar": "هنا مقارنة بين العروض:"
         }[reply_lang]
         return f"{intro}\n\n" + "\n\n".join(formatted_offers)
+
+    def _llm_offer_intro(self, query: str, history: list, reply_lang: str, offer_cards: list) -> str:
+        """Writes a SHORT, natural intro line that leads into the
+        deterministically-rendered offer cards. This is the ONLY thing the
+        LLM authors in the card path -- the cards themselves are emitted by
+        _offer_card_blocks (guaranteed emoji format, real metadata, no
+        hallucinated prices). num_predict is kept tiny so the model can't
+        wander past an intro and start re-stating offer details."""
+        lang_label = "Arabic" if reply_lang == "ar" else "English"
+        user_text = (
+            f"[Reply language: {lang_label}]\n\n"
+            "A user just asked about offers. Below are the offers we will show "
+            "them as pre-formatted cards (do NOT repeat these cards, prices, "
+            "percentages, or any details -- they will be shown right after your "
+            "message).\n\n"
+            + "\n".join(offer_cards[:3])
+            + "\n\nWrite ONLY a 1-2 line friendly intro that acknowledges the "
+            "user's request and points them at the offers below. In "
+            + lang_label
+            + ". No bullet points, no emojis, no prices, no more than 2 sentences."
+        )
+        messages = [{"role": "system", "content": _INTRO_SYSTEM_PROMPT}]
+        turns_kept = getattr(config, "HISTORY_TURNS_KEPT", 1)
+        messages.extend((history or [])[-turns_kept * 2:])
+        messages.append({"role": "user", "content": user_text})
+
+        gen_options = {
+            "num_predict": 80,
+            "num_ctx": config.OLLAMA_NUM_CTX,
+            "temperature": 0.3,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1,
+        }
+        gen_options.update(self.llm_options)
+        try:
+            resp = self.client.chat(
+                model=self.llm_model,
+                messages=messages,
+                options=gen_options,
+            )
+            text = (resp.get("message", {}) or {}).get("content", "").strip()
+        except Exception as e:
+            log.warning("offer-intro LLM call failed: %s", e)
+            return ""
+        # Defensive: refuse to let the model echo cards or fabricate details.
+        import re as _re
+        if _re.search(r"🏷️|المتجر|Merchant|خصم|جنيه|EGP|\d+%", text):
+            return ""
+        return text
 
     def answer_stream(self, query, history=None, recent_offers=None, user_id=None):
         # CHANGED: history is now passed through -- retrieve() uses it to
@@ -2384,10 +2620,13 @@ class RagEngine:
                     yield direct_answer
                     return
 
-                direct_answer = self._get_offer_direct_answer(retrieved, reply_lang, query, multi_item=multi_item, followup_verdict=getattr(self, '_last_followup_verdict', 'NEW_TOPIC'))
-                if direct_answer is not None:
-                    yield direct_answer
-                    return
+                # NOTE: the single-offer direct-answer shortcut (_get_offer_direct_answer)
+                # has been DISABLED by design. Because combined_score is inflated by
+                # ~0.5 of retrieval bonuses (intent + lexical + entity + title), the
+                # old 0.85/0.92 thresholds always fired, so every offer query returned
+                # exactly ONE hardcoded card and skipped the LLM entirely -- killing the
+                # multi-offer requirement. Offer queries now always fall through to the
+                # LLM path below, which renders ALL relevant offers as cards.
 
                 # NEW: Handle comparison queries with multiple merchants
                 if multi_item and len(retrieved) >= 2:
@@ -2396,10 +2635,34 @@ class RagEngine:
                         yield comparison
                         return
 
-        context = self.build_context(retrieved)
+        context = self.build_context(retrieved, reply_lang)
         if note:
             context = note + "\n" + context
         fact_checklist = self._build_fact_checklist(retrieved, reply_lang)
+
+        # NEW: deterministic-card path. When retrieval produced offer cards,
+        # the cards are built here (guaranteed emoji format, real metadata,
+        # every matching offer, no hallucinated prices) and the LLM writes only
+        # a short intro line. This replaced the old "let qwen write the whole
+        # answer" flow, which ignored the card format and fabricated derived
+        # prices. When there are NO offer cards (FAQ / general path), fall back
+        # to full LLM generation over the FAQ context below.
+        card_blocks = self._offer_card_blocks(retrieved, reply_lang)
+        if card_blocks:
+            if note:
+                yield note
+            intro = self._llm_offer_intro(query, history or [], reply_lang, card_blocks)
+            if intro:
+                yield intro + "\n\n"
+            elif fact_checklist:
+                intro_default = (
+                    "Here are the offers I found:"
+                    if reply_lang == "en"
+                    else "دي العروض اللي لقتها لك:"
+                )
+                yield intro_default + "\n\n"
+            yield "\n\n".join(card_blocks)
+            return
 
         turns_kept = getattr(config, "HISTORY_TURNS_KEPT", 1)
         trimmed_history = (history or [])[-turns_kept * 2:]

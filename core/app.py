@@ -55,7 +55,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core import config
-from core.rag_engine import RagEngine, detect_lang, _strip_scaffolding_leaks
+from core.rag_engine import RagEngine, detect_lang, _strip_scaffolding_leaks, _offer_url, _section_category
 from memory import MemoryStore
 
 logging.basicConfig(level=logging.INFO)
@@ -272,10 +272,12 @@ class OfferCard(BaseModel):
     id: Optional[str] = None
     title: str
     merchant: Optional[str] = None
+    category: Optional[str] = None
     price: Optional[str] = None
     old_price: Optional[str] = None
     discount: Optional[str] = None
     expiry: Optional[str] = None
+    url: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -308,6 +310,34 @@ def _source_card(doc: dict, reply_lang: str = None) -> dict:
         "title": meta.get("title") or meta.get("merchant") or ("Offer" if doc_lang == "en" else "عرض"),
         "snippet": " • ".join(bits) or (meta.get("merchant") or ""),
     }
+
+
+def _offer_cards(retrieved: list, reply_lang: str = None) -> List[dict]:
+    """Shapes the retrieved offer docs into the structured OfferCard dicts
+    the frontend's renderOfferCards() renders as cards (and the SSE/JSON
+    response now carries under 'offers'). Only offer-source docs are
+    included; FAQ docs are skipped (they're surfaced via sources instead)."""
+    offer_lang = reply_lang or "en"
+    currency = config.CURRENCY.get(offer_lang, config.CURRENCY.get("en", "EGP")) \
+        if isinstance(config.CURRENCY, dict) else config.CURRENCY
+    cards = []
+    for doc in retrieved or []:
+        meta = doc.get("metadata", {})
+        if meta.get("source") != "offer":
+            continue
+        card = {
+            "id": str(meta.get("id", "")) if meta.get("id") is not None else None,
+            "title": meta.get("title") or "",
+            "merchant": meta.get("merchant") or None,
+            "category": _section_category(meta, offer_lang) or None,
+            "price": f"{meta.get('price')} {currency}" if meta.get("price") is not None else None,
+            "old_price": f"{meta.get('old_price')} {currency}" if meta.get("old_price") not in (None, "", 0, "0") else None,
+            "discount": f"{meta.get('discount')}%" if meta.get("discount") not in (None, "", 0, "0") else None,
+            "expiry": str(meta.get("expiry")) if meta.get("expiry") else None,
+            "url": _offer_url(meta, offer_lang) or None,
+        }
+        cards.append(card)
+    return cards
 
 
 def _price_ceiling(price_raw) -> Optional[int]:
@@ -504,7 +534,10 @@ async def chat(req: ChatRequest):
     reply_lang = detect_lang(query)
     sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
     suggestions = _build_suggestions(raw_sources, reply_lang)
-    return {"answer": bot_answer, "sources": sources, "suggestions": suggestions}
+    offer_cards = _offer_cards(raw_sources[:5], reply_lang)
+    resp_type = "offers" if offer_cards else "text"
+    return {"answer": bot_answer, "type": resp_type, "offers": offer_cards,
+            "sources": sources, "suggestions": suggestions}
 
 
 # ---------------------------------------------------------------------------
@@ -617,7 +650,9 @@ async def chat_stream(req: ChatRequest):
                     raw_sources = getattr(engine, "_last_retrieved", [])
                     sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
                     suggestions = _build_suggestions(raw_sources, reply_lang)
-                    yield f"event: meta\ndata: {json.dumps({'sources': sources, 'suggestions': suggestions})}{SSE_HEARTBEAT}"
+                    offer_cards = _offer_cards(raw_sources[:5], reply_lang)
+                    resp_type = "offers" if offer_cards else "text"
+                    yield f"event: meta\ndata: {json.dumps({'type': resp_type, 'offers': offer_cards, 'sources': sources, 'suggestions': suggestions})}{SSE_HEARTBEAT}"
                     sources_sent = True
 
                 if kind == "token":

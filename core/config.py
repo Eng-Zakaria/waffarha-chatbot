@@ -110,6 +110,12 @@ CURRENCY = {"en": "EGP", "ar": "جنيه"}
 OFFER_STATUS_FIELD = "offer_status"
 OFFER_ACTIVE_VALUES = ["active"]
 
+# TESTING ONLY: when true, load_offers() keeps offers even if their expiry
+# date is in the past. Defaults to false (production behavior filters expired
+# offers). Enable with INCLUDE_EXPIRED_OFFERS=true to debug retrieval coverage
+# against otherwise-expired data without touching the status gate above.
+INCLUDE_EXPIRED_OFFERS = os.getenv("INCLUDE_EXPIRED_OFFERS", "false").lower() == "true"
+
 OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 
 # CHANGED: default embedding model upgraded to e5-large for better semantic matching.
@@ -117,8 +123,8 @@ OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 # intfloat/multilingual-e5-large, BAAI/bge-m3, sentence-transformers/paraphrase-multilingual-mpnet-base-v2
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
 
-TOP_K = 5
-CANDIDATE_K = 25 
+TOP_K = 8
+CANDIDATE_K = 40
 LEXICAL_BONUS_WEIGHT = 0.5 
 
 # NEW: intent classification (_classify_intent) used to be a HARD filter in
@@ -154,8 +160,8 @@ TITLE_PRICE_MATCH_BONUS = 0.60
 # often too tight to guarantee both named offers survive dedup + ranking,
 # especially if one merchant scores lower than unrelated but closer-matching
 # candidates. See rag_engine._detect_multi_item.
-TOP_K_MULTI = 8
-CANDIDATE_K_MULTI = 40
+TOP_K_MULTI = 12
+CANDIDATE_K_MULTI = 50
 
 
 MIN_RELEVANCE_SCORE = 0.30
@@ -233,15 +239,15 @@ MERCHANT_ALIASES = {
 
 
 
-FAQ_DIRECT_ANSWER_SCORE = 0.65
-FAQ_DIRECT_ANSWER_MARGIN = 0.05
-FAQ_DIRECT_ANSWER_HIGH_CONFIDENCE = 0.85
-FAQ_DIRECT_ANSWER_SAME_ENTITY_MARGIN = 0.12
+FAQ_DIRECT_ANSWER_SCORE = 0.85
+FAQ_DIRECT_ANSWER_MARGIN = 0.10
+FAQ_DIRECT_ANSWER_HIGH_CONFIDENCE = 0.92
+FAQ_DIRECT_ANSWER_SAME_ENTITY_MARGIN = 0.18
 
-OFFER_DIRECT_ANSWER_SCORE = 0.65
-OFFER_DIRECT_ANSWER_MARGIN = 0.05
-OFFER_DIRECT_ANSWER_HIGH_CONFIDENCE = 0.85
-OFFER_DIRECT_ANSWER_SAME_ENTITY_MARGIN = 0.12
+OFFER_DIRECT_ANSWER_SCORE = 0.85
+OFFER_DIRECT_ANSWER_MARGIN = 0.10
+OFFER_DIRECT_ANSWER_HIGH_CONFIDENCE = 0.92
+OFFER_DIRECT_ANSWER_SAME_ENTITY_MARGIN = 0.18
 
 # NEW: the eval run showed a broad, no-merchant-named query ("hotel with
 # breakfast offer") get shortcut-answered as one specific hotel (the WRONG

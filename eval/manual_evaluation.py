@@ -10,7 +10,6 @@ import sys
 import requests
 from datetime import datetime
 
-# Force UTF-8 output for Windows console
 if sys.platform == 'win32':
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -20,7 +19,6 @@ BASE_URL = "http://localhost:8000"
 SESSION_ID = "manual_eval_session"
 
 def chat(query, history=None):
-    """Send a chat request and return response."""
     if history is None:
         history = []
     payload = {
@@ -37,30 +35,26 @@ def chat(query, history=None):
         return {"error": str(e), "answer": "", "sources": []}
 
 def check_answer(answer, keywords=None, forbidden=None, must_contain=None, out_of_scope=False):
-    """Evaluate an answer against expected criteria."""
     if not answer or not answer.strip():
         return False, "Empty answer"
 
     text = answer.lower()
     text_ar = answer
 
-    # Out of scope should not contain price/offer info
     if out_of_scope:
-        price_patterns = ["جنيه", "egp", "le ", "le$", "price"]
+        price_patterns = ["جنيه", "egp", "le ", "le$"]
         if any(p in text for p in price_patterns):
             return False, "Should have deflected but gave price info"
-        # Good deflection: mentions support or doesn't answer
-        if any(p in text_ar for p in ["لا يوجد", "مفيش", "عندكم", "خدمات", "دعم", "support"]):
+        deflection_patterns = ["لا يوجد", "مفيش", "عندكم", "خدمات", "دعم", "support", "غير متاح"]
+        if any(p in text_ar for p in deflection_patterns):
             return True, "Correctly deflected out-of-scope query"
         return False, "Gave an answer instead of deflecting"
 
-    # Check forbidden keywords
     if forbidden:
         for kw in forbidden:
             if kw.lower() in text:
                 return False, f"Forbidden keyword found: {kw}"
 
-    # Check must_contain (all must be present)
     if must_contain:
         missing = []
         for kw in must_contain:
@@ -69,199 +63,189 @@ def check_answer(answer, keywords=None, forbidden=None, must_contain=None, out_o
         if missing:
             return False, f"Missing required: {missing}"
 
-    # Check keywords (at least one must be present)
     if keywords:
         found = [kw for kw in keywords if kw.lower() in text.lower() or kw in text_ar]
         if found:
             return True, f"Keywords found: {found}"
         return False, f"No keywords matched: {keywords}"
 
-    # If no criteria, just check non-empty
     return True, "Non-empty answer (no specific criteria)"
 
-# ============================================================================
-# CONVERSATION DEFINITIONS
-# Format: (query, keywords_to_find, forbidden_keywords, must_contain, out_of_scope)
-# ============================================================================
-
+# Each message: (query, keywords_to_find, forbidden, must_contain, out_of_scope)
 conversations = [
-    # --- Conversation 1: Restaurant offers exploration ---
+    # --- Conv 1: Restaurant offers ---
     {
-        "name": "مطاعم وعروض الطعام",
+        "name": "Restaurant Offers",
         "messages": [
-            ("السلام عليكم، شوية عروض المطاعم؟", ["أهلا", "welcome", "help"], None, None, False),
-            ("عايز أكل برجر، فين أحسن عرض؟", ["burger", "برجر", "عرض"], None, None, False),
-            ("كام سعر البرجر ده؟", ["35", "جنيه", "EGP"], None, None, False),
-            ("طيب في عرض تشيكن أيضا؟", ["chicken", "تشيكن", "كشوري"], None, None, False),
-            ("قارنيلي بين البرجر والتشيكن", ["burger", "chicken", "برجر", "تشيكن"], None, None, False),
-            ("الشيكين عرضه كام بالضبط؟", ["29", "جنيه", "EGP"], None, None, False),
+            ("السلام عليكم، شوية عروض المطاعم؟", ["ahlan", "welcome", "help"], None, None, False),
+            ("عايز أكل برجر، فين أحسن عرض؟", ["burger", "عرض"], None, None, False),
+            ("كام سعر البرجر ده؟", ["35", "جنيه"], None, None, False),
+            ("طيب في عرض تشيكن أيضا؟", ["chicken", "تشيكن"], None, None, False),
+            ("قارنيلي بين البرجر والتشيكن", ["burger", "chicken"], None, None, False),
+            ("الشيكين عرضه كام بالضبط؟", ["29", "جنيه"], None, None, False),
             ("عايز أعرف عرض كشري", ["koshary", "كشري"], None, None, False),
-            ("كام سعر الكشري؟", ["90", "جنيه", "EGP"], None, None, False),
+            ("كام سعر الكشري؟", ["90", "جنيه"], None, None, False),
             ("الكشري ده بيوصل للبيت ولا لا؟", ["يوصل", "delivery"], None, None, False),
-            ("شكراً ليكم على المعلومات", ["شكرا", "thanks"], None, None, False),
+            ("شكراً ليكم على المعلومات", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 2: Hotel offers ---
+    # --- Conv 2: Hotel offers ---
     {
-        "name": "فنادق وإقامة",
+        "name": "Hotel Offers",
         "messages": [
-            ("مرحبا، عندكم عروض فنادق؟", ["أهلا", "hotel", "fundoq"], None, None, False),
-            ("عايز إقامة نهار في هيلتون الزمالك", ["hilton", "هيلتون", "1680"], None, None, False),
-            ("كام سعر الإقامة النهارية؟", ["1680", "جنيه", "EGP"], None, None, False),
-            ("في إقامة ليلية معاهم؟", ["7240", "ليلية", "night"], None, None, False),
-            ("قارنيلي بين النهار والليلة", ["1680", "7240", "نهار", "ليلة"], None, None, False),
+            ("مرحبا، عندكم عروض فنادق؟", ["hotel", "fundoq"], None, None, False),
+            ("عايز إقامة نهار في هيلتون الزمالك", ["hilton", "1680"], None, None, False),
+            ("كام سعر الإقامة النهارية؟", ["1680", "جنيه"], None, None, False),
+            ("في إقامة ليلية معاهم؟", ["7240", "night"], None, None, False),
+            ("قارنيلي بين النهار والليلة", ["1680", "7240"], None, None, False),
             ("الإقامة النهارية دى فيها إفطار؟", ["breakfast", "إفطار"], None, None, False),
-            ("فين الفندق ده بالضبط؟", ["zamalek", "الزمالك"], None, None, False),
-            ("عندكم فنادق أخرى في الإسكندرية؟", ["alexandria", "اسكندرية"], None, None, False),
-            ("كام أغلى فندق عندكم؟", ["2044", "steigenberger", "pyramids"], None, None, False),
-            ("شكراً، هتفكر في الأمر", ["شكرا", "thanks"], None, None, False),
+            ("فين الفندق ده بالضبط؟", ["zamalek"], None, None, False),
+            ("عندكم فنادق أخرى في الإسكندرية؟", ["alexandria"], None, None, False),
+            ("كام أغلى فندق عندكم؟", ["2044", "steigenberger"], None, None, False),
+            ("شكراً، هتفكر في الأمر", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 3: KFC specific offers ---
+    # --- Conv 3: KFC offers ---
     {
-        "name": "عروض كنتاكي",
+        "name": "KFC Offers",
         "messages": [
-            ("عندي شغف كنتاكي، عندكم إيه؟", ["kfc", "كنتاكي", "عرض"], None, None, False),
-            ("عايز أعرف التفاصيل", ["250", "189", "خصم", "دجاج"], None, None, False),
-            ("كام كان سعره قبل الخصم؟", ["485", "قبل", "old", "was"], None, None, False),
-            ("العرض ده لسه شغال؟", ["صالح", "شغال", "valid"], None, None, False),
-            ("إمتى بيخلص العرض؟", ["2026", "expiry", "صالح حتى"], None, None, False),
-            ("في عروض تانية من كنتاكي؟", ["4", "other", "تانية", "عروض"], None, None, False),
-            ("لو عايز أכול عيلتي، أنصحني بأيه؟", ["family", "عائلة", "وجبة"], None, None, False),
-            ("عندكم خدمة توصيل؟", ["delivery", "يوصل", "توصيل"], None, None, False),
-            ("مشوار تمام، شكراً", ["شكرا", "thanks"], None, None, False),
+            ("عندي شغف كنتاكي، عندكم إيه؟", ["kfc", "kentucky"], None, None, False),
+            ("عايز أعرف التفاصيل", ["250", "189", "discount"], None, None, False),
+            ("كام كان سعره قبل الخصم؟", ["485", "old", "was"], None, None, False),
+            ("العرض ده لسه شغال؟", ["صالح", "valid"], None, None, False),
+            ("إمتى بيخلص العرض؟", ["2026", "expiry"], None, None, False),
+            ("في عروض تانية من كنتاكي؟", ["4", "other"], None, None, False),
+            ("لو عايز أכול عيلتي، أنصحني بأيه؟", ["family", "وجبة"], None, None, False),
+            ("عندكم خدمة توصيل؟", ["delivery", "يوصل"], None, None, False),
+            ("مشوار تمام، شكراً", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 4: FAQ - How to use the app ---
+    # --- Conv 4: FAQ - How to use ---
     {
-        "name": "أسئلة الاستخدام",
+        "name": "FAQ - App Usage",
         "messages": [
-            ("أنا جديد على التطبيق، ازاي أبدأ؟", ["register", "تسجيل", "كود"], None, None, False),
-            ("إزاي أشتري كوبون من التطبيق؟", ["cart", "عربة", "شراء"], None, None, False),
-            ("طرق الدفع المتاحة إيه؟", ["visa", "apple pay", "fawry"], None, None, False),
-            ("أنا اشتريت كوبون، إزاي أستخدمه؟", ["orders", "كوبون", "كود"], None, None, False),
-            ("حالة الطلب 'مستعمل' معناه إيه؟", ["used", "مستعمل", "استخدم"], None, None, False),
-            ("أنا عايز أرجع فلوسي، إزاي؟", ["refund", "استرداد", "إلغاء"], None, None, False),
-            ("الكاش باك بيتصرف إزاي؟", ["30", "cashback", "كاش باك"], None, None, False),
-            ("إيه فائدة تطبيق وفرها بالضبط؟", ["group", "شراء جماعي", "negotiate"], None, None, False),
-            ("شكراً على التوضيح", ["شكرا", "thanks"], None, None, False),
+            ("أنا جديد على التطبيق، ازاي أبدأ؟", ["register", "كود"], None, None, False),
+            ("إزاي أشتري كوبون من التطبيق؟", ["cart", "عربة"], None, None, False),
+            ("طرق الدفع المتاحة إيه؟", ["visa", "apple pay"], None, None, False),
+            ("أنا اشتريت كوبون، إزاي أستخدمه؟", ["orders", "كوبون"], None, None, False),
+            ("حالة الطلب 'مستعمل' معناه إيه؟", ["used", "مستعمل"], None, None, False),
+            ("أنا عايز أرجع فلوسي، إزاي؟", ["refund", "استرداد"], None, None, False),
+            ("الكاش باك بيتصرف إزاي؟", ["30", "cashback"], None, None, False),
+            ("إيه فائدة تطبيق وفرها بالضبط؟", ["group", "negotiate"], None, None, False),
+            ("شكراً على التوضيح", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 5: Superlative queries ---
+    # --- Conv 5: Superlatives ---
     {
-        "name": "أفضل العروض وأسعارها",
+        "name": "Superlative Queries",
         "messages": [
-            ("أرخص عرض عندكم قد إيه؟", ["35", "cheapest", "ar3s"], None, None, False),
-            ("أغلى عرض فين وكام؟", ["9100", "yacht", "ylt", "agla"], None, None, False),
-            ("أكبر خصم فين؟", ["85", "amani", "tunsi", "discount"], None, None, False),
-            ("في عروض تحت 100 جنيه؟", ["100", "under", "تحت"], None, None, False),
-            ("في عروض من 300 لحد 800؟", ["300", "800", "between", "من"], None, None, False),
-            ("أنصحوني بأحسن عرض حاليا", ["recommend", "best", "احسن"], None, None, False),
-            ("عندي ميزانية 200 جنيه، إيه المناسب؟", ["200", "budget", "ميزانية"], None, None, False),
-            ("شكرا على التوصيات", ["شكرا", "thanks"], None, None, False),
+            ("أرخص عرض عندكم قد إيه؟", ["35", "cheapest"], None, None, False),
+            ("أغلى عرض فين وكام؟", ["9100", "yacht"], None, None, False),
+            ("أكبر خصم فين؟", ["85", "discount"], None, None, False),
+            ("في عروض تحت 100 جنيه؟", ["100", "under"], None, None, False),
+            ("في عروض من 300 لحد 800؟", ["300", "800"], None, None, False),
+            ("أنصحوني بأحسن عرض حاليا", ["best", "recommend"], None, None, False),
+            ("عندي ميزانية 200 جنيه، إيه المناسب؟", ["200", "budget"], None, None, False),
+            ("شكرا على التوصيات", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 6: Entertainment & activities ---
+    # --- Conv 6: Entertainment ---
     {
-        "name": "ترفيه وأنشطة",
+        "name": "Entertainment & Activities",
         "messages": [
-            ("عايز أفكر إيه في نهاية الأسبوع؟", ["entertainment", "ترفيه", "activity"], None, None, False),
-            ("في عروض cinema؟", ["cinema", "سينما", "movie"], None, None, False),
-            ("كام سعر تذكرة السينما؟", ["21", "cinema", "جنيه"], None, None, False),
-            ("عروض فون قديم كام؟", ["143", "fun kingdom", "kingdom"], None, None, False),
-            ("أنيمانيا زوو بكام؟", ["32", "animania", "zoo"], None, None, False),
-            ("القرية الفرعونية فيها عروض قد إيه؟", ["63", "pharaonic", "قرية"], None, None, False),
-            ("عروض للأطفال فين؟", ["kids", "أطفال", "entertainment"], None, None, False),
-            ("شكرا، هروح مع العيلة", ["شكرا", "thanks"], None, None, False),
+            ("عايز أفكر إيه في نهاية الأسبوع؟", ["entertainment", "activity"], None, None, False),
+            ("في عروض cinema؟", ["cinema", "سينما"], None, None, False),
+            ("كام سعر تذكرة السينما؟", ["21", "cinema"], None, None, False),
+            ("عروض فون قديم كام؟", ["143", "fun kingdom"], None, None, False),
+            ("أنيمانيا زوو بكام؟", ["32", "animania"], None, None, False),
+            ("القرية الفرعونية فيها عروض قد إيه؟", ["63", "pharaonic"], None, None, False),
+            ("عروض للأطفال فين؟", ["kids", "children"], None, None, False),
+            ("شكرا، هروح مع العيلة", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 7: Food & beverages beyond fast food ---
+    # --- Conv 7: Food & beverages ---
     {
-        "name": "أطعمة ومشروبات متنوعة",
+        "name": "Food & Beverages",
         "messages": [
-            ("عايز أشرب قهوة، عندكم إيه؟", ["coffee", "قهوة", "koffeeshop"], None, None, False),
-            ("كام سعر قهوة كوفي شوب؟", ["88", "coffee", "جنيه"], None, None, False),
+            ("عايز أشرب قهوة، عندكم إيه؟", ["coffee", "قهوة"], None, None, False),
+            ("كام سعر قهوة كوفي شوب؟", ["88", "coffee"], None, None, False),
             ("في شاورما؟ كام سعرها؟", ["shawerma", "شاورما", "47"], None, None, False),
             ("ويفليشوس عندهم عرض بكام؟", ["10", "wafflicious", "waffle"], None, None, False),
-            ("زادنا عندها حلويات كام؟", ["70", "zadna", "حلوى"], None, None, False),
-            ("حندرد ديجريز عندها سحور بكام؟", ["85", "ramadan", "سحور"], None, None, False),
-            ("أتلانتس كورنرز فيه كام عرض؟", ["130", "atlantis", "corners"], None, None, False),
-            ("شكرا، أكل الكترونات", ["شكرا", "thanks"], None, None, False),
+            ("زادنا عندها حلويات كام؟", ["70", "zadna"], None, None, False),
+            ("حندرد ديجريز عندها سحور بكام؟", ["85", "ramadan"], None, None, False),
+            ("أتلانتس كورنرز فيه كام عرض؟", ["130", "atlantis"], None, None, False),
+            ("شكرا، أكل الكترونات", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 8: Wellness & beauty ---
+    # --- Conv 8: Wellness & beauty ---
     {
-        "name": "عناية وجمال",
+        "name": "Wellness & Beauty",
         "messages": [
-            ("عايز أعمل سبا ومساج", ["spa", "مساج", "wellness"], None, None, False),
-            ("كام سعر الـ spa؟", ["price", "كام", "سعر"], None, None, False),
-            ("عروض تجميل وشعر فين؟", ["beauty", "تجميل", "hair", "شعر"], None, None, False),
+            ("عايز أعمل سبا ومساج", ["spa", "مساج"], None, None, False),
+            ("كام سعر الـ spa؟", ["price", "سعر"], None, None, False),
+            ("عروض تجميل وشعر فين؟", ["beauty", "تجميل", "hair"], None, None, False),
             ("كام teeth whitening عند Dental Boss؟", ["750", "dental", "teeth"], None, None, False),
-            ("أرخص عرض في Dental Boss كام؟", ["75", "dental", "cheapest", "ar3s"], None, None, False),
-            ("بامبو نيل سبا فيه عروض كام؟", ["nail", "bamboo", "spaa"], None, None, False),
-            ("في عروض gym؟", ["gym", "جيم", "fitness"], None, None, False),
-            ("شكرا على العروض", ["شكرا", "thanks"], None, None, False),
+            ("أرخص عرض في Dental Boss كام؟", ["75", "dental", "cheapest"], None, None, False),
+            ("بامبو نيل سبا فيه عروض كام؟", ["nail", "bamboo"], None, None, False),
+            ("في عروض gym؟", ["gym", "fitness"], None, None, False),
+            ("شكرا على العروض", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 9: Mixed Franco-Arabic queries ---
+    # --- Conv 9: Franco-Arabic ---
     {
-        "name": "استعلامات عربية مفرنجلة",
+        "name": "Franco-Arabic Queries",
         "messages": [
-            ("3ayez a3raf kam offer el KFC?", ["kfc", "189", "250"], None, None, False),
-            ("discount McDonald's be kam ya som3a?", ["mcdonald", "79", "discount"], None, None, False),
+            ("3ayez a3raf kam offer el KFC?", ["kfc", "189"], None, None, False),
+            ("discount McDonald's be kam ya som3a?", ["mcdonald", "79"], None, None, False),
             ("waffle wafflicious be kam ya basha?", ["waffle", "10", "wafflicious"], None, None, False),
-            ("hilton zamalek 3afya kam?", ["hilton", "1680", "zamalek"], None, None, False),
+            ("hilton zamalek 3afya kam?", ["hilton", "1680"], None, None, False),
             ("fun kingdom 3afyat kam?", ["fun kingdom", "143"], None, None, False),
-            ("arabizi offer kam?", ["price", "kam", "سعر"], None, None, False),
-            ("shukran ya mu3allem", ["شكرا", "thanks"], None, None, False),
+            ("arabizi offer kam?", ["price", "kam"], None, None, False),
+            ("shukran ya mu3allem", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 10: Out-of-scope & hallucination tests ---
+    # --- Conv 10: Out-of-scope tests ---
     {
-        "name": "اختبارات النطاق والاحتيال",
+        "name": "Out-of-Scope Tests",
         "messages": [
-            ("عاملين إيه الجو في القاهرة النهاردة؟ ☀️", [], ["weather", "temperature", "طقس"], None, True),
-            ("عندي وجع头部، آخذ إيه دواء؟ 🤒", [], ["ibuprofen", "medicine", "دواء"], None, True),
-            ("اعمليلي نكتة 😂", [], ["joke", "نكتة"], None, True),
-            ("سويتشي من ستياربكس ☕", ["starbucks", "EGP", "جنيه"], None, True),
-            ("عندكم بيتزا هت؟🍕", ["pizza", "hut", "EGP"], None, True),
+            ("عاملين إيه الجو في القاهرة النهاردة؟", [], ["weather", "temperature", "طقس"], None, True),
+            ("عندي وجع راس، آخذ إيه دواء؟", [], ["ibuprofen", "medicine", "دواء"], None, True),
+            ("اعمليلي نكتة", [], ["joke", "نكتة"], None, True),
+            ("سويتشي من ستياربكس", ["starbucks", "EGP"], None, None, True),
+            ("عندكم بيتزا هت؟", ["pizza", "hut", "EGP"], None, None, True),
             ("الطقس عامل ايه", [], ["weather"], None, True),
-            ("مين رئيس مصر دلوقتي؟ 🇪🇬", [], ["president"], None, True),
-            ("في عرض بيليني؟ 👔", ["bellini", "EGP", "100"], None, True),
-            ("شكرا على الشفافية", ["شكرا", "thanks"], None, None, False),
+            ("مين رئيس مصر دلوقتي؟", [], ["president"], None, True),
+            ("في عرض بيليني؟", ["bellini", "EGP"], None, None, True),
+            ("شكرا على الشفافية", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 11: Price range filtering ---
+    # --- Conv 11: Price range ---
     {
-        "name": "تصفية حسب السعر",
+        "name": "Price Range Filtering",
         "messages": [
-            ("عايز عروض تحت 50 جنيه 🙏", ["50", "under", "تحت"], None, None, False),
-            ("في حاجات اغلى من كده؟", ["100", "200", "more", "اغلى"], None, None, False),
-            ("عايز عروض من 100 لحد 300", ["100", "300", "between", "من"], None, None, False),
-            ("في حاجة فوق 500؟ 🏦", ["500", "above", "فوق"], None, None, False),
-            ("أنا طالب وبقتي ضيقة، في عروض تحت 30 جنيه؟", ["30", "student", "تحت"], None, None, False),
-            ("أحسن عرض تحت 100 جنيه هو إيه؟", ["100", "best", "احسن"], None, None, False),
-            ("شكرا على المساعدة", ["شكرا", "thanks"], None, None, False),
+            ("عايز عروض تحت 50 جنيه", ["50", "under"], None, None, False),
+            ("في حاجات اغلى من كده؟", ["100", "200"], None, None, False),
+            ("عايز عروض من 100 لحد 300", ["100", "300"], None, None, False),
+            ("في حاجة فوق 500؟", ["500", "above"], None, None, False),
+            ("أنا طالب وبقتي ضيقة، في عروض تحت 30 جنيه؟", ["30", "student"], None, None, False),
+            ("أحسن عرض تحت 100 جنيه هو إيه؟", ["100", "best"], None, None, False),
+            ("شكرا على المساعدة", ["shukran", "thanks"], None, None, False),
         ]
     },
-    # --- Conversation 12: Delivery & availability ---
+    # --- Conv 12: Delivery ---
     {
-        "name": "التوصيل والتوافر",
+        "name": "Delivery & Availability",
         "messages": [
-            ("كشري التحرير بيوصل للدار؟ 🛵", ["koshary", "delivery", "يوصل"], None, None, False),
-            ("الحواوشي الرفاعي فيه توصيل؟", ["hawawshy", "delivery", "يوصل"], None, None, False),
-            ("ويفليشوس بيوصل للبيت؟", ["wafflicious", "delivery", "يوصل"], None, None, False),
-            ("العرض ده بيوصل؟ 🚗", ["delivery", "يوصل"], None, None, False),
-            ("فاضل كام كوبون من كنتاكي؟ 📦", ["stock", "فاضل", "remaining"], None, None, False),
-            ("أنيمانيا زوو فاضي ولا فيه كوبونات؟", ["animania", "stock", "فاضل"], None, None, False),
-            ("شكرا، هطلب دلوقتي", ["شكرا", "thanks"], None, None, False),
+            ("كشري التحرير بيوصل للدار؟", ["koshary", "delivery"], None, None, False),
+            ("الحواوشي الرفاعي فيه توصيل؟", ["hawawshy", "delivery"], None, None, False),
+            ("ويفليشوس بيوصل للبيت؟", ["wafflicious", "delivery"], None, None, False),
+            ("العرض ده بيوصل؟", ["delivery", "يوصل"], None, None, False),
+            ("فاضل كام كوبون من كنتاكي؟", ["stock", "remaining"], None, None, False),
+            ("أنيمانيا زوو فاضي ولا فيه كوبونات؟", ["animania", "stock"], None, None, False),
+            ("شكرا، هطلب دلوقتي", ["shukran", "thanks"], None, None, False),
         ]
     },
 ]
-
-# ============================================================================
-# RUN EVALUATION
-# ============================================================================
 
 results = {
     "timestamp": datetime.now().isoformat(),
@@ -298,7 +282,6 @@ for conv_idx, conv in enumerate(conversations):
 
         print(f"      A: {answer[:150]}...")
 
-        # Evaluate
         total_questions += 1
         conv_result["total"] += 1
 
@@ -313,6 +296,7 @@ for conv_idx, conv in enumerate(conversations):
             status = f"FAILED: {reason}"
 
         total_score += score
+        conv_result["passed"] += 1 if passed else 0
 
         conv_result["messages"].append({
             "question": query,
@@ -323,36 +307,29 @@ for conv_idx, conv in enumerate(conversations):
         })
         print(f"      Status: {status}")
 
-        # Update history
         if answer:
             history.append({"role": "user", "content": query})
             history.append({"role": "assistant", "content": answer})
 
-        # Small delay between requests
         time.sleep(1.5)
 
-    conv_result["score"] = conv_result["passed"] / max(conv_result["total"], 1) if conv_result["passed"] > 0 else 0
+    conv_result["score"] = conv_result["passed"] / max(conv_result["total"], 1)
     results["conversations"].append(conv_result)
-    passed_count = sum(1 for m in conv_result["messages"] if m["score"] > 0)
-    print(f"\n  Conversation Score: {passed_count}/{conv_result['total']} passed")
+    print(f"\n  Conversation Score: {conv_result['passed']}/{conv_result['total']} passed")
 
-# Summary
 print(f"\n{'='*60}")
 print("EVALUATION SUMMARY")
 print(f"{'='*60}")
 print(f"Total Conversations: {len(conversations)}")
 print(f"Total Questions: {total_questions}")
 print(f"Questions Passed: {total_passed}")
-overall_score = (total_score / total_questions * 100) if total_questions > 0 else 0
-print(f"Overall Score: {overall_score:.1f}%")
+overall = (total_score / total_questions * 100) if total_questions > 0 else 0
+print(f"Overall Score: {overall:.1f}%")
 print(f"\nBreakdown by Conversation:")
 for conv in results["conversations"]:
-    passed = sum(1 for m in conv["messages"] if m["score"] > 0)
-    total = len(conv["messages"])
-    pct = (passed / total * 100) if total > 0 else 0
-    print(f"  - {conv['name']}: {passed}/{total} ({pct:.0f}%)")
+    pct = (conv["passed"] / conv["total"] * 100) if conv["total"] > 0 else 0
+    print(f"  - {conv['name']}: {conv['passed']}/{conv['total']} ({pct:.0f}%)")
 
-# Save results
 output_path = f"eval/manual_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
 with open(output_path, "w", encoding="utf-8") as f:
     json.dump(results, f, ensure_ascii=False, indent=2)

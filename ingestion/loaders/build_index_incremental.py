@@ -240,7 +240,7 @@ def load_offers() -> List[Dict]:
             continue
 
         expiry = pick_field(offer, fc["expiry"])
-        if expiry:
+        if expiry and not config.INCLUDE_EXPIRED_OFFERS:
             try:
                 expiry_date = datetime.strptime(str(expiry).split(" ")[0], "%Y-%m-%d").date()
                 if expiry_date < datetime.now().date():
@@ -258,7 +258,7 @@ def load_offers() -> List[Dict]:
         if expiry:
             expiry = re.split(r"[ T]", str(expiry))[0].strip()
 
-        if expiry:
+        if expiry and not config.INCLUDE_EXPIRED_OFFERS:
             try:
                 from datetime import datetime
                 expiry_date = datetime.strptime(expiry, "%Y-%m-%d").date()
