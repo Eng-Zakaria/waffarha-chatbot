@@ -104,7 +104,7 @@ _OUT_OF_SCOPE_PHRASES = [
     r"headache|medicine|pill|treatment|symptom|doctor|pain|صداع|دواء|علاج|ألم",
     r"joke|funny|نكتة|اضحك|نكت",
     r"president|prime minister|capital|عاصمة|رئيس",
-    r"python|code|script|api|sql|programming|برمجة|كود",
+    r"python|programming|برمجة|كود برنامج|كتابة كود|اكتب كود|كود بايثون",
     r"better than groupon|better than cobone|أفضل من جروبات",
 ]
 

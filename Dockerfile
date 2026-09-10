@@ -13,7 +13,7 @@ COPY ingest/ ./ingest/
 
 # Bake the embedding model into the image at build time (see DOCKER.md) so
 # the container never needs network access to huggingface.co at runtime.
-ARG EMBEDDING_MODEL=intfloat/multilingual-e5-base
+ARG EMBEDDING_MODEL=BAAI/bge-m3
 ENV EMBEDDING_MODEL=${EMBEDDING_MODEL}
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')"
 

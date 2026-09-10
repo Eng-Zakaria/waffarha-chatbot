@@ -82,7 +82,7 @@ services:
     build:
       context: .
       args:
-        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-base}
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
     ports:
       - "8000:8000"
     environment:
@@ -111,7 +111,7 @@ services:
     build:
       context: .
       args:
-        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-base}
+        EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
     volumes:
       - ./data:/app/data:ro
     working_dir: /app/eval

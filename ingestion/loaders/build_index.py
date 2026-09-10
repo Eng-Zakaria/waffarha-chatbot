@@ -425,6 +425,8 @@ def main():
     parser.add_argument("--backend", choices=["faiss", "chroma", "qdrant", "lancedb", "pgvector", "all"], default="faiss")
     parser.add_argument("--embedding-model", default=config.EMBEDDING_MODEL,
                          help="Any sentence-transformers model id. Overrides config.EMBEDDING_MODEL.")
+    parser.add_argument("--batch-size", type=int, default=64,
+                         help="Encode batch size. Lower it (e.g. 16) when running on a small GPU.")
     args = parser.parse_args()
 
     docs = load_faqs() + load_offers()
@@ -443,7 +445,7 @@ def main():
     print(f"Encoding {len(docs)} chunks with {args.embedding_model} ...")
     texts = [d["text"] for d in docs]
     embeddings = model.encode(
-        texts, batch_size=64, show_progress_bar=True,
+        texts, batch_size=args.batch_size, show_progress_bar=True,
         normalize_embeddings=True, convert_to_numpy=True,
     ).astype("float32")
 

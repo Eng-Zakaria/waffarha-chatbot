@@ -118,10 +118,14 @@ INCLUDE_EXPIRED_OFFERS = os.getenv("INCLUDE_EXPIRED_OFFERS", "false").lower() ==
 
 OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 
-# CHANGED: default embedding model upgraded to e5-large for better semantic matching.
+# CHANGED: default embedding model upgraded to BGE-M3 for better Arabic retrieval.
 # Set EMBEDDING_MODEL env var to override. Available models: intfloat/multilingual-e5-base,
 # intfloat/multilingual-e5-large, BAAI/bge-m3, sentence-transformers/paraphrase-multilingual-mpnet-base-v2
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-large")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+
+# CHANGED: default vector store backend upgraded to Qdrant for better scalability.
+# Set VECTOR_STORE_BACKEND env var to override. Options: faiss, qdrant, chroma, lancedb, pgvector
+VECTOR_STORE_BACKEND = os.getenv("VECTOR_STORE_BACKEND", "qdrant")
 
 TOP_K = 8
 CANDIDATE_K = 40
@@ -300,6 +304,19 @@ INDEX_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 FAISS_INDEX_PATH = os.path.join(INDEX_DIR, "index.faiss")
 DOCS_PATH = os.path.join(INDEX_DIR, "docs.pkl")
 
+# NEW: build-time snapshot of main.dim_partners (part_id, part_name_en,
+# part_name_ar, status) written by
+# ingestion/sources/fetch_partners_clickhouse.py --snapshot. Loaded at chat
+# time by FacetedCatalog so merchant identity (canonical EN/AR name pair +
+# live status) comes from the authoritative partners table instead of being
+# re-indistricted from offer-doc metadata. Absent/empty -> legacy behavior.
+PARTNERS_SNAPSHOT_PATH = os.path.join(INDEX_DIR, "partners", "partners.json")
+
+# dim_partners.status values treated as "live, listed" merchants. A partner
+# whose status is outside this set still resolves (referenced by real offers),
+# but is flagged as not-live in the merchant table.
+PARTNERS_STATUS_LIVE = {"active"}
+
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
@@ -380,6 +397,15 @@ STATIC_TEST_USER_ID = int(os.getenv("STATIC_TEST_USER_ID", "0") or "0")
 # instead of the static FAISS index. Enabled by default since no auth
 # is required for public catalog data.
 CATALOG_QUERIES_ENABLED = os.getenv("CATALOG_QUERIES_ENABLED", "true").lower() == "true"
+
+# NEW: structured-first faceted routing (merchant / category / product /
+# superlative / price-range) on top of the fully offline in-memory offer
+# catalog. Falls back to hybrid retrieval when nothing resolves.
+FACETED_ROUTING_ENABLED = os.getenv("FACETED_ROUTING_ENABLED", "true").lower() == "true"
+# Max offers per merchant in a faceted product answer (diversity cap).
+FACETED_PRODUCT_TOP_PER_MERCHANT = int(os.getenv("FACETED_PRODUCT_TOP_PER_MERCHANT", "2") or "2")
+# Max offers per merchant in a faceted merchant answer.
+FACETED_MERCHANT_TOP_K = int(os.getenv("FACETED_MERCHANT_TOP_K", "6") or "6")
 
 # NEW: identity backend configuration
 # IDENTITY_BACKEND=header: reads user_id from HTTP header (set by auth proxy/gateway)

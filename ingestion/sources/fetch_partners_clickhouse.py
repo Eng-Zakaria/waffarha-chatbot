@@ -26,6 +26,13 @@ What it checks:
 
 Usage:
     python ingest/fetch_partners_clickhouse.py --debug
+    python ingest/fetch_partners_clickhouse.py --snapshot [path]
+
+The --snapshot mode writes the shareable merchant-identity table that
+core/faceted.py consumes at chat time: distinct (part_id, part_name_en,
+part_name_ar, status) for partners that at least one non-deleted offer
+points to. It is the authoritative source of the faceted merchant table,
+replacing the offer-metadata heuristics FacetedCatalog previously used.
 
 Requires: pip install clickhouse-connect
 Requires: CLICKHOUSE_PASSWORD (and friends) in .env -- see config.py.
@@ -36,6 +43,7 @@ import json
 import os
 import io
 import sys
+from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
@@ -135,15 +143,55 @@ def run_debug():
     )
 
 
+_SNAPSHOT_QUERY = """
+SELECT DISTINCT part_id, part_name_en, part_name_ar, status
+FROM main.dim_partners AS p
+INNER JOIN main.dim_offers AS o ON o.part_id = p.part_id
+WHERE o.deleted_at IS NULL
+"""
+
+
+def run_snapshot(path: str):
+    """Writes the merchant-identity snapshot FacetedCatalog loads at chat
+    time. One row per partner; names/status cleaned to '' / 'unknown'."""
+    client = config.get_clickhouse_client()
+    rows = client.query(_SNAPSHOT_QUERY).named_results()
+    out = []
+    for r in rows:
+        en = _clean(r.get("part_name_en")) or ""
+        ar = _clean(r.get("part_name_ar")) or ""
+        status = _clean(r.get("status")) or "unknown"
+        out.append({
+            "part_id": _clean(r.get("part_id")),
+            "name_en": str(en),
+            "name_ar": str(ar),
+            "status": str(status),
+        })
+    out.sort(key=lambda p: (p["name_en"] or p["name_ar"] or "").lower())
+    dest = Path(path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    live = sum(1 for p in out if p["status"] in config.PARTNERS_STATUS_LIVE)
+    print(f"Wrote {len(out)} partners -> {dest} "
+          f"({live} live status({sorted(config.PARTNERS_STATUS_LIVE)}), "
+          f"{len(out) - live} non-live)")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true", help="Investigate dim_partners field coverage -- no write.")
+    parser.add_argument("--snapshot", nargs="?", const=config.PARTNERS_SNAPSHOT_PATH,
+                        help="Write merchant-identity snapshot (default path: config.PARTNERS_SNAPSHOT_PATH).")
     args = parser.parse_args()
 
     if args.debug:
         run_debug()
+    elif args.snapshot:
+        run_snapshot(args.snapshot)
     else:
-        parser.error("pass --debug (investigation only -- no --write yet, see module docstring)")
+        parser.error("pass --debug (investigation only -- no write yet, see module docstring)")
 
 
 if __name__ == "__main__":

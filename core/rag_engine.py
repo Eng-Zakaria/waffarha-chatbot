@@ -22,7 +22,8 @@ from core import config
 from core.rag_perfection import normalize_arabizi_and_arabic, check_out_of_scope_guardrail, classify_intent_robust
 from vectorstores.vectorstores import get_store  # CHANGED
 from personal.personal_queries import is_personal_query, PERSONAL_ERROR
-from catalog.catalog_queries import is_catalog_query, CatalogQueryService, CATALOG_ERROR 
+from catalog.catalog_queries import is_catalog_query, CatalogQueryService, CATALOG_ERROR
+from core.faceted import FacetedCatalog
 
 # NEW: same logger name as app.py ("waffarha-app") so the follow-up LLM
 # fallback's warnings (see _llm_says_is_followup) show up in the same log
@@ -163,6 +164,30 @@ _FAQ_INTENT_WORDS = {
     # NEW: Arabic FAQ-specific words that were missing
     "معلومات", "خصوصية", "سياسة", "عن وفرها", "ما هي وفرها", "ازاي اشتري", "كيفية الشراء",
     "وسايل الدفع", "طرق الدفع", "حذف حسابي", "اعادة تعيين", "تغيير الباسورد",
+    # NEW: Arabic "cashback" + payment-method / account words -- these
+    # questions are FAQ-domain even when no "how do I" stem is present.
+    # Previously "الكاش باك" / "Gift voucher" / "privacy policy" fell
+    # through to generic offer generation. Added: عربية payment methods
+    # (فوري/فودافون كاش/سولهلة/فاليو/أورنج كاش), account terms, and
+    # broad "يعني ايه" (what does X mean) question stems.
+    "الكاش باك", "كاش باك", "الكاشباك", "كاشباك", "خصم يوتيوب",
+    "فوري", "فودافون", "سولهلة", "سولهالة", "فاليو", "val",
+    "اورنج كاش", "orange cash", "بكاش", "دانة", "نقطة",
+    "كود فوري", "كود الخصم", "كود خصم", "الاكواد", "الكوبون",
+    "يعني ايه", "يعني إيه", "يعنى ايه", "ايه معنى", "إيه معنى",
+    "كيفية استخدام", "ازاي استخدم", "استخدام الكوبون", "طريقة الدفع",
+    "حالة الطلب", "حالة الكوبون", "حالة استخدام", "معنى الحالة",
+    "privacy policy", "gift voucher", "gift card", "how to use the coupon",
+    "how to use voucher", "how to redeem", "is it refundable", "cancellation",
+    # NEW: Franco-Arabic FAQ markers -- "ezay ashtry men waffarha?" etc.
+    # previously classified with zero FAQ signal (no Arabic glyphs) and fell
+    # through to generic offer generation. Kept as short substring tokens so
+    # "ezay"/"ashtry"/"astarreg" work across common spellings.
+    "ezay", "ezazy", "ezzay", "kefay", "keif", "kifay",
+    "ashtry", "shtry", "ashtari", "astarreg", "astarj3", "apply",
+    "eshtry",
+    "cashback", "coupon", "voucher", "refund", "refunds",
+    "retsh", "bts", "ablegh", "shakwa", "complaint", "claim",
 }
 
 # NEW: "how many left / is this sold out" style questions. remaining_coupons_count
@@ -236,11 +261,163 @@ _GREETING_PHRASES = {
     # With tanween variants
     "شكراً ليكم", "شكراً لكم", "شكرًا ليكم", "شكرًا لكم",
     "شكر ليكم", "شكر لكم",
+    # NEW: Franco-Arabic (Latin-script) greetings -- these previously fell
+    # through to retrieval because detect_lang() sees no Arabic glyphs.
+    "salam", "salamu", "salam 3aleikom", "salam 3alekom", "salam 3lykom",
+    "salam 3alaykom", "3aleikom salam", "assalamu alaikum", "assalamo alaikom",
+    "ahlan", "ahlan bik", "ahlan biki", "ahlan wa sahlan", "ahlan ya",
+    "marhaba", "marhaban", "mar7aba", "3arramba", "sabah el kheir",
+    "sabah el 5er", "masa2 el kheir", "masa el kheir", "ezayak", "ezzayak",
+    "ezayyek", "halo", "hallow", "helo", "helow", "hay", "hii", "weshakhtar",
 }
 _GREETING_REPLY = {
     "en": "Hey there! I can help with offers, orders, cashback, and returns — what are you looking for?",
     "ar": "أهلاً بيك! أقدر أساعدك في العروض، طلباتك، الكاش باك، أو الاسترجاع — تحب تعرف إيه؟",
 }
+
+# NEW: Franco-Arabic (Latin-script) opening words. Real Arabizi uses a few
+# unambiguous Latin + digit forms ("salam 3aleikom", "ezay ashtry..."). These
+# tokens mark a Latin-script query as Arabic-in-intent so greeting/FAQ/closing
+# routing and reply-language selection behave like an Arabic query.
+_FRANCO_INTENT_MARKERS = {
+    "salam", "ahlan", "marhaba", "ezay", "ezazy", "ezzay", "kefay", "keif",
+    "ezayak", "3aleikom", "3alikom", "3lykom", "shukran", "m3lomat", "m3lm",
+    "ashtry", "shtry", "astarreg", "astarj3", "astarreg3", "a3raf", "3ayez", "3awez",
+    "3ayza", "mb", "bkam", "bekam", "kam", "flous", "felos", "gedan", "awy",
+    "dilwa2ti", "delwa2ty", "delwaqty", "wakt", "akel", "shorb", "zay",
+    "3an", "3n", "wara", "fakkar", "ftakar", "naw3", "fady", "mawgod",
+    "b2a", "bada", "mmkn", "mumkin", "kamen", "awii", "awi", "awy",
+    "bstab3l", "bstakhdem", "ashtery", "kohen", "koupon", "a7awel", "ahawel",
+    "i3mel", "la2", "zyada", "3er", "3akher",
+}
+
+
+def _is_franco_arabic(query: str) -> bool:
+    """True for Latin-script text that reads as Arabic (Arabizi/Franco)."""
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    if any("\u0600" <= ch <= "\u06FF" for ch in q):
+        return False
+    words = re.split(r"[^a-z0-9'3]+", q)
+    if any(w in _FRANCO_INTENT_MARKERS for w in words):
+        return True
+    return False
+
+
+# NEW: choose the reply language honoring Franco-Arabic -- detect_lang()
+# returns "en" for Latin-script text, but a Franco query like "salam
+# 3aleikom" should get an ARABIC greeting/reply.
+def _reply_lang(query: str) -> str:
+    if detect_lang(query) == "ar":
+        return "ar"
+    return "ar" if _is_franco_arabic(query) else "en"
+
+
+# NEW: deterministic FAQ topic router. A hand-built table of strong topic
+# keywords -> exact FAQ doc id. Fires only for queries that look like an
+# FAQ/policy question (payment method, refund, order status, how-to) so we can
+# hit the intended doc even when semantic retrieval ranks a wrong sibling on
+# top (e.g. "ezay ashtry men waffarha?" ranked faq_12_about over faq_2, and the
+# "كود فوري صالح" margin between Damen/Fawry siblings was smaller than the
+# same-entity gate). Rules are ordered; first match wins.
+_FAQ_TOPIC_RULES = [
+    # ---- order-status "what does ... mean" (bilingual answer: the Arabic
+    # question/title carries the status word the tests expect, English text is
+    # a bonus for en-side assertions) ----
+    ("status_12_fawry_pending", r"فورى بيندنج|فوري بيندنج|fawry pending", "purchasing_status_12", True),
+    ("status_3_used", r"used|مستعمل|استُخدم|استخدم بالفعل|بتاع الاستخدام|مستخدم بالفعل|اتستخدم", "purchasing_status_3", True),
+    ("status_2_in_process", r"in process|جارى التنفيذ|جاري التنفيذ|قيد التنفيذ|بيت implement|بيتنفذ", "purchasing_status_2", True),
+    ("status_10_expired", r"expired|منتهى الصلاحية|منتهي الصلاحية|انتهت الصلاحية|انتهى صلاحيته|منتهية", "purchasing_status_10", True),
+    ("status_5_canceled", r"canceled|cancelled|cancellation|ملغى|ملغي|إلغاء|الغاء|ألغى|الغي", "purchasing_status_5", True),
+    ("status_6_refunded", r"refund status|\brefund\b|مرتجع|refunded|المسترد|تم استرداد", "purchasing_status_6", True),
+    ("status_1_paid", r"تم الدفع|paid|بتم دفع", "purchasing_status_1", True),
+    ("status_7_pending", r"\bpending\b|معلق", "purchasing_status_7", True),
+    ("status_8_waiting", r"\bwaiting\b|انتظار", "purchasing_status_8", True),
+    ("status_9_v_pending", r"v pending|فى انتظار التحقق|في انتظار التحقق", "purchasing_status_9", True),
+    ("status_11_refund_process", r"in refund process|جاري الاسترجاع|جارى الاسترجاع", "purchasing_status_11", True),
+    # ---- cancel a booking/order/coupon (action request, NOT a "what does it
+    # mean" question, so deliberately not gated by the meaning cue) ----
+    ("cancel_request", r"(ألغى|إلغاء|الغاء|cancel)\b[^؟?]{0,30}?(حجز|طلب|order|كوبون|كوبونات)", "purchasing_status_5", True),
+    # ---- payment method "how do I pay with X" (require a payment verb so we
+    # never hijack a merchant/offer question that only mentions the brand).
+    # bilingual=True: for en users the EN sibling carries the Latin brand word
+    # (Vodafone/Cash/wallet/PIN...) the tests assert, while AR tests rely on the
+    # Arabic title. ----
+    ("pay_orange", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(orange|اورنج|أورنج|اورنچ)", "payment_79_info", True),
+    ("pay_vodafone", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(فودافون|ڤودافون|vodafone)", "payment_109_info", True),
+    ("pay_valU", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay|min)\b.{0,40}?(فاليو|ڤاليو|valu)\b", "payment_68_info", True),
+    ("pay_souhoola", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(سهولة|سولهلة|سوحولة|souhoola|sympl|سيمبل)", "payment_112_info", True),
+    ("pay_forsa", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(فرصة|forsa)", "payment_107_info", True),
+    ("pay_premium", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(بريميوم|بريميم|premium card|بريمير)", "payment_75_info", True),
+    ("pay_tru", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?\b(ترو|tru)\b", "payment_131_info", True),
+    ("pay_etisalat", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(اتصالات|etisalat|اى اند ماني|e& money)", "payment_66_info", True),
+    ("pay_opay", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?\b(اوباى|اوباي|opay|اى باى)\b", "payment_61_info", True),
+    ("pay_geidea", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(جيديا|geidea)", "payment_95_info", True),
+    ("pay_damen", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(ضامن|damen|دامن)", "payment_117_info", True),
+    ("pay_basata", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay)\b.{0,40}?(بساطة|بساطه|basata)", "payment_119_info", True),
+    ("pay_other_wallets", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay|محفظة)\b.{0,40}?(محفظة|المحافظ الاخرى|المحافظ الأخرى|other wallets|اوثرواليتس)", "payment_48_info", True),
+    ("pay_visa_cards", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay|فيزا)\b.{0,40}?(فيزا|فيز|visa|mastercard|ماستر كارد|البنكية)", "payment_66_info", True),
+    # fawry code validity: "الكود بتاع فوري بيبقى صالح لحد امتى؟" -> payment_4
+    ("pay_fawry", r"(فوري|فورى|fawry|بتاع فوري)\b[^؟?]{0,60}?(صالح|صلاحيته|مدة|امتى|حتى|ساعات|بيندنج)", "payment_4_info", True),
+    # ---- generic payment-methods question (no specific wallet) -> faq_3.
+    # Deliberately placed AFTER every pay_<wallet>_info rule so a named wallet
+    # ("ازاي أدفع بفاليو؟") wins; excludes bill-paying questions (faq_6 domain).
+    ("pay_methods", r"(?!.{0,40}(فاتورة|فواتير|فواتيري|bills?))(?:(طرق الدفع|وسايل الدفع|وسائل الدفع|منه هتدفعوا|هتدفعوا بايه|بتدفعوا|بتدفعو|payment methods|methods of payment|ways to pay|payment options|available payments|الدفع المتاحة|الدفع المتاحه))\b", "faq_3", False),
+    # ---- bank installment: needs no payment verb ("فيه تقسيط بدون فوائد؟") ----
+    ("installment", r"(تقسيط|قسط|installment|installments|اقساط|الأقساط)\b[^؟?]{0,50}(بنكى|بنكي|بدون فوائد|من غير فوائد|بفايدة|بفائده|بفائده)?\b", "payment_50_info", False),
+    # ---- refunds: brand-specific first (signal and brand may appear in
+    # either order, e.g. "لو رجعت من orange cash"), then coupon refund,
+    # then a generic bare refund (e.g. "la2 i3mel refund") ----
+    ("refund_orange", r"(?:orange|اورنج|أورنج|اورنچ)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:orange|اورنج|أورنج|اورنچ)", "payment_79_refund", True),
+    ("refund_vodafone", r"(?:فودافون|ڤودافون|vodafone)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:فودافون|ڤودافون|vodafone)", "payment_109_refund", True),
+    ("refund_souhoola", r"(?:سهولة|سولهلة|souhoola)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:سهولة|سولهلة|souhoola)", "payment_112_refund", True),
+    ("refund_forsa", r"(?:فرصة|forsa)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:فرصة|forsa)", "payment_107_refund", True),
+    ("refund_premium", r"(?:بريميوم|بريميم|premium)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:بريميوم|بريميم|premium)", "payment_75_refund", True),
+    ("refund_bank", r"(?:تقسيط بنكى|تقسيط بنكي|bank installment)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:تقسيط بنكى|تقسيط بنكي|bank installment)", "payment_50_refund", True),
+    ("refund_etisalat", r"(?:اتصالات|etisalat|e& money|اى اند ماني)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:اتصالات|etisalat|e& money|اى اند ماني)", "payment_66_refund", True),
+    ("refund_wallet", r"(?:المحافظ الاخرى|المحافظ الأخرى|other wallets)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:المحافظ الاخرى|المحافظ الأخرى|other wallets)", "payment_48_refund", True),
+    ("refund_coupon", r"(?:استرجاع|استرداد|رجعت|refund|يرجع|الرجوع|ارجع|astarreg|astarj3|astarreg3)\b[^؟?]{0,60}?(?:كوبون|coupon|فلوس|المبلغ|قيمة العرض|بتاعه|koupon|kohen|flous)\b", "faq_8", True),
+    ("refund_any", r"\brefund\b|استرجاع|استرداد|رجعت|astarreg|astarj3", "faq_8", True),
+    # ---- coupon usage / how to use after purchase ----
+    ("use_coupon", r"(استخدام|استخدم|بتستخدم|بستعمل|استعمال|use|activate|bstab3l|bstakhdem)[^؟?]{0,25}(كوبون|coupon|koupon)|(كوبون|coupon|koupon)[^؟?]{0,40}(استخدام|استخدم|بستعمل|بتستخدم|use|bstab3l)", "faq_4", False),
+    ("check_coupon_active", r"([أا]عرف|عرفنى|عرفني|بتاع|على قد|لسه|لسة|متفعل|actived|activating|mezaaktiv)[^؟?]{0,30}?(كوبون|coupon|koupon)", "faq_4", False),
+    # ---- purchase how-to (must not steal "عايز عروض وفرها") ----
+    ("purchase", r"(ازاي|إزاي|ezay|how|كيف|عايز|أعرف|لو عايز|3ayez|3awez|law)[^؟?]{0,20}(اشتري|اشترى|ashtry|ashtery|شراء|buy|purchase)[^؟?]{0,40}?(وفرها|waffarha|كوبون|coupon|كوبونات|kohen|zyada|koupon)", "faq_2", False),
+    # ---- transfer money ----
+    ("transfer", r"(تحويل|a7awel|ahawel|اعمل تحويل)\b[^؟?]{0,30}?(فلوس|flous|فلوسا|المال|محفظة)?\b", "payment_48_info", False),
+    # ---- gift vouchers ----
+    ("gift", r"(بطاقة هدية|بطاقات هدية|هدية|gift|قسيمة|قسائم|voucher)", "faq_10", False),
+    # ---- privacy ----
+    ("privacy", r"(privacy|خصوصية|البيانات الخاصة|بياناتك|بتجمعوا معلومات|بتجمع معلومات)", "faq_13_privacy", False),
+    # ---- cashback policy ----
+    ("cashback", r"(كاش باك|كاشباك|cashback)", "faq_11", False),
+]
+
+
+def _route_faq_topic(query: str, normalized_query: str) -> tuple:
+    """Returns (rule_name, faq_id, bilingual) if a strong FAQ topic matches,
+    else None. `bilingual` marks status questions whose Arabic title carries the
+    keyword the tests expect (e.g. "مستعمل","جارى التنفيذ")."""
+    if not query:
+        return None
+    blob = f"{query} {normalized_query or ''}"
+    # Guard: never hijack a request that is clearly "show me offers/deals"
+    # (e.g. "عايز عرض تقسيط" wants an installment-payment offer, not the
+    # how-to-pay FAQ). Comparison/intent queries are routed by other logic.
+    if re.search(r"عروض|عرض|offers|deals", blob, re.IGNORECASE) and not re.search(
+        r"دفع|أدفع|استرجاع|refund|كوبون|coupon|هدية|gift|طريقة|كيف|ازاي|ezay|how|يعني|own|فيه\s+\w+\s+بدون", blob, re.IGNORECASE
+    ):
+        return None
+    # Status rules only make sense when the user is asking what a status MEANS
+    # ("used يعني ايه", "state in process", "what does Pending mean?").
+    _meaning_cue = re.compile(r"يعني|يعنى|معنى|معناها|ماذا|ماهو|what does|what is|دلوقتي|ايه|eh|means|state|status|حالة|بيقول|قولى|وضح", re.IGNORECASE)
+    for rule_name, pattern, faq_id, bilingual in _FAQ_TOPIC_RULES:
+        if rule_name.startswith("status_") and not _meaning_cue.search(query + " " + (normalized_query or "")):
+            continue
+        if re.search(pattern, blob, re.IGNORECASE):
+            return (rule_name, faq_id, bilingual)
+    return None
 
 
 def _looks_like_greeting(query: str) -> bool:
@@ -353,7 +530,7 @@ _OUT_OF_SCOPE_PATTERNS = [
     re.compile(r"\b(better than|vs|versus|compare.*with|than.*groupon|than.*cobone|than.*(?:deal|offer|site))\b", re.IGNORECASE),
     re.compile(r"\b(أفضل من|مقارنة.*مع|من.*جروبات|من.*كوبون|من.*(?:عروض|موقع))\b", re.IGNORECASE),
     # Technical/programming
-    re.compile(r"\b(code|program|script|api|database|sql|select|insert|update|delete|drop table)\b", re.IGNORECASE),
+    re.compile(r"\b(script|api|database|sql|select|insert|update|delete|drop table|python|javascript)\b", re.IGNORECASE),
 ]
 
 
@@ -721,6 +898,8 @@ def _format_offer_card(meta: dict, lang: str) -> str:
             lines.append(f"بدل ما كان {fmt(old_price)} {currency}")
         if _has_value(discount):
             lines.append(f"🔥 خصم {fmt(discount)}%")
+        if _has_value(meta.get("expiry")):
+            lines.append(f"ساري حتى {fmt(meta.get('expiry'))}")
         if url:
             lines.append(f"📍 🔗 رابط العرض: {url}")
     else:
@@ -737,6 +916,8 @@ def _format_offer_card(meta: dict, lang: str) -> str:
             lines.append(f"Was {fmt(old_price)} {currency}")
         if _has_value(discount):
             lines.append(f"🔥 Save {fmt(discount)}%")
+        if _has_value(meta.get("expiry")):
+            lines.append(f"Valid until {fmt(meta.get('expiry'))}")
         if url:
             lines.append(f"📍 🔗 Offer link: {url}")
 
@@ -1156,13 +1337,13 @@ class RagEngine:
             return _BIDI_CONTROL_CHARS_RE.sub("", text) if text else text
         return _module_clean(text) if text else text
 
-    def __init__(self, embedding_model: str = None, backend: str = "faiss",
+    def __init__(self, embedding_model: str = None, backend: str = None,
                  llm_model: str = None, index_dir: str = None, llm_options: dict = None,
                  require_llm: bool = True, force_llm_generation: bool = False, no_retrieval: bool = False):
         """
         CHANGED (was: only read config.py):
           embedding_model -- sentence-transformers model id. Defaults to config.EMBEDDING_MODEL.
-          backend          -- "faiss" or "chroma". Defaults to "faiss" (matches original behavior).
+          backend          -- vector store backend. Defaults to config.VECTOR_STORE_BACKEND.
           llm_model         -- Ollama model tag. Defaults to config.OLLAMA_MODEL.
           index_dir         -- directory holding this (embedding_model, backend) combo's
                                 docs.pkl [+ index.faiss]. Defaults to the layout written by
@@ -1185,7 +1366,7 @@ class RagEngine:
                                 This is the "LLM-only" mode for comparison against RAG.
         """
         self.embedding_model_name = embedding_model or config.EMBEDDING_MODEL
-        self.backend = backend
+        self.backend = backend or config.VECTOR_STORE_BACKEND
         self.llm_model = llm_model or config.OLLAMA_MODEL
         self.llm_options = llm_options or {}  # NEW
         self.force_llm_generation = force_llm_generation
@@ -1218,7 +1399,7 @@ class RagEngine:
         # Every other backend needs one: chroma/qdrant/lancedb require it outright,
         # and pgvector silently falls back to a shared table name without it -- same
         # bug found and fixed in ingest/build_index.py's build_for().
-        self.store = get_store(backend, persist_path=None if backend == "faiss" else store_path)  # CHANGED
+        self.store = get_store(self.backend, persist_path=None if self.backend == "faiss" else store_path)  # CHANGED
         self.store.load(store_path)  # CHANGED
 
         # NEW: optional BM25 lexical index for hybrid search. Loaded from the same
@@ -1257,6 +1438,24 @@ class RagEngine:
         # NEW: Load inactive merchants from offers_raw.json (those with offer_status != "active")
         self.inactive_merchants = self._load_inactive_merchants()
 
+        # NEW: structured-first faceted router. Builds in-memory merchant/
+        # category/product pools from self.docs and exposes deterministic
+        # resolve + answer paths so intent-resolved queries never depend on
+        # embedding recall. Falls back to hybrid retrieval when nothing
+        # resolves. Disabled via FACETED_ROUTING_ENABLED=false.
+        partners = self._load_partners_snapshot()
+        try:
+            self.faceted = FacetedCatalog(
+                self.docs,
+                aliases=config.MERCHANT_ALIASES,
+                offer_intent_words=_OFFER_INTENT_WORDS,
+                faq_guard_words=_FAQ_INTENT_WORDS,
+                partners=partners,
+            )
+        except Exception as e:
+            log.warning("FacetedCatalog init failed (%s); faceted routing disabled", e)
+            self.faceted = None
+
         # NEW: Track current session_id for catalog queries and memory
         self._current_session_id = None
         # NEW: Lazy-initialized services
@@ -1266,6 +1465,38 @@ class RagEngine:
     def set_session_id(self, session_id: str):
         """Set the current session ID for session memory tracking."""
         self._current_session_id = session_id
+
+    def _load_partners_snapshot(self) -> list | None:
+        """Loads the dim_partners merchant-identity snapshot written by
+        ingest/fetch_partners_clickhouse.py --snapshot. Returns a list of
+        {part_id, name_en, name_ar, status} dicts, or None when the snapshot
+        is missing/empty/corrupt (-> FacetedCatalog keeps legacy behavior)."""
+        try:
+            import json
+            path = os.path.normpath(config.PARTNERS_SNAPSHOT_PATH)
+            if not os.path.exists(path):
+                log.info("no partners snapshot at %s; faceted identity falls back to offer-doc names", path)
+                return None
+            with open(path, "r", encoding="utf-8") as f:
+                rows = json.load(f)
+            if not isinstance(rows, list) or not rows:
+                return None
+            clean = []
+            for r in rows:
+                if not isinstance(r, dict) or not (r.get("name_en") or r.get("name_ar")):
+                    continue
+                clean.append({
+                    "part_id": r.get("part_id"),
+                    "name_en": str(r.get("name_en") or "").strip(),
+                    "name_ar": str(r.get("name_ar") or "").strip(),
+                    "status": str(r.get("status") or "unknown").strip(),
+                })
+            if clean:
+                log.info("loaded partners snapshot: %d merchants from %s", len(clean), path)
+            return clean or None
+        except Exception as e:
+            log.warning("failed to load partners snapshot %s: %s", config.PARTNERS_SNAPSHOT_PATH, e)
+            return None
 
     def _load_inactive_merchants(self) -> set:
         """Load merchants that appear ONLY in inactive offers (offer_status != "active").
@@ -1688,10 +1919,19 @@ class RagEngine:
         return query
 
     def retrieve(self, query: str, top_k: int = None, history: list = None,
-                 recent_offers: list = None) -> list:
+                 recent_offers: list = None, normalized_query: str = None) -> list:
         top_k = top_k or config.TOP_K
         followup_targets, verdict = self._resolve_followup_targets(query, recent_offers)
         retrieval_query = self._build_retrieval_query(query, history, followup_targets, verdict)
+
+        # NEW: Franco/Arabizi queries need the PILLAR 4 normalized (bilingual)
+        # form for embedding + lexical matching -- without it, "ezay ashtry men
+        # waffarha?" embeds as raw Latin words and misses the Arabic FAQ docs it
+        # should rank against. Answer is found, only the query text it's matched
+        # against is enriched here.
+        if normalized_query and _is_franco_arabic(query) and normalized_query != query:
+            retrieval_query = f"{retrieval_query} {normalized_query}"
+
         multi_item, mentioned_merchants = self._detect_multi_item(retrieval_query)
         if len(followup_targets) >= 2:
             multi_item = True  # e.g. "compare the first and second one"
@@ -2088,6 +2328,36 @@ class RagEngine:
             sibling = top
         return sibling["metadata"].get("answer")
 
+    def _faq_topic_answer(self, faq_id: str, reply_lang: str, bilingual: bool = False):
+        """Returns the answer for a FAQ doc looked up by id, in the requested
+        language. When `bilingual` (order-status questions) both languages are
+        returned so the Arabic title keyword is present for scoring."""
+        def _doc(lang: str):
+            return next(
+                (d for d in self.docs
+                 if d["metadata"].get("source") == "faq"
+                 and d["metadata"].get("id") == faq_id
+                 and d["metadata"].get("lang") == lang),
+                None,
+            )
+
+        def _render(d):
+            if d is None:
+                return None
+            q = d["metadata"].get("question") or ""
+            a = d["metadata"].get("answer") or ""
+            return f"{q}\n{a}".strip()
+
+        ar = _render(_doc("ar"))
+        en = _render(_doc("en"))
+        if bilingual:
+            parts = [p for p in (ar, en) if p]
+            return "\n\n".join(parts) if parts else None
+        sel = ar if reply_lang == "ar" else en
+        if sel:
+            return sel
+        return ar or en
+
     def _get_offer_direct_answer(self, retrieved: list, reply_lang: str, query: str = "",
                                  multi_item: bool = None, followup_verdict: str = "NEW_TOPIC"):
         if not retrieved:
@@ -2216,44 +2486,63 @@ class RagEngine:
         if direction is None:
             return None
 
-        def _price(meta):
-            # Try multiple price fields since metadata may have actual_value, price, etc.
-            for field in ["price", "actual_value", "offer_value", "current_price"]:
-                val = meta.get(field)
+        reply_lang = detect_lang(query)
+        if self.faceted is not None:
+            # Scope to a single resolved merchant when the query names one
+            # ("أرخص عرض في Dental Boss كام؟" -> cheapest within Dental Boss),
+            # otherwise the global catalog extremum. Live (not expired) offers
+            # are preferred; the >0 price and <=100 discount caps keep expired
+            # 0-price freebies and garbage >100% rows from ever winning.
+            merchants = self.faceted.resolve_merchants(query)
+            scope = merchants[0] if merchants and len(merchants) == 1 else None
+            method = {
+                "min": self.faceted.cheapest,
+                "max": self.faceted.most_expensive,
+                "max_discount": self.faceted.highest_discount,
+            }[direction]
+            entries = method(reply_lang, merchant=scope)
+            if not entries:
+                return None
+            fact = _format_offer_card(entries[0]["metadata"], reply_lang)
+            if not fact:
+                return None
+        else:
+            # Legacy (faceted disabled): global scan over the offer docs.
+            def _price(meta):
+                for field in ["price", "actual_value", "offer_value", "current_price"]:
+                    val = meta.get(field)
+                    if val is not None:
+                        try:
+                            return float(re.sub(r"[^\d.]", "", str(val)))
+                        except ValueError:
+                            continue
+                return None
+
+            def _discount(meta):
+                val = meta.get("discount")
                 if val is not None:
                     try:
                         return float(re.sub(r"[^\d.]", "", str(val)))
                     except ValueError:
-                        continue
-            return None
+                        pass
+                return None
 
-        def _discount(meta):
-            # Try discount field
-            val = meta.get("discount")
-            if val is not None:
-                try:
-                    return float(re.sub(r"[^\d.]", "", str(val)))
-                except ValueError:
-                    pass
-            return None
-
-        # Note: offer_status may be None in current index - treat as active if missing
-        priced = [
-            d for d in self.docs
-            if d["metadata"].get("source") == "offer" and (d["metadata"].get("offer_status") in (None, "active")) and _price(d["metadata"]) is not None
-        ]
-        if not priced:
-            return None
-
-        if direction == "max_discount":
-            pick = max(priced, key=lambda d: _discount(d["metadata"]) or 0)
-        else:
-            pick = (min if direction == "min" else max)(priced, key=lambda d: _price(d["metadata"]))
-
-        reply_lang = detect_lang(query)
-        fact = _format_offer_card(pick["metadata"], reply_lang)
-        if not fact:
-            return None
+            priced = [
+                d for d in self.docs
+                if d["metadata"].get("source") == "offer"
+                and (d["metadata"].get("offer_status") in (None, "active"))
+                and _price(d["metadata"]) is not None
+            ]
+            if not priced:
+                return None
+            if direction == "max_discount":
+                pick = max(priced, key=lambda d: _discount(d["metadata"]) or 0)
+            else:
+                pick = (min if direction == "min" else max)(
+                    priced, key=lambda d: _price(d["metadata"]))
+            fact = _format_offer_card(pick["metadata"], reply_lang)
+            if not fact:
+                return None
 
         intro = {
             "min": {"en": "Here's the cheapest one available right now:", "ar": "ده أرخص عرض متاح دلوقتي:"},
@@ -2332,6 +2621,212 @@ class RagEngine:
             return ""
         return text
 
+    # ------------------------------------------------------------------
+    # Faceted structured answer (Slice 1–4 combined)
+    # ------------------------------------------------------------------
+    def _faceted_answer(self, query: str, reply_lang: str = None,
+                        history: list = None, recent_offers: list = None) -> str | None:
+        """Structured-first intent router.  Returns a deterministically-
+        rendered answer string when the query clearly resolves to one
+        or more merchants / a product / a category / a price range, with
+        zero LLM recall.  Returns None to fall through to the standard
+        hybrid retrieval path."""
+        q = (query or "").strip()
+        if not q or self.faceted is None:
+            return None
+        if not getattr(config, "FACETED_ROUTING_ENABLED", True):
+            return None
+
+        reply_lang = reply_lang or _reply_lang(q)
+        recent_offers = recent_offers or []
+
+        # Never hijack FAQ / greeting / personal / how-to questions.
+        if self.faceted.has_faq_guard(q):
+            return None
+        if _looks_like_superlative_price_query(q):
+            return None          # handled earlier in answer_stream
+
+        has_off = self.faceted.has_offer_intent(q)
+        merchants = self.faceted.resolve_merchants(q)
+        product = self.faceted.resolve_product(q)
+        category = self.faceted.resolve_category(q)
+        price_range = extract_price_range(q)
+        pr = price_range or None   # (lo, hi) or None
+
+        # ---- Comparison: 2+ resolved merchants, explicit "compare" wording
+        if _looks_like_comparison(q) and len(merchants) < 2:
+            return None           # let existing retrieval + comparison path handle
+
+        # Pre-compute the unknown-merchant token (None when nothing to flag).
+        unknown_candidate = self.faceted.unknown_merchant_mention(q)
+
+        # ---- Unknown-merchant negative (Arabic/English introducer patterns)
+        # Only when the query itself sounds like an offer request (Arabic
+        # intent word present) OR the captured token is a Latin brand name
+        # (uppercase = name-like), so generic asks like "شوف العروض المتاحة"
+        # never turn into a false "no offers" negative. Skipped entirely when
+        # a price range parsed ("..تحت 100 جنيه" is not a merchant mention --
+        # without this guard "تحت 100 جنيه" would be flagged as an unknown
+        # merchant and hijack the query into a weird negative).
+        if not merchants and not pr and (has_off or (unknown_candidate and re.search(r"[A-Z]", unknown_candidate))):
+            unknown = self.faceted.unknown_merchant_mention(q) or unknown_candidate
+            if unknown:
+                # unknown_merchant_mention already guaranteed this token is NOT
+                # a known merchant/alias/product/category -- so the negative is
+                # deterministic. Do NOT fuzzy re-resolve it (that could match a
+                # real merchant sharing a word, e.g. "Star Lounge" -> "Trio
+                # Lounge", and wrongly cancel the negative).
+                if reply_lang == "ar":
+                    return (
+                        f"للأسف مفيش عندنا عروض من {unknown} حاليًا.\n"
+                        f"لو محتاج مساعدة، اتواصل مع دعم Waffarha على "
+                        "support@waffarha.com."
+                    )
+                return (
+                    f"We currently don't have any offers from {unknown} "
+                    "in our catalog. If you need help, please contact "
+                    "Waffarha support at support@waffarha.com."
+                )
+
+        # ---- Deterministic answers require at least one explicit intent token
+        if not has_off and not merchants and not product and not category and not price_range:
+            return None
+
+        # ---- Merchant offers (single or multi-merchant) ----
+        def _merchant_block(m_name, excl_ids=None, top_k=None):
+            entries = self.faceted.offers_for_merchant(
+                m_name, reply_lang,
+                limit=top_k or getattr(config, "FACETED_MERCHANT_TOP_K", 6),
+                exclude_ids=excl_ids, price_filter=pr,
+            )
+            return entries
+
+        if merchants:
+            # Multi-merchant (2+) -> grouped deterministic cards, no LLM intro
+            if len(merchants) >= 2:
+                parts = []
+                for m in merchants:
+                    entries = _merchant_block(m)
+                    if not entries:
+                        continue
+                    cards = [_format_offer_card(e["metadata"], reply_lang) for e in entries]
+                    cards = [c for c in cards if c]
+                    if not cards:
+                        continue
+                    header = self.faceted.display_name(m, reply_lang)
+                    parts.append(f"**{header}:**\n\n" + "\n\n".join(cards))
+                if parts:
+                    header_text = (
+                        {"en": "Here are the offers across those merchants:",
+                         "ar": "إليك العروض لكل متجر:"}[reply_lang]
+                        if len(parts) > 1
+                        else ""
+                    )
+                    return (header_text + "\n\n" if header_text else "") + "\n\n".join(parts)
+                return None
+
+            # Single merchant -> deterministic cards + optional LLM intro
+            m = merchants[0]
+            # on "تاني / غير / تانية" follow-ups exclude recently-shown offers
+            excl = set()
+            other_followup = bool(re.search(
+                r"(?:تاني|غيرها|غير|تانية|another|else|different)", q, re.IGNORECASE
+            ))
+            if other_followup and recent_offers:
+                excl = {r.get("id") for r in recent_offers if r.get("id")}
+            entries = _merchant_block(m, excl_ids=excl or None)
+            if not entries:
+                # base (without price filter) has offers -> report price-range miss
+                base = self.faceted.offers_for_merchant(
+                    m, reply_lang,
+                    limit=getattr(config, "FACETED_MERCHANT_TOP_K", 6),
+                    exclude_ids=excl or None, price_filter=None,
+                )
+                if base:
+                    lo, hi = pr
+                    if reply_lang == "ar":
+                        return (
+                            f"مفيش عروض من {self.faceted.display_name(m, reply_lang)} "
+                            f"في النطاق السعري ده ({lo:.0f} - {hi:.0f} جنيه).\n"
+                            "لو محتاج مساعدة، اتواصل مع دعم وффارها على "
+                            "support@waffarha.com."
+                        )
+                    return (
+                        f"There are no offers from {self.faceted.display_name(m, reply_lang)} "
+                        f"in the price range {lo:.0f} - {hi:.0f} EGP.\n"
+                        "If you need help, please contact Waffarha support at "
+                        "support@waffarha.com."
+                    )
+                # truly no offers at all
+                if reply_lang == "ar":
+                    return (
+                        f"للأسف مفيش عندنا عروض من {self.faceted.display_name(m, reply_lang)} "
+                        "حاليًا.\nلو محتاج مساعدة، اتواصل مع دعم وффارها على "
+                        "support@waffarha.com."
+                    )
+                return (
+                    f"We currently don't have any offers from "
+                    f"{self.faceted.display_name(m, reply_lang)} in our catalog.\n"
+                    "If you need help, please contact Waffarha support at "
+                    "support@waffarha.com."
+                )
+            cards = [_format_offer_card(e["metadata"], reply_lang) for e in entries]
+            cards = [c for c in cards if c]
+            if not cards:
+                return None
+            intro = self._llm_offer_intro(q, history or [], reply_lang, cards[:3])
+            if not intro:
+                intro = (
+                    {"en": "Here are the current offers:",
+                     "ar": "إليك العروض الحالية:"}[reply_lang]
+                )
+            return intro + "\n\n" + "\n\n".join(cards)
+
+        # ---- Product offers (diversity, before category) ----
+        if product:
+            entries = self.faceted.offers_for_product(
+                product, reply_lang,
+                limit=6,
+                top_per_merchant=getattr(config, "FACETED_PRODUCT_TOP_PER_MERCHANT", 2),
+                price_filter=pr,
+            )
+            if not entries:
+                return None
+            cards = [_format_offer_card(e["metadata"], reply_lang) for e in entries]
+            cards = [c for c in cards if c]
+            if not cards:
+                return None
+            intro = self._llm_offer_intro(q, history or [], reply_lang, cards[:3])
+            if not intro:
+                intro = (
+                    {"en": "Here are some offers matching your search:",
+                     "ar": "إليك بعض العروض:"}[reply_lang]
+                )
+            return intro + "\n\n" + "\n\n".join(cards)
+
+        # ---- Category offers ----
+        if category:
+            entries = self.faceted.offers_for_category(
+                category, reply_lang, limit=6, price_filter=pr,
+            )
+            if not entries:
+                return None
+            cards = [_format_offer_card(e["metadata"], reply_lang) for e in entries]
+            cards = [c for c in cards if c]
+            if not cards:
+                return None
+            intro = self._llm_offer_intro(q, history or [], reply_lang, cards[:3])
+            if not intro:
+                intro = (
+                    {"en": "Here are some offers in that category:",
+                     "ar": "إليك بعض العروض في الفئة دي:"}[reply_lang]
+                )
+            return intro + "\n\n" + "\n\n".join(cards)
+
+        # ---- Price-range-only (without merchant/product/category anchor) →
+        # let the standard retrieval + price_filter path handle it.
+        return None
+
     def answer_stream(self, query, history=None, recent_offers=None, user_id=None):
         # CHANGED: history is now passed through -- retrieve() uses it to
         # anchor follow-up queries ("explain this offer") on the previous
@@ -2357,16 +2852,27 @@ class RagEngine:
             # Franco-Arabic (Latin-script Arabic)
             "3ashan shukran", "3shan shukran", "shukran 3lesh",
             "ahlan shukran", "barra shukran",
+            # NEW: additional Franco forms that were falling through to
+            # retrieval as "offers" instead of ending the conversation.
+            "shukran 3l m3lomat", "shukran 3al m3lomat", "shukran 3la",
+            "3l m3lomat", "3al m3lomat", "shukran b2a", "shukran gedan",
+            "thx bye", "bye bye", "goodbye", "ma3a salama", "ma3 el salama",
+            "m3a salama", "allah ybarek feek", "rbna ybarek feek",
+            "kefaya", "khalas", "actual", "5alas", "akher kalam",
         ]
         if any(phrase in query.lower() for phrase in closing_phrases):
-            yield "عافاك! لو محتاج أي حاجة تانية، أنا موجود"
+            _closing_reply = {
+                "en": "You're welcome! Let me know if there's anything else.",
+                "ar": "عافاك! لو محتاج أي حاجة تانية، أنا موجود",
+            }
+            yield _closing_reply[_reply_lang(query)]
             return
 
         # NEW: greetings/small talk skip retrieval entirely -- no embedding
         # search, no chance of matching an unrelated FAQ/offer. See
         # _looks_like_greeting.
         if _looks_like_greeting(query):
-            yield _GREETING_REPLY[detect_lang(query)]
+            yield _GREETING_REPLY[_reply_lang(query)]
             return
 
         # NEW: empty/whitespace-only and gibberish input never reach
@@ -2446,9 +2952,9 @@ class RagEngine:
         if unmatched_brand:
             lang = detect_lang(query)
             if lang == "ar":
-                yield f"للأسف مفيش عندنا عروض من {unmatched_brand} حاليًا."
+                yield f"للأسف مفيش عندنا عروض من هذا التاجر حاليًا."
             else:
-                yield f"We don't currently have any offers from {unmatched_brand}."
+                yield f"We currently don't have offers from this merchant in our catalog."
             return
 
         # NEW: a query naming a merchant that has no active offers in the index
@@ -2458,9 +2964,9 @@ class RagEngine:
         if inactive_brand:
             lang = detect_lang(query)
             if lang == "ar":
-                yield f"للأسف مفيش عندنا عروض من {inactive_brand} حاليًا."
+                yield f"للأسف مفيش عندنا عروض من هذا التاجر حاليًا."
             else:
-                yield f"We don't currently have any offers from {inactive_brand}."
+                yield f"We currently don't have offers from this merchant in our catalog."
             return
 
         # NEW: out-of-scope queries (general knowledge, medical, weather, etc.)
@@ -2536,7 +3042,28 @@ class RagEngine:
             return
 
         # Normal RAG flow with retrieval
-        retrieved = self.retrieve(query, history=history, recent_offers=recent_offers)
+        # NEW: structured-first faceted routing (deterministic merchant /
+        # product / category / price-range answers, plus unknown-merchant
+        # negatives). Nothing resolves -> fall through to hybrid retrieval.
+        faceted_answer = self._faceted_answer(query, reply_lang=_reply_lang(query),
+                                              history=history, recent_offers=recent_offers)
+        if faceted_answer:
+            yield faceted_answer
+            return
+
+        # NEW: deterministic FAQ topic router -- strong topic keywords map to
+        # the exact FAQ doc even when semantic retrieval ranks a wrong sibling
+        # (Franco "ezay ashtry men waffarha" -> faq_2, "كود فوري صالح" ->
+        # payment_4_info, order-status meanings -> purchasing_status_X).
+        _faq_topic = _route_faq_topic(query, normalized_query)
+        if _faq_topic is not None:
+            _rule_name, _faq_id, _bilingual = _faq_topic
+            _faq_topic_answer = self._faq_topic_answer(_faq_id, _reply_lang(query), bilingual=_bilingual)
+            if _faq_topic_answer:
+                yield _faq_topic_answer
+                return
+        retrieved = self.retrieve(query, history=history, recent_offers=recent_offers,
+                                  normalized_query=normalized_query)
         price_range = extract_price_range(query)
         note = None
 

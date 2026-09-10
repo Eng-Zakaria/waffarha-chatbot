@@ -12,7 +12,7 @@ python-dotenv>=1.0
 redis>=5.0
 clickhouse_connect
 
-# --- Ingest scripts (ingest/build_index.py, ingest/fetch_offers.py) ---
+# --- Ingest scripts (ingestion/loaders/build_index.py, ingestion/sources/fetch_offers.py) ---
 # Only needed if you plan to re-fetch offers or rebuild the index yourself --
 # not required just to run the chatbot against the prebuilt index.
 requests>=2.31
@@ -29,6 +29,6 @@ google
 # Uncomment whichever ones you actually use -- the app runs fine with just
 # faiss-cpu above if you're sticking with the default "faiss" backend.
 # chromadb>=0.5
-# qdrant-client>=1.9
+qdrant-client>=1.9
 # lancedb>=0.6
 # psycopg2-binary>=2.9
