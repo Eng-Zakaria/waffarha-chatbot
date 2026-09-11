@@ -357,6 +357,13 @@ FOLLOWUP_LLM_FALLBACK_MAX_CONTENT_WORDS = 4
 # if the rule lists don't match.
 FOLLOWUP_LLM_MAX_CONTENT_WORDS = 8
 
+# NEW: A -- anchored follow-up answers. When a follow-up message refers back
+# to offers the bot already showed this session ("قارن بين العرضين", "التاني",
+# "فيه أرخص من كده", "عروض تانية من نفس المحل"), the answer is built from
+# those memory entries only -- zero re-retrieval, zero embeddings. Set to
+# False to disable and always fall back to the retrieval paths.
+ANCHORED_FOLLOWUP_ENABLED = os.getenv("ANCHORED_FOLLOWUP_ENABLED", "true").lower() == "true"
+
 # NEW: caps how many /api/chat requests this process will have actively
 # generating with Ollama at once (see app.py's _generation_semaphore for
 # why). Should match (or sit at/under) Ollama's own OLLAMA_NUM_PARALLEL --

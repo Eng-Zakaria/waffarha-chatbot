@@ -92,9 +92,16 @@ _DECORATION_WORDS = {
     # ---- generic / colloquial filler words the unknown-merchant introducer
     # regex can swallow but are never a brand name ("عروض حلوة دلوقتي",
     # "عرض مستعجل", "العرض المناسب", "العرض ده لسه شغال", "إقامة ليلية")
-    "حلوة", "مستعجل", "عاجل", "مناسب", "المناسب", "بالضبط", "ده", "دة",
+    "حلوة", "مستعجل", "عاجل", "مناسب", "المناسب", "مناسبه", "مناسبة", "بالضبط", "ده", "دة",
     "لسه", "لسة", "شغال", "ساري", "قبل", "إقامة", "ليلة", "ليله", "ليلية",
     "نهارية", "نهاري", "يا", "معلم", "باشا", "غير",
+    # imperative verbs ("هات عروض كفتة" = "bring me koshary deals") are
+    # commands, never brand names -- otherwise "هات" was flagged unknown.
+    "هات", "هاتي", "جيب", "جيبي", "وريني", "اديني", "اديني", "ديني", "عيني",
+    # English request verbs / softeners the introducer regex can swallow
+    # ("Show me offers please", "give me some deals"). Never brand names.
+    "show", "me", "give", "tell", "need", "want", "looking", "find", "please",
+    "us", "any", "appreciate", "now",
 }
 
 _DECORATION_NORM = {normalize_arabic(w) for w in _DECORATION_WORDS}
@@ -153,10 +160,12 @@ CATEGORY_LEXICON = {
     "shopping": (
         "تسوق", "شوبنج", "فاشون", "موضة", "ازياء", "الأزياء", "ملابس",
         "shopping", "fashion", "clothes", "clothing",
+        "هدايا", "جيفت", "gift", "gifts", "gifting",
     ),
     "beauty": (
         "جمال", "تجميل", "spa", "ماساج", "massage", "قص شعر",
         "حلاقة", "beauty", "salon", "عناية", "ميك اب", "makeup",
+        "بشرة", "جلد", "جلده", "skin", "بتانا",
     ),
     "entertainment": (
         "ترفيه", "تسليه", "تسلية", "سنيما", "سينما", "cinema", "فيلم", "بوينج",
@@ -167,6 +176,7 @@ CATEGORY_LEXICON = {
         "سفر", "سافاري", "سفاري", "safari", "رحلات", "رحلة", "travel", "trip",
         "تخييم", "camping", "هليكوبتر", "helicopter", "قارب", "boat", "يخت",
         "جت سكي", "jet ski",
+        "فنادق", "فندق", "hotel", "hotels", "إقامة", "استراحة", "lodging",
     ),
     "services": (
         "سيارات", "auto", "car", "cars", "services", "خدمات", "تليفونات",
@@ -500,6 +510,7 @@ class FacetedCatalog:
         if not q:
             return []
         found = []
+        matched_spans = []  # (start, end) in `low`/`norm_q` space, for containment pruning
         seen = set()
         low = q.lower()
 
@@ -509,6 +520,8 @@ class FacetedCatalog:
                 canonical = self._canonical(self._aliases[alias]) or self._aliases[alias]
                 if canonical not in seen:
                     seen.add(canonical)
+                    span = (low.index(alias), low.index(alias) + len(alias))
+                    matched_spans.append((canonical, span))
                     found.append(canonical)
 
         # 2) known names (longest-first substring / boundary)
@@ -528,9 +541,24 @@ class FacetedCatalog:
                 canonical = self._canonical(self._name_to_canonical.get(kn) or kn)
                 if canonical in self.merchants and canonical not in seen:
                     seen.add(canonical)
+                    p = norm_q.index(kn)
+                    matched_spans.append((canonical, (p, p + len(kn))))
                     found.append(canonical)
 
-        return found
+        # 3) prune: a merchant matched inside the text span of a LONGER
+        # matching merchant ("عايز عروض بابا جونز" also matches plain merchant
+        # "بابا") is a sub-token false positive -- drop it, never answer two
+        # headers for one brand.
+        span_map = {c: s for c, s in matched_spans}
+        pruned = []
+        for c in found:
+            s, e = span_map[c]
+            if any(other_c != c and (os <= s and e <= oe and (oe - os) > (e - s))
+                   for other_c, (os, oe) in span_map.items()):
+                continue
+            pruned.append(c)
+
+        return pruned
 
     def resolve_category(self, query: str) -> str | None:
         """Resolves a generic category mention ("food offers", "عروض أكل") to
@@ -695,6 +723,27 @@ class FacetedCatalog:
         low = q.lower()
         known_merchants_norm = {normalize_arabic(n.lower()) for n in self._merchant_names}
 
+        def _strip_clitics(word):
+            """Peels attached Arabic proclitics so a clitic-bound noun isn't
+            reported as an unknown merchant brand. Conservative by design:
+            - Latin/mixed words ("لdate night"): strip leading و/ف/ك/ل/ب/لل.
+            - Pure Arabic: strip ONLY the "لل" (لـ+ال) bound preposition, never
+              "ال" or single l/b/w/k -- those belong to real Arabic brand names
+              ("الجندل") and must survive intact.
+            So "للبشرة" -> "بشرة", "لdate night" -> "date night", but
+            "الجندل"/"كنتاكي" stay untouched."""
+            w = normalize_arabic(word)
+            has_latin = any("\u0041" <= ch <= "\u007a" or "\u00c0" <= ch <= "\u024f" for ch in w)
+            clitics = r"^(لل|ال|و|ف|ك|ل|ب)(?=\S)" if has_latin else r"^(لل)(?=\S)"
+            while True:
+                m = re.match(clitics, w)
+                if not m:
+                    break
+                w = w[m.end():]
+                if not w:
+                    break
+            return w
+
         def _core(cand):
             """Strip leading AND trailing decoration words ('مطعم', 'كافيه',
             'حلوة', 'إقامة', ...) so a freshly-coined brand name after them is
@@ -707,6 +756,13 @@ class FacetedCatalog:
                 words = words[1:]
             while words and normalize_arabic(words[-1].lower()) in _DECORATION_NORM:
                 words = words[:-1]
+            if words:
+                stripped = _strip_clitics(words[0].lower())
+                if stripped != normalize_arabic(words[0].lower()):
+                    if stripped:
+                        words[0] = stripped
+                    else:
+                        words = words[1:]
             return " ".join(words)
 
         for rx in self._INTRODUCER_RES:

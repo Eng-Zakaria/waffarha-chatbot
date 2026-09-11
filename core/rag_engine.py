@@ -87,6 +87,46 @@ _STOCK_SOLD_SO_FAR = {
     "ar": "اتباع {n} كوبون لحد دلوقتي.",
 }
 
+# D: structured follow-up summarizer prompt. The intent vocabulary lives in
+# these few-shot examples (Arabic/Egyptian) instead of code lists -- new
+# phrasings of "compare", "the second one", "cheaper than that", "other
+# offers from the same merchant" are learned from examples, not enumerated.
+_FOLLOWUP_SUMMARIZE_SYSTEM = (
+    "You resolve follow-up messages in an Arabic/Egyptian deals chatbot. "
+    "The user was just shown a numbered list of offers. Their new short "
+    "message may refer back to one of those offers. Return STRICTLY a JSON "
+    "object, nothing else:\n"
+    '{"is_followup": bool, "targets": [0-based indices of the shown offers '
+    'the message refers to], "intent": "compare"|"same"|"ordinal"|'
+    '"other_offer"|"cheaper_than", "price_threshold": number|null, '
+    '"scope": "shown"|"same_merchant"|"catalog"}\n\n'
+    "intent meanings:\n"
+    '- "compare": wants the shown offers compared (قارن بينهم/الفرق بينهم).\n'
+    '- "same": asks about one shown offer itself (price/availability/use).\n'
+    '- "ordinal": points at one specific shown offer (التاني/الثالث/الأول).\n'
+    '- "other_offer": wants a DIFFERENT offer from the same merchant '
+    '(عروض تانية منهم).\n'
+    '- "cheaper_than": wants something cheaper than a shown offer, optional '
+    'price_threshold (أرخص من كده تحت 500 جنيه -> 500).\n'
+    "scope is where to search: shown = among the offers just shown, "
+    "same_merchant = any offer from that merchant, catalog = everywhere.\n"
+    "Only phrases clearly about a NEW merchant/product (e.g. a brand name, "
+    "كشري, شاورما) are NOT follow-ups (is_followup=false).\n\n"
+    "Examples:\n"
+    'User: "قارن بين العرضين" -> {"is_followup": true, "targets": [0, 1], '
+    '"intent": "compare", "price_threshold": null, "scope": "shown"}\n'
+    'User: "التاني" -> {"is_followup": true, "targets": [1], '
+    '"intent": "ordinal", "price_threshold": null, "scope": "shown"}\n'
+    'User: "فيه أرخص من كده تحت 500 جنيه؟" -> {"is_followup": true, '
+    '"targets": [0], "intent": "cheaper_than", "price_threshold": 500, '
+    '"scope": "shown"}\n'
+    'User: "عايز عروض تانية من نفس المحل" -> {"is_followup": true, '
+    '"targets": [0], "intent": "other_offer", "price_threshold": null, '
+    '"scope": "same_merchant"}\n'
+    'User: "عايز أرخص كشري بس" -> {"is_followup": false, "targets": [], '
+    '"intent": "same", "price_threshold": null, "scope": "catalog"}'
+)
+
 
 # Internal scaffolding labels that must never reach the user -- kept in sync
 # with eval/common.py's _SCAFFOLDING_MARKERS. Centralized here since this is
@@ -212,14 +252,24 @@ _STOCK_INTENT_WORDS = {
 _CHEAPEST_WORDS = {
     "cheapest", "lowest price", "least expensive", "lowest priced",
     "ارخص", "أرخص",
+    # Franco
+    "as3r", "as3ar", "arkhas", "arkhos", "ar5as",
 }
 _MOST_EXPENSIVE_WORDS = {
     "most expensive", "highest price", "priciest",
     "اغلى", "أغلى",
+    # Franco
+    "ghaly", "aghaly", "3aly", "aktr ghaly",
 }
 _HIGHEST_DISCOUNT_WORDS = {
     "highest discount", "biggest discount", "most discount", "maximum discount",
     "اعلى خصم", "أعلى خصم", "اكبر خصم", "أكبر خصم",
+    # Franco
+    "akbar 5asm", "akbar hasm", "akbar khassm", "biggest 5asm",
+    "a7san offer", "ahsan offer", "best offer", "aktr offer",
+    "aktr 5asm", "aktr hasm", "aktr discount", "aktr tawareed",
+    "اكتر عرض توفير", "اكتر توفير", "اكتر خصم", "اكثر خصم",
+    "اكثر عرض توفير", "اكثر توفير", "أكتر توفير",
 }
 
 
@@ -411,7 +461,7 @@ def _route_faq_topic(query: str, normalized_query: str) -> tuple:
         return None
     # Status rules only make sense when the user is asking what a status MEANS
     # ("used يعني ايه", "state in process", "what does Pending mean?").
-    _meaning_cue = re.compile(r"يعني|يعنى|معنى|معناها|ماذا|ماهو|what does|what is|دلوقتي|ايه|eh|means|state|status|حالة|بيقول|قولى|وضح", re.IGNORECASE)
+    _meaning_cue = re.compile(r"يعني|يعنى|معنى|معناها|ماذا|ماهو|what does|what is|دلوقتي|ايه|eh|means|state|status|حالة|بيقول|قولى|وضح|مكتوب|مكتوبة", re.IGNORECASE)
     for rule_name, pattern, faq_id, bilingual in _FAQ_TOPIC_RULES:
         if rule_name.startswith("status_") and not _meaning_cue.search(query + " " + (normalized_query or "")):
             continue
@@ -1048,10 +1098,81 @@ _OTHER_OFFER_PHRASES = {
     "gher", "ghyr", "dika gher", "dihom gher", "ay tany gher",
 }
 
-def _looks_like_other_offer_query(query: str) -> bool:
-    """TRUE OLD — RETIRED. Kept only for callers that haven't been updated.
-    See _classify_followup_verdict() which now handles this in one place."""
-    return False  # placeholder so import doesn't break
+def _looks_like_other_offer(query: str) -> bool:
+    """True when the query asks for a DIFFERENT offer than what was shown
+    ("عايز عروض تانية من كنتاكي", "كمان عروض من نفس المحل", "غير ده").
+    Drives the merchant fast-path so a merchant-named message that says
+    "other/another" becomes OTHER_OFFER instead of re-showing the same card."""
+    q = (query or "").lower()
+    for p in _OTHER_OFFER_PHRASES:
+        if p in q:
+            return True
+    return any(w in q for w in (
+        "عروض تانية", "عروض تاني", "عرض تاني", "عروض كمان",
+        "كمان عروض", "باقي العروض", "عروض غير", "غير العروض",
+        "else", "others", "more like", "anything like",
+    ))
+
+
+_SAME_OFFER_ANAPHORA_RES = [
+    re.compile(r"(ده|ديه|دي|هاده)\s*(بكام|بكامه|السعر|سعره|سعر|بتاعه|خلص|كلف)"),
+    re.compile(r"(بكام|بكامه)(?=.*?(الخصم|الأصلي|قبل|الحقيقي))"),
+    re.compile(r"(قبل\s+الخصم|السعر\s+الأصلي|السعر\s+الحقيقي|الأصلي\s+قبل|الأصلي\s+بتاعه)"),
+    re.compile(r"(التاني|الثاني|اللي\s+فات|اللي\s+قبل|اللي\s+طلع)\s*(بكام|بكامه|كان\s+بكام|السعر)"),
+    re.compile(r"\bbikaam|bkaam|bekam\b", re.IGNORECASE),
+]
+
+
+def _same_offer_price_followup(query: str) -> bool:
+    """True when the query names a previously-shown offer and asks about its
+    price / pre-discount price ("العرض ده بكام قبل الخصم؟", "التاني كان
+    بکام؟", franco "el mc bkaam?"). Such follow-ups must NEVER be flagged as
+    an unknown-merchant mention by the introducer patterns."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    return any(rx.search(q) for rx in _SAME_OFFER_ANAPHORA_RES)
+
+
+# Cross-reference tokens: a message only inherits the "shown offers" context
+# when it points back at them (deictic demonstratives, ordinals, comparatives,
+# price questions, comparison verbs). A wh-/driver question with NONE of these
+# is self-contained ("الكاش باك بيتحلل بعد امتى؟", "privacy بتعكم ايه؟",
+# "ايه هو وفرها أصلاً؟") and must NOT be consumed by the anchored layer -- it
+# belongs to the FAQ/retrieval paths. Real session memory made this visible:
+# the LLM summarizer too often labels such questions as offer follow-ups.
+_OFFER_REFERENCE_RES = [
+    re.compile(r"(ده|ديه|دي|دّة|دة|هذا|هذه|هادا|هادي|ذا|دول|ذول)\b"),
+    re.compile(r"(كده|كدة|كده|كدى|ذيك|كذا)"),
+    re.compile(r"(العرض|العروض|العروضين|الاتنين|الاثنين|اللي فات|اللي قبله|اللي قبلي|اللي شفناه|اللي شفنا|اللي طلع|الموضوع ده)"),
+    re.compile(r"(التاني|الثاني|التانية|الثانية|التالت|الثالث|الأول|الاول|التالته|بعدهم|قبلهم)"),
+    re.compile(r"(بكام|بكم|بكامه|بكمه)"),
+    re.compile(r"(أرخص|اغلى|أغلى|أعلى|أقل|اقل|أفضل|افضل|أحسن|احسن|بديل|بديله)(?=.*(منه|منها|منهم|منهن|من ده|من دي|من كده|من دول))"),
+    re.compile(r"(غير دي|غيرها|غيرهم|غير ده|غير كده)"),
+    re.compile(r"(عروض تانية|عرض تاني|كمان عروض|برده|برضه|الباقي|الباقين|باقي العروض|باقي)"),
+    re.compile(r"(سعره|سعرها|خصمها|السعر ده|سعر ده|سعر العرض)"),
+    re.compile(r"(قارن|الفرق|اقارن|مقارنة|شوف الفرق|فرق بين|ولخص)"),
+    re.compile(r"\b(this|that|these|those|the second|the first|the other|another|cheaper|more expensive|compare|the previous|the ones|them|it)\b", re.IGNORECASE),
+    re.compile(r"\b(bkaam|bkam|bkamh|tany|tanya|tani|dah|deh|doh|elly fat|awel|taneya)\b", re.IGNORECASE),
+]
+
+_SELF_CONTAINED_EXCEPTION_RES = [
+    # "لحد تاني" = "to someone else" (gift-card question) -- NOT "other offer".
+    re.compile(r"(لحد تاني|لشخص تاني|حد تاني|لواحد تاني|لحد غير|بتبعت لحد|بترسل لحد|الحد تاني)"),
+]
+
+
+def _offers_likely_referenced(query: str) -> bool:
+    """True when `query` points back at offers shown earlier in the session.
+    Self-contained questions (no such pointer) must be left to the fresh
+    routes -- the anchored layer would otherwise hijack FAQ/driver queries
+    the moment real session memory is available."""
+    q = (query or "").strip()
+    if not q:
+        return False
+    if any(rx.search(q) for rx in _SELF_CONTAINED_EXCEPTION_RES):
+        return False
+    return any(rx.search(q) for rx in _OFFER_REFERENCE_RES)
 
 
 def _mentioned_merchants(query: str, merchants: list) -> list:
@@ -1075,13 +1196,16 @@ def _mentioned_merchants(query: str, merchants: list) -> list:
         if len(m_clean) < 3:
             continue
         m_lower = m_clean.lower()
-        pattern = rf"(?:\b|^){re.escape(m_lower)}(?:\b|$)"
+        # The optional (?:و)? handles the Arabic connector directly glued to
+        # the name ("قارن بين KFC وPizza Hut"): the و is a word char, so a
+        # plain \b boundary already fails right before "Pizza".
+        pattern = rf"(?:\b|^)(?:و)?{re.escape(m_lower)}(?:\b|$)"
         if re.search(pattern, q):
             found.append(m_clean)
 
     # Also check for merchant aliases (handles "KFC" in Arabic queries)
     for alias, canonical in alias_map.items():
-        pattern = rf"(?:\b|^){re.escape(alias)}(?:\b|$)"
+        pattern = rf"(?:\b|^)(?:و)?{re.escape(alias)}(?:\b|$)"
         if re.search(pattern, q):
             # Add the canonical name if not already present
             if canonical not in found:
@@ -1613,8 +1737,24 @@ class RagEngine:
         # re-retrieving from scratch, so slightly different phrasing of the
         # same merchant name doesn't drift onto a different item of theirs.
         mentioned = _mentioned_merchants(query, self._offer_merchants)
+        if not mentioned and self.faceted is not None:
+            # The strict boundary matcher misses partial/nickname mentions
+            # ("كنتاكي" for a merchant stored as "دجاج كنتاكي"). Delegate to
+            # the faceted resolver's substring/alias matching -- it already
+            # answers catalog questions with the same canonical names.
+            mentioned = [m for m in self.faceted.resolve_merchants(query)
+                         if m in self._offer_merchants]
         if mentioned:
-            return [o for o in recent_offers if o["metadata"].get("merchant") in mentioned], "SAME_OFFER"
+            targets = [o for o in recent_offers if o["metadata"].get("merchant") in mentioned]
+            if _looks_like_comparison(query):
+                intent, verdict = "compare", "SAME_OFFER"
+            elif _looks_like_other_offer(query):
+                intent, verdict = "other_offer", "OTHER_OFFER_SAME_SOURCE"
+            else:
+                intent, verdict = "same", "SAME_OFFER"
+            self._store_followup_ctx(query, targets, verdict, intent,
+                                     None, "shown", recent_offers)
+            return targets, verdict
 
         # An ordinal reference ("the first one", "التاني") is itself a
         # follow-up signal, independent of _looks_like_followup_text --
@@ -1630,6 +1770,8 @@ class RagEngine:
                 except IndexError:
                     continue
             if targets:
+                self._store_followup_ctx(query, targets, "SAME_OFFER", "ordinal",
+                                         None, "shown", recent_offers)
                 return targets, "SAME_OFFER"
 
         # NEW: "compare / what's the difference" with no merchant or ordinal
@@ -1640,22 +1782,183 @@ class RagEngine:
         # through with zero anchoring and free-floated onto an unrelated
         # offer instead of comparing the two Degla Camp offers just shown.
         if _looks_like_comparison(query):
-            return recent_offers[:2], "SAME_OFFER"
+            targets = recent_offers[:2]
+            self._store_followup_ctx(query, targets, "SAME_OFFER", "compare",
+                                     None, "shown", recent_offers)
+            return targets, "SAME_OFFER"
 
-        # --- Three-way classifier (rule fast-path + LLM fallback) ---
-        # We ALWAYS classify when there's a recent offer and the query is
-        # short enough to be ambiguous. This replaces the old pattern where
-        # a rule miss meant "treat as fresh" and surfaced unrelated offers.
-        target = recent_offers[0]
-        verdict = self._classify_followup_verdict(query, target)
-
-        if verdict == "NEW_TOPIC":
+        # NEW: deterministic self-contained-question gate. A wh-/driver
+        # question that carries NO cross-reference to the shown offers is a
+        # NEW topic -- FAQ policies, site info, how-tos. The LLM summarizer's
+        # judgment alone is too eager once real session memory is available
+        # (it labels "الكاش باك بيتحلل بعد امتى؟" as an offer follow-up), so
+        # we short-circuit BEFORE the LLM. This also symmetrically stops the
+        # retrieve() pinning path from hijacking such queries. The merchant /
+        # ordinal / comparison fast paths above already ran, so a query that
+        # names a shown merchant or compares shown items still anchors.
+        if not _offers_likely_referenced(query):
+            self._store_followup_ctx(query, [], "NEW_TOPIC", "new_topic",
+                                     None, "catalog", recent_offers)
             return [], "NEW_TOPIC"
 
-        # For SAME_OFFER and OTHER_OFFER_SAME_SOURCE, pin the most-recent
-        # offer so it's available in context (and can be excluded later if
-        # the user wants something DIFFERENT from it).
+        # --- D: structured follow-up summarizer (LLM), rule fallback ---
+        # The rule fast-paths above (merchant / ordinal / comparison) cover
+        # the mechanical cases. For anything else ambiguous and short, the
+        # LLM reads the shown offers + the query ONCE and answers in JSON:
+        # is this a follow-up, WHICH shown offer(s) it points at, and WHAT
+        # the user wants done with them. This replaces the old three-word
+        # classifier for the anchor decision and removes the "decorator
+        # word" routing sets: the intent vocabulary lives in the few-shot
+        # examples of _FOLLOWUP_SUMMARIZE_SYSTEM, not in code lists.
+        if not config.FOLLOWUP_LLM_FALLBACK_ENABLED:
+            target = recent_offers[0]
+            verdict = self._classify_followup_verdict(query, target)
+            intent = "other_offer" if verdict == "OTHER_OFFER_SAME_SOURCE" else "same"
+            self._store_followup_ctx(query, [target], verdict, intent,
+                                     None, "shown", recent_offers)
+            return [target], verdict
+
+        info = self._summarize_followup(query, recent_offers)
+        if info is not None:
+            if not info.get("is_followup"):
+                # The summarizer read the shown offers and the message and
+                # says this is a genuinely NEW topic -- trust it (it is a
+                # superset of the old rule signals) and skip the duplicate
+                # classifier call.
+                self._store_followup_ctx(query, [], "NEW_TOPIC", "new_topic",
+                                         None, "catalog", recent_offers)
+                return [], "NEW_TOPIC"
+            targets = [
+                recent_offers[i] for i in (info.get("targets") or [])
+                if isinstance(i, int) and 0 <= i < len(recent_offers)
+            ]
+            if not targets:
+                targets = [recent_offers[0]]
+            intent = str(info.get("intent") or "same").lower()
+            if intent not in ("compare", "same", "ordinal", "other_offer", "cheaper_than"):
+                intent = "same"
+            verdict = "OTHER_OFFER_SAME_SOURCE" if intent == "other_offer" else "SAME_OFFER"
+            threshold = info.get("price_threshold")
+            scope = str(info.get("scope") or "shown").lower()
+            if scope not in ("shown", "same_merchant", "catalog"):
+                scope = "shown"
+            self._store_followup_ctx(query, targets, verdict, intent,
+                                     threshold, scope, recent_offers)
+            return targets, verdict
+
+        # Summarizer unavailable: the conservative old three-way classifier
+        # still decides, and fails open to the anchor (worst case re-shows
+        # the same merchant, never a random unrelated offer).
+        target = recent_offers[0]
+        verdict = self._classify_followup_verdict(query, target)
+        if verdict == "NEW_TOPIC":
+            self._store_followup_ctx(query, [], "NEW_TOPIC", "new_topic",
+                                     None, "catalog", recent_offers)
+            return [], "NEW_TOPIC"
+        intent = "other_offer" if verdict == "OTHER_OFFER_SAME_SOURCE" else "same"
+        self._store_followup_ctx(query, [target], verdict, intent,
+                                 None, "shown", recent_offers)
         return [target], verdict
+
+    def _store_followup_ctx(self, query: str, targets: list, verdict: str,
+                            intent: str, price_threshold, scope: str,
+                            recent_offers: list):
+        """Caches the follow-up reading so the anchored-answer path (A) and
+        retrieve() (C) reuse the SAME resolution instead of classifying the
+        same query twice (two LLM calls, possibly two different answers)."""
+        self._last_followup_verdict = verdict
+        self._followup_ctx = {
+            "query": query,
+            "recent": list(recent_offers or []),
+            "targets": list(targets or []),
+            "verdict": verdict,
+            "intent": intent,
+            "price_threshold": price_threshold,
+            "scope": scope,
+        }
+
+    def _summarize_followup(self, query: str, recent_offers: list) -> dict | None:
+        """D: one structured LLM call turning (shown offers + latest short
+        message) into {is_followup, targets[], intent, price_threshold,
+        scope}. Returns the parsed JSON dict, or None on any failure so the
+        caller falls back to the rule classifier (which fails open to the
+        anchor)."""
+        if not recent_offers:
+            return None
+        lines = []
+        shown_count = getattr(config, "MAX_OFFERS_PER_SESSION", 4)
+        for i, r in enumerate(recent_offers[:shown_count]):
+            m = r.get("metadata", {})
+            theme = m.get("merchant") or m.get("topic") or m.get("section") or ""
+            title = (m.get("title") or m.get("question") or "")[:80]
+            price = m.get("price")
+            price_txt = f" — {price} EGP" if isinstance(price, (int, float)) else ""
+            lines.append(f"{i + 1}. {theme} | {title}{price_txt}")
+        shown_block = "\n".join(lines) or "(nothing shown)"
+        user_text = (
+            "Offers just shown to the user (1-based numbers):\n"
+            f"{shown_block}\n\n"
+            f'The user just wrote: "{query}"\n\n'
+            "Return the JSON resolution."
+        )
+        try:
+            resp = self.client.chat(
+                model=self.llm_model,
+                messages=[
+                    {"role": "system", "content": _FOLLOWUP_SUMMARIZE_SYSTEM},
+                    {"role": "user", "content": user_text},
+                ],
+                stream=False,
+                options={"num_predict": 200, "temperature": 0.0},
+            )
+        except Exception:
+            log.warning(
+                "Follow-up summarizer failed for query %r; "
+                "falling back to rule classifier.", query,
+                exc_info=True,
+            )
+            return None
+        raw = ((resp.get("message", {}) or {}).get("content") or "").strip()
+        import json
+        first, last = raw.find("{"), raw.rfind("}")
+        if first == -1 or last == -1 or last <= first:
+            log.warning("Follow-up summarizer returned non-JSON: %r", raw[:120])
+            return None
+        try:
+            info = json.loads(raw[first:last + 1])
+        except json.JSONDecodeError:
+            log.warning("Follow-up summarizer returned malformed JSON: %r", raw[:120])
+            return None
+        if not isinstance(info, dict):
+            return None
+        numeric = []
+        for i in (info.get("targets") or []):
+            try:
+                numeric.append(int(i))
+            except (TypeError, ValueError):
+                continue
+        info["targets"] = numeric
+        info["is_followup"] = bool(info.get("is_followup"))
+        info["price_threshold"] = self._robust_number(info.get("price_threshold"))
+        return info
+
+    @staticmethod
+    def _robust_number(value):
+        """Coerces a number-or-string to int/float, else None."""
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            s = value.strip().replace(",", "").replace("EGP", "").replace("جنيه", "").strip()
+            try:
+                return int(s)
+            except ValueError:
+                try:
+                    return float(s)
+                except ValueError:
+                    return None
+        return None
 
     def _classify_followup_verdict(self, query: str, anchor: dict) -> str:
         """Three-way LLM classifier: given `anchor` (the most-recently-shown
@@ -1921,7 +2224,16 @@ class RagEngine:
     def retrieve(self, query: str, top_k: int = None, history: list = None,
                  recent_offers: list = None, normalized_query: str = None) -> list:
         top_k = top_k or config.TOP_K
-        followup_targets, verdict = self._resolve_followup_targets(query, recent_offers)
+        # Reuse the follow-up resolution this turn already produced (the
+        # anchored-answer path runs _resolve_followup_targets first, so
+        # calling it again here would mean a second LLM classification for
+        # the same query). Only reused while it belongs to THIS query.
+        followup_ctx = getattr(self, "_followup_ctx", None)
+        if followup_ctx and followup_ctx.get("query") == query:
+            followup_targets, verdict = followup_ctx["targets"], followup_ctx["verdict"]
+        else:
+            self._followup_ctx = None
+            followup_targets, verdict = self._resolve_followup_targets(query, recent_offers)
         retrieval_query = self._build_retrieval_query(query, history, followup_targets, verdict)
 
         # NEW: Franco/Arabizi queries need the PILLAR 4 normalized (bilingual)
@@ -2226,6 +2538,15 @@ class RagEngine:
             selected.sort(key=lambda r: (r.get("_pinned", False), r["combined_score"]), reverse=True)
             selected = selected[: max(top_k, len(followup_targets))]
 
+            # C: for same-offer / compare / ordinal follow-ups the anchor
+            # IS the answer -- drop the organic candidates entirely so a
+            # "compare the two offers I saw" can never include a third
+            # unrelated one even when this anchor path is the fallback.
+            if verdict == "SAME_OFFER":
+                intent = (followup_ctx or {}).get("intent") if followup_ctx else None
+                if intent in ("compare", "same", "ordinal"):
+                    selected = selected[: max(len(followup_targets), 1)]
+
         return selected
 
  
@@ -2503,6 +2824,7 @@ class RagEngine:
             entries = method(reply_lang, merchant=scope)
             if not entries:
                 return None
+            self._last_retrieved = entries
             fact = _format_offer_card(entries[0]["metadata"], reply_lang)
             if not fact:
                 return None
@@ -2543,6 +2865,7 @@ class RagEngine:
             fact = _format_offer_card(pick["metadata"], reply_lang)
             if not fact:
                 return None
+            self._last_retrieved = [pick]
 
         intro = {
             "min": {"en": "Here's the cheapest one available right now:", "ar": "ده أرخص عرض متاح دلوقتي:"},
@@ -2550,6 +2873,123 @@ class RagEngine:
             "max_discount": {"en": "Here's the offer with the highest discount right now:", "ar": "ده العرض اللي عليه أعلى خصم دلوقتي:"},
         }[direction]
         return f"{intro[reply_lang]}\n{fact}"
+
+    def _followup_anchored_answer(self, query: str, recent_offers: list,
+                                  reply_lang: str) -> str | None:
+        """A: deterministic anchored follow-up answers.
+
+        For a follow-up that points back at offers already shown this session
+        (قارن بين العرضين / التاني / فيه أرخص من كده / عايز عروض تانية من
+        نفس المحل) the answer pool is built EXCLUSIVELY from `recent_offers`
+        -- the offers the user actually saw -- with zero re-retrieval and
+        zero embeddings. This is what guarantees the bot never answers "compare
+        the two offers" with fourteen unrelated ones again.
+
+        A query that names a real merchant/product/category is self-contained
+        (fresh topic) and returns None without even classifying -- fresh
+        superlative/faceted/retrieval paths handle it. Returns the final
+        answer string, or None to fall through to normal handling."""
+        if self.faceted is not None:
+            fresh = self.faceted.resolve_merchants(query)
+            if not fresh:
+                p = self.faceted.resolve_product(query)
+                if p:
+                    fresh = [p]
+            if not fresh:
+                c = self.faceted.resolve_category(query)
+                if c:
+                    fresh = [c]
+            if fresh:
+                return None
+
+        ctx = getattr(self, "_followup_ctx", None)
+        if ctx is None or ctx.get("query") != query:
+            targets, verdict = self._resolve_followup_targets(query, recent_offers)
+            if not targets or verdict == "NEW_TOPIC":
+                return None
+            ctx = self._followup_ctx
+        targets = ctx.get("targets") or []
+        if not targets:
+            return None
+        metas = [t.get("metadata", {}) for t in targets if t.get("metadata")]
+        if not metas:
+            return None
+        intent = ctx.get("intent") or "same"
+
+        if intent == "compare":
+            if len(metas) < 2:
+                return None
+            self._last_retrieved = targets
+            return self._get_comparison_answer(targets, reply_lang)
+
+        if intent in ("same", "ordinal"):
+            self._last_retrieved = [{"metadata": metas[0]}]
+            return _format_offer_card(metas[0], reply_lang) or None
+
+        anchor_merchant = metas[0].get("merchant") or ""
+        shown_ids = {m.get("id") for m in metas}
+
+        if intent == "other_offer":
+            if not anchor_merchant or self.faceted is None:
+                return None
+            entries = self.faceted.offers_for_merchant(
+                anchor_merchant, reply_lang, exclude_ids=shown_ids)
+            cards = [_format_offer_card(e["metadata"], reply_lang)
+                     for e in entries]
+            cards = [c for c in cards if c]
+            if not cards:
+                return None
+            self._last_retrieved = entries
+            intro = {
+                "ar": "كمان فيه عروض تانية من نفس المحل:",
+                "en": "More offers from the same merchant:",
+            }[reply_lang]
+            return f"{intro}\n\n" + "\n\n".join(cards)
+
+        if intent == "cheaper_than":
+            scope = ctx.get("scope") or "shown"
+            if scope == "catalog":
+                return None  # catalog-wide cheapest is the superlative path's job
+            pool = [t.get("metadata", {}) for t in (ctx.get("recent") or [])
+                    if t.get("metadata")]
+            if scope == "same_merchant" and anchor_merchant and self.faceted is not None:
+                entries = self.faceted.offers_for_merchant(
+                    anchor_merchant, reply_lang, exclude_ids=shown_ids)
+                pool += [e["metadata"] for e in entries]
+            priced = [(m.get("price"), m) for m in pool
+                      if isinstance(m.get("price"), (int, float))]
+            if not priced:
+                return None
+            # "أرخص من كده" = cheaper THAN the referenced offer(s). When the
+            # user pointed at ONE specific shown offer, cap strictly below
+            # its price; when they pointed at the whole shown list ("فيه
+            # أرخص من كده" after seeing a few), answer with the cheapest of
+            # the shown pool instead of filtering everything out.
+            if len(targets) < len(ctx.get("recent") or []):
+                ref = min(
+                    (p for p, m in priced if m.get("id") in shown_ids),
+                    default=None,
+                )
+                if ref is not None:
+                    priced = [x for x in priced if x[0] < ref]
+            th = ctx.get("price_threshold")
+            explicit_pr = extract_price_range(query)
+            if explicit_pr is not None:
+                hi = explicit_pr[1]
+                if isinstance(hi, (int, float)) and hi != float("inf"):
+                    # An explicit number in the user's wording ("فيه أرخص من
+                    # كده تحت 200 جنيه") outranks the LLM's guess at the cap.
+                    th = hi
+            if isinstance(th, (int, float)):
+                priced = [x for x in priced if x[0] <= th]
+            if not priced:
+                return None
+            best = min(priced, key=lambda p: p[0])[1]
+            card = _format_offer_card(best, reply_lang)
+            self._last_retrieved = [{"metadata": best}]
+            return card or None
+
+        return None
 
     def _get_comparison_answer(self, retrieved: list, reply_lang: str):
         """Handles comparison queries by formatting multiple offers in a clear way."""
@@ -2668,7 +3108,9 @@ class RagEngine:
         # a price range parsed ("..تحت 100 جنيه" is not a merchant mention --
         # without this guard "تحت 100 جنيه" would be flagged as an unknown
         # merchant and hijack the query into a weird negative).
-        if not merchants and not pr and (has_off or (unknown_candidate and re.search(r"[A-Z]", unknown_candidate))):
+        anaphoric_price = _same_offer_price_followup(q)
+        if not merchants and not pr and not anaphoric_price and (
+                has_off or (unknown_candidate and re.search(r"[A-Z]", unknown_candidate))):
             unknown = self.faceted.unknown_merchant_mention(q) or unknown_candidate
             if unknown:
                 # unknown_merchant_mention already guaranteed this token is NOT
@@ -2705,10 +3147,12 @@ class RagEngine:
             # Multi-merchant (2+) -> grouped deterministic cards, no LLM intro
             if len(merchants) >= 2:
                 parts = []
+                shown_entries = []
                 for m in merchants:
                     entries = _merchant_block(m)
                     if not entries:
                         continue
+                    shown_entries.extend(entries)
                     cards = [_format_offer_card(e["metadata"], reply_lang) for e in entries]
                     cards = [c for c in cards if c]
                     if not cards:
@@ -2716,6 +3160,7 @@ class RagEngine:
                     header = self.faceted.display_name(m, reply_lang)
                     parts.append(f"**{header}:**\n\n" + "\n\n".join(cards))
                 if parts:
+                    self._last_retrieved = shown_entries
                     header_text = (
                         {"en": "Here are the offers across those merchants:",
                          "ar": "إليك العروض لكل متجر:"}[reply_lang]
@@ -2774,6 +3219,7 @@ class RagEngine:
             cards = [c for c in cards if c]
             if not cards:
                 return None
+            self._last_retrieved = entries
             intro = self._llm_offer_intro(q, history or [], reply_lang, cards[:3])
             if not intro:
                 intro = (
@@ -2796,6 +3242,7 @@ class RagEngine:
             cards = [c for c in cards if c]
             if not cards:
                 return None
+            self._last_retrieved = entries
             intro = self._llm_offer_intro(q, history or [], reply_lang, cards[:3])
             if not intro:
                 intro = (
@@ -2815,6 +3262,7 @@ class RagEngine:
             cards = [c for c in cards if c]
             if not cards:
                 return None
+            self._last_retrieved = entries
             intro = self._llm_offer_intro(q, history or [], reply_lang, cards[:3])
             if not intro:
                 intro = (
@@ -2828,6 +3276,9 @@ class RagEngine:
         return None
 
     def answer_stream(self, query, history=None, recent_offers=None, user_id=None):
+        # NEW: reset the cached follow-up reading for this turn -- it is
+        # recomputed per query (see _store_followup_ctx / _followup_ctx).
+        self._followup_ctx = None
         # CHANGED: history is now passed through -- retrieve() uses it to
         # anchor follow-up queries ("explain this offer") on the previous
         # turn's topic instead of retrieving on the follow-up's own,
@@ -2981,6 +3432,25 @@ class RagEngine:
         if oos:
             yield oos
             return
+
+        # NEW: A -- anchored follow-up answers. "قارن بين العرضين", "التاني",
+        # "فيه أرخص من كده تحت 500 جنيه", "عايز عروض تانية من نفس المحل" all
+        # refer back to offers ALREADY SHOWN this session (memory), so the
+        # answer pool comes from those offers only -- never from a fresh
+        # retrieval that can surface unrelated brands. Runs before every
+        # retrieval/LLM path so the anchor wins over catalog-wide guesses.
+        # Self-contained queries (naming a real merchant/product/category)
+        # return None here and continue below. Actively gated so it cannot
+        # hijack a query when session memory did not make it into this call.
+        if (
+            recent_offers
+            and getattr(config, "ANCHORED_FOLLOWUP_ENABLED", True)
+        ):
+            anchored_answer = self._followup_anchored_answer(
+                query, recent_offers, reply_lang=_reply_lang(query))
+            if anchored_answer is not None:
+                yield anchored_answer
+                return
 
         # NEW: superlative price queries ("cheapest", "most expensive")
         # need an exhaustive sort over the full catalog's price metadata --
