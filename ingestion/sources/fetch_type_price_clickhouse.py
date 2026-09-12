@@ -136,6 +136,15 @@ def fetch_active_tiers() -> dict:
             "price": _clean(r.get("type_price_price")),
             "price_before_discount": _clean(r.get("type_price_price_before_discount")),
             "discount": _clean(r.get("type_price_discount")),
+            # NEW: keep the tier-level start/expiry dates. Previously the
+            # snapshot dropped these, so build_index.py only ever saw the
+            # offer-level dim_offers.offer_expire_date -- but that summary
+            # field can lag the tier dates the site actually shows (e.g.
+            # offer 8291: dim_offers says 2026-08-31 while the purchasable
+            # tiers run until 2026-09-30). Consumers now compute the offer's
+            # effective expiry as the later of the two.
+            "start_date": _clean(r.get("start_date")),
+            "expire_date": _clean(r.get("expire_date")),
         })
     return by_offer
 

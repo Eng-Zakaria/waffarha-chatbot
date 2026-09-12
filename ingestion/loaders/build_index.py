@@ -191,6 +191,56 @@ def _format_tier_line(tier: dict, lang: str) -> str:
     return line
 
 
+def _tier_meta(tiers: list) -> dict:
+    """Aggregates a dim_type_price tier list into offer-level metadata:
+    min/max purchasable price, tier count, and the LATEST tier expiry date.
+    Empty dict when no usable tiers are present. min/max are floats; the
+    expiry is a "YYYY-MM-DD" string (ISO dates compare correctly with <, so
+    string max() is a safe 'latest' pick).
+    """
+    if not tiers:
+        return {}
+    prices = []
+    expiries = []
+    for t in tiers:
+        p = t.get("price")
+        if p is not None and p != "" and str(p).strip() != "":
+            try:
+                pf = float(p)
+            except (TypeError, ValueError):
+                pf = None
+            if pf is not None and pf > 0:
+                prices.append(pf)
+        e = t.get("expire_date")
+        if e:
+            s = re.split(r"[ T]", str(e))[0].strip()
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+                expiries.append(s)
+    out = {"n_tiers": len(tiers)}
+    if prices:
+        out["min_price"] = min(prices)
+        out["max_price"] = max(prices)
+    if expiries:
+        out["tier_expiry"] = max(expiries)
+    return out
+
+
+def _effective_expiry(summary: str, tier_meta: dict) -> str:
+    """Offer-level 'valid until' date: the later of the summary
+    dim_offers.offer_expire_date and the latest tier expiry. The site shows
+    the tier-level date when tiers exist (offer 8291: summary 2026-08-31 vs
+    tiers valid until 2026-09-30), so the summary alone makes the bot answer
+    with a stale cutoff. Taking the later date is also the lenient choice for
+    the expired-offer filter -- never drops an offer a tier is still selling.
+    Returns the input summary unchanged when there's no tier expiry."""
+    tier = (tier_meta or {}).get("tier_expiry")
+    if not tier:
+        return summary
+    if not summary:
+        return tier
+    return max(str(summary)[:10], str(tier)[:10])
+
+
 def load_offers() -> list:
     path = os.path.join(config.INDEX_DIR, "offers_raw.json")
     if not os.path.exists(path):
@@ -215,35 +265,25 @@ def load_offers() -> list:
             skipped_inactive += 1
             continue
 
-        # Check if offer is expired
-        expiry = pick_field(offer, fc["expiry"])
-        if expiry and not config.INCLUDE_EXPIRED_OFFERS:
-            try:
-                expiry_date = datetime.strptime(str(expiry).split(" ")[0], "%Y-%m-%d").date()
-                if expiry_date < datetime.now().date():
-                    skipped_inactive += 1
-                    continue
-            except (ValueError, TypeError):
-                # If expiry date is malformed, treat as active
-                pass
+        offer_id = pick_field(offer, fc["id"])
+        lang = offer.get("_lang", "en")
 
-        title = pick_field(offer, fc["title"])
-        if not title:
-            skipped_no_title += 1
-            continue
+        # NEW: resolve the dim_type_price tiers BEFORE expiry filtering. The
+        # offer-level summary date (dim_offers.offer_expire_date) can lag the
+        # dates the purchasable tiers actually run until (offer 8291: summary
+        # 2026-08-31 vs tiers valid until 2026-09-30 -- the site shows the
+        # tier date), so the expired-offer filter AND the displayed "Valid
+        # until" must share ONE effective date or the bot answers with a
+        # stale cutoff.
+        tiers = type_prices.get(str(offer_id), [])
+        tier_meta = _tier_meta(tiers)
 
         expiry = pick_field(offer, fc["expiry"])
-        # NEW: raw expiry is "YYYY-MM-DD HH:MM:SS" (confirmed consistent across
-        # all 1664 records) but the time-of-day is never meaningful here --
-        # every offer expires at midnight or some arbitrary batch-job time, not
-        # a real cutoff hour a user would care about. Truncated once here, at
-        # the metadata source, so the shorter date flows consistently into the
-        # embedded text, the fact checklist, and the direct-answer card
-        # without needing to touch rag_engine.py at all.
         if expiry:
             expiry = re.split(r"[ T]", str(expiry))[0].strip()
+        expiry = _effective_expiry(expiry, tier_meta)
 
-        # Check if offer has expired
+        # Check if offer has expired (against the effective date above)
         if expiry and not config.INCLUDE_EXPIRED_OFFERS:
             try:
                 from datetime import datetime
@@ -255,8 +295,11 @@ def load_offers() -> list:
             except ValueError:
                 # If date parsing fails, continue processing the offer
                 pass
-        offer_id = pick_field(offer, fc["id"])
-        lang = offer.get("_lang", "en")
+
+        title = pick_field(offer, fc["title"])
+        if not title:
+            skipped_no_title += 1
+            continue
 
         partners = offer.get("partners")
         merchant = partners.get("part_name", "") if isinstance(partners, dict) else ""
@@ -326,7 +369,6 @@ def load_offers() -> list:
         # only ~83% of offers with ANY dim_type_price rows, and far fewer
         # than that of all offers, actually have multiple tiers) render
         # exactly as before.
-        tiers = type_prices.get(str(offer_id), [])
         if tiers:
             tier_lines = [_format_tier_line(t, lang) for t in tiers]
             tier_lines = [t for t in tier_lines if t]
@@ -364,6 +406,14 @@ def load_offers() -> list:
                 # NEW -- offer fine-print/terms from dim_offers
                 "offer_fineprint_en": offer_fineprint_en, "offer_fineprint_ar": offer_fineprint_ar,
                 "waffarha_advice_en": waffarha_advice_en, "waffarha_advice_ar": waffarha_advice_ar,
+                # NEW -- aggregated dim_type_price tiers (see _tier_meta above).
+                # Lets the answer layer render a multi-tier offer like the site
+                # does ("from 95 to 495 EGP, 18 options") instead of one summary
+                # price. `tiers` is the raw snapshot list so the card formatter
+                # has both language names + per-tier expiry.
+                "tiers": tiers, "n_tiers": tier_meta.get("n_tiers", 0),
+                "min_price": tier_meta.get("min_price"), "max_price": tier_meta.get("max_price"),
+                "tier_expiry": tier_meta.get("tier_expiry"),
             },
         })
 

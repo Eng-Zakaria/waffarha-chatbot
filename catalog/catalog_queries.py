@@ -445,7 +445,7 @@ class CatalogQueryService:
             self._client = config.get_clickhouse_client()
         return self._client
 
-    def _rows(self, sql: str, params: dict) -> list[dict]:
+    def _rows_raw(self, sql: str, params: dict) -> list[dict]:
         rows = []
         for r in self._get_client().query(sql, parameters=params).named_results():
             row_dict = dict(r)
@@ -454,6 +454,69 @@ class CatalogQueryService:
                 if hasattr(value, 'isoformat'):
                     row_dict[key] = value.isoformat()
             rows.append(row_dict)
+        return rows
+
+    def _attach_tiers(self, rows: list[dict]) -> None:
+        """Enriches offer rows with their currently-purchasable dim_type_price
+        tiers (status=1), aggregated into min/max price + count + latest expiry.
+        Rows without an offer_id (e.g. the active-merchants query) are skipped.
+
+        The site renders every offer page from exactly this table -- offer 8291
+        lists 18 meal coupons while dim_offers.actual_value only holds the
+        cheapest summary price. Attaching the tiers here keeps live answers on
+        par with the site instead of reporting one number."""
+        ids = sorted({r.get("offer_id") for r in rows if r.get("offer_id") is not None})
+        if not ids:
+            return
+        tiers_by_offer = {}
+        # clickhouse_connect parameter binding: one placeholder per id.
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            placeholders = ", ".join(f"%(id_{i})s" for i in range(len(chunk)))
+            params = {f"id_{i}": oid for i, oid in enumerate(chunk)}
+            sql = (
+                "SELECT offer_id, type_price_name, type_price_name_ar, "
+                "type_price_price, type_price_price_before_discount, type_price_discount, "
+                "start_date, expire_date "
+                "FROM main.dim_type_price "
+                f"WHERE status = 1 AND offer_id IN ({placeholders})"
+            )
+            for r in self._rows_raw(sql, params):
+                tiers_by_offer.setdefault(r["offer_id"], []).append(r)
+        for row in rows:
+            oid = row.get("offer_id")
+            if oid is None:
+                continue
+            ts = tiers_by_offer.get(oid)
+            if not ts:
+                continue
+            row["tiers"] = ts
+            prices = []
+            expiries = []
+            for t in ts:
+                p = t.get("type_price_price")
+                if p is not None:
+                    try:
+                        pf = float(p)
+                    except (TypeError, ValueError):
+                        pf = None
+                    if pf is not None and pf > 0:
+                        prices.append(pf)
+                e = t.get("expire_date")
+                if e:
+                    s = str(e)[:10]
+                    if len(s) == 10 and s[4] == "-":
+                        expiries.append(s)
+            row["n_tiers"] = len(ts)
+            if prices:
+                row["min_price"] = min(prices)
+                row["max_price"] = max(prices)
+            if expiries:
+                row["tier_expiry"] = max(expiries)
+
+    def _rows(self, sql: str, params: dict) -> list[dict]:
+        rows = self._rows_raw(sql, params)
+        self._attach_tiers(rows)
         return rows
 
     def _get_active_merchants(self) -> set:
@@ -608,22 +671,85 @@ class CatalogQueryService:
         title = self._title(row, lang)
         currency = self._currency(lang)
 
+        def _num(v):
+            s = str(v)
+            return s.replace(".0", "") if s.endswith(".0") else s
+
         price = row.get("actual_value")
         old_price = row.get("offer_value")
         discount = row.get("offer_discount")
         expiry = row.get("offer_expire_date")
 
+        tiers = row.get("tiers") or []
+        n_tiers = row.get("n_tiers") or 0
+        min_price = row.get("min_price")
+        max_price = row.get("max_price")
+        # Multi-tier offers render a price RANGE + options list (like the site
+        # does) instead of the single summary dim_offers.actual_value.
+        has_range = n_tiers > 1 and min_price is not None and max_price is not None \
+            and float(min_price) != float(max_price)
+
+        # Effective expiry = the later of the summary date and the latest tier
+        # date (the site shows the tier date -- offer 8291: summary 2026-08-31
+        # vs tiers valid until 2026-09-30).
+        eff_expiry = expiry
+        te = row.get("tier_expiry")
+        if te and (not eff_expiry or str(te)[:10] > str(eff_expiry)[:10]):
+            eff_expiry = te
+
         parts = [f"- {title}"]
 
-        if price is not None:
-            price_str = f"{price} {currency}"
-            if old_price is not None and old_price != price:
-                price_str += f" (was {old_price} {currency})"
-            if discount is not None and discount not in (0, "0", "0.0"):
-                price_str += f", {discount}% off"
-            parts.append(price_str)
+        if has_range:
+            if lang == "ar":
+                parts.append(f"من {_num(min_price)} حتى {_num(max_price)} {currency} ({n_tiers} خيارات)")
+            else:
+                parts.append(f"from {_num(min_price)} to {_num(max_price)} {currency} ({n_tiers} options)")
+            shown = 0
+            for t in tiers:
+                tname = (t.get("type_price_name_ar") if lang == "ar" else t.get("type_price_name")) \
+                    or t.get("type_price_name") or t.get("type_price_name_ar")
+                tp = t.get("type_price_price")
+                if not tname or tp in (None, ""):
+                    continue
+                tline = f"- {tname}: {_num(tp)} {currency}"
+                tbefore = t.get("type_price_price_before_discount")
+                tdiscount = t.get("type_price_discount")
+                if lang == "ar":
+                    extra = []
+                    if tbefore not in (None, "", 0, "0") and str(tbefore) != str(tp):
+                        extra.append(f"كانت {_num(tbefore)} {currency}")
+                    if tdiscount not in (None, "", 0, "0"):
+                        extra.append(f"خصم {_num(tdiscount)}%")
+                    if extra:
+                        tline += " (" + "، ".join(extra) + ")"
+                else:
+                    extra = []
+                    if tbefore not in (None, "", 0, "0") and str(tbefore) != str(tp):
+                        extra.append(f"was {_num(tbefore)} {currency}")
+                    if tdiscount not in (None, "", 0, "0"):
+                        extra.append(f"{_num(tdiscount)}% off")
+                    if extra:
+                        tline += " (" + ", ".join(extra) + ")"
+                parts.append(tline)
+                shown += 1
+                if shown >= 6:
+                    break
+            if n_tiers > shown:
+                rest = n_tiers - shown
+                if lang == "ar":
+                    parts.append(f"... و{rest} خيارات أخرى -- شوفهم كاملين في رابط العرض")
+                else:
+                    parts.append(f"... and {rest} more options -- see them all via the offer link")
+        else:
+            if price is not None:
+                price_str = f"{_num(price)} {currency}"
+                if old_price is not None and old_price != price:
+                    price_str += f" (was {_num(old_price)} {currency})"
+                if discount is not None and discount not in (0, "0", "0.0"):
+                    price_str += f", {discount}% off"
+                parts.append(price_str)
 
-        expiry_str = self._short_date(expiry)
+        expiry_str = self._short_date(eff_expiry)
         if expiry_str:
             parts.append(f"valid until {expiry_str}" if lang == "en" else f"صالح حتى {expiry_str}")
 
@@ -651,7 +777,12 @@ class CatalogQueryService:
             if loc_parts:
                 parts.append(" | ".join(loc_parts))
 
-        return " — ".join(parts)
+        if has_range and row.get("offer_id") is not None:
+            url_lang = "ar" if lang == "ar" else "en"
+            label = "تحقق من كل الخيارات" if lang == "ar" else "See all options"
+            parts.append(f"📍 🔗 {label}: https://waffarha.com/{url_lang}/o-{row.get('offer_id')}")
+
+        return ("\n".join(parts) if has_range else " — ".join(parts))
 
     # -- Answer Builders -----------------------------------------------------
 

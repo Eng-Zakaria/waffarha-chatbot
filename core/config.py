@@ -203,6 +203,7 @@ MERCHANT_ALIASES = {
     "mcdonalds": "McDonald's",
     "mcdonald's": "McDonald's",
     "mcd": "McDonald's",
+    "mc": "McDonald's",
     # English full names
 
     "asian wok": "Asian Wok",

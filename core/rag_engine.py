@@ -48,6 +48,7 @@ Rules:
     بدل ما كان <old_price> جنيه 🔥 خصم <discount>%
     📍 🔗 رابط العرض: <url>
   Use "المتجر" / "الفئة" / "السعر" / "بدل ما كان" / "خصم" above for Arabic replies; use "Merchant:" / "Category:" / "Price:" / "Was" / "discount" / "Offer link:" for English replies. Include the URL link only if it's in the CONTEXT or REQUIRED FACTS (do not invent one).
+- A card may show a price RANGE ("من 95 حتى 495 جنيه (18 خيارات)") plus a list of option lines starting with "- <option>: <price>" when the offer has multiple purchasable pricing options. Copy those range and option lines exactly as shown -- never collapse them into a single number.
 - When the user asks about one merchant (e.g. "كشري") and multiple offers from that merchant exist in CONTEXT, return all of them as separate cards. When they ask about multiple merchants (e.g. "KFC و Pizza Hut"), return the offers for EACH merchant.
 - Keep each offer card on its own lines and separate cards with a blank line. Do not add extra commentary between cards beyond a short intro line.
 - If a REQUIRED FACTS block is given below CONTEXT, it lists the exact offer facts (price, discount, expiry, etc.) that MUST appear in your answer, already formatted. Copy ONLY the fact values into your own sentence exactly as given -- do not recompute, reword the numbers, or drop any line from it. Do NOT copy the block's own header/label (e.g. "REQUIRED FACTS", "MUST STATE", "لازم تذكر") -- that label is for you, not for the user, and must never appear in your reply.
@@ -339,6 +340,10 @@ _FRANCO_INTENT_MARKERS = {
     "b2a", "bada", "mmkn", "mumkin", "kamen", "awii", "awi", "awy",
     "bstab3l", "bstakhdem", "ashtery", "kohen", "koupon", "a7awel", "ahawel",
     "i3mel", "la2", "zyada", "3er", "3akher",
+    "3ndkom", "3ndkum", "3nd", "3nkom", "3ndoha", "3andy", "3ndy", "3andak",
+    "eh", "eih", "a7san", "ahsan", "a7sn", "shoo", "sho", "delwa'ti", "delwa2ti",
+    "delwaati", "delwati", "bkaam", "5asm", "hasm", "khssm", "5sm",
+    "akbar", "akbr", "gamed", "3rood", "3rd", "bttayer", "byusl",
 }
 
 
@@ -427,6 +432,12 @@ _FAQ_TOPIC_RULES = [
     ("refund_bank", r"(?:تقسيط بنكى|تقسيط بنكي|bank installment)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:تقسيط بنكى|تقسيط بنكي|bank installment)", "payment_50_refund", True),
     ("refund_etisalat", r"(?:اتصالات|etisalat|e& money|اى اند ماني)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:اتصالات|etisalat|e& money|اى اند ماني)", "payment_66_refund", True),
     ("refund_wallet", r"(?:المحافظ الاخرى|المحافظ الأخرى|other wallets)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:المحافظ الاخرى|المحافظ الأخرى|other wallets)", "payment_48_refund", True),
+    # ---- generic refund-POLICY question ("ما هي سياسة الاسترجاع؟" / "refund policy")
+    # -> the comprehensive faq_refund_policy doc. Placed AFTER every refund_<brand>
+    # rule so "إيه سياسة الاسترجاع لو دفعت بـ ڤودافون كاش؟" still lands on the
+    # brand-specific doc (payment_109_refund), but BEFORE refund_coupon so a
+    # policy question is never short-circuited to the mechanics-only faq_8.
+    ("refund_policy", r"(سياسة\s*الاسترجاع|سياسة\s*الاسترداد|سياسة\s*الارجاع|سياسة\s*الإرجاع|refund\s*polic\w*|returns\s*polic\w*|شروط\s*الاسترجاع|مصاريف\s*الاسترجاع|بيتحسب\s*الاسترجاع|بتحسب\s*الاسترجاع|الاسترجاع\s*بكامل|الاسترجاع\s*على\s*دفعة|بنرجع\s*المبلغ|استرجاع\s*الفلوس\s*بياخد)", "faq_refund_policy", False),
     ("refund_coupon", r"(?:استرجاع|استرداد|رجعت|refund|يرجع|الرجوع|ارجع|astarreg|astarj3|astarreg3)\b[^؟?]{0,60}?(?:كوبون|coupon|فلوس|المبلغ|قيمة العرض|بتاعه|koupon|kohen|flous)\b", "faq_8", True),
     ("refund_any", r"\brefund\b|استرجاع|استرداد|رجعت|astarreg|astarj3", "faq_8", True),
     # ---- coupon usage / how to use after purchase ----
@@ -464,6 +475,15 @@ def _route_faq_topic(query: str, normalized_query: str) -> tuple:
     _meaning_cue = re.compile(r"يعني|يعنى|معنى|معناها|ماذا|ماهو|what does|what is|دلوقتي|ايه|eh|means|state|status|حالة|بيقول|قولى|وضح|مكتوب|مكتوبة", re.IGNORECASE)
     for rule_name, pattern, faq_id, bilingual in _FAQ_TOPIC_RULES:
         if rule_name.startswith("status_") and not _meaning_cue.search(query + " " + (normalized_query or "")):
+            continue
+        # NEW: a POLICY question ("what is the refund policy?", "سياسة
+        # الاسترجاع") must never be absorbed by a status-meaning rule --
+        # status_6's bare \brefund\b (plus a "what is" meaning cue) used to
+        # hijack exactly that and answer with the "مرتجع" status explanation
+        # instead of the actual refund policy.
+        if rule_name.startswith("status_") and re.search(
+            r"polic|سياسة|الارجاع|الاسترجاع", query + " " + (normalized_query or ""), re.IGNORECASE
+        ):
             continue
         if re.search(pattern, blob, re.IGNORECASE):
             return (rule_name, faq_id, bilingual)
@@ -912,10 +932,88 @@ def _offer_url(meta: dict, reply_lang: str = None) -> str:
     return f"https://waffarha.com/{lang}/o-{offer_id}"
 
 
+# NEW: how many per-tier option lines a card renders before collapsing the
+# rest into a count ("... و3 خيارات أخرى"). Kept small -- a chat reply with
+# 18 option lines (offer 8291) is unusable; the full count + offer link
+# covers the rest.
+_MAX_TIER_OPTIONS_IN_CARD = 6
+
+
+# NEW: renders one dim_type_price tier as a compact option line for the card
+# (same shape build_index.py embeds in the doc text). Falls back to the other
+# language's name if this one is missing, matching _format_tier_line's
+# defensive pattern in build_index.py.
+def _format_tier_option(tier: dict, lang: str) -> str:
+    name = (tier.get(f"name_{lang}") or tier.get("name_en") or tier.get("name_ar") or "").strip()
+    price = tier.get("price")
+    if not name or price in (None, ""):
+        return ""
+
+    def fmt(v):
+        v = str(v)
+        return v.replace(".0", "") if v.endswith(".0") else v
+
+    currency = config.CURRENCY.get(lang, config.CURRENCY.get("en", "EGP")) \
+        if isinstance(config.CURRENCY, dict) else config.CURRENCY
+
+    before = tier.get("price_before_discount")
+    discount = tier.get("discount")
+    show_before = before not in (None, "", 0, "0") and str(before) != str(price)
+    show_discount = discount not in (None, "", 0, "0", "0.0")
+
+    line = f"- {name}: {fmt(price)} {currency}"
+    if show_before or show_discount:
+        if lang == "ar":
+            extra = []
+            if show_before:
+                extra.append(f"كانت {fmt(before)} {currency}")
+            if show_discount:
+                extra.append(f"خصم {fmt(discount)}%")
+            line += " (" + "، ".join(extra) + ")"
+        else:
+            extra = []
+            if show_before:
+                extra.append(f"was {fmt(before)} {currency}")
+            if show_discount:
+                extra.append(f"{fmt(discount)}% off")
+            line += " (" + ", ".join(extra) + ")"
+    return line
+
+
+def _tier_card_lines(meta: dict, lang: str) -> list:
+    """The offer's dim_type_price options as card lines, capped at
+    _MAX_TIER_OPTIONS_IN_CARD. Empty when the offer has no tier data."""
+    tiers = meta.get("tiers") or []
+    if not tiers:
+        return []
+    lines = []
+    for t in tiers:
+        line = _format_tier_option(t, lang)
+        if line:
+            lines.append(line)
+    if not lines:
+        return []
+    n_total = meta.get("n_tiers") or len(tiers)
+    if len(lines) > _MAX_TIER_OPTIONS_IN_CARD:
+        lines = lines[:_MAX_TIER_OPTIONS_IN_CARD]
+        rest = len(lines) and (n_total - len(lines))
+        if rest > 0:
+            if lang == "ar":
+                lines.append(f"... و{rest} خيارات أخرى -- شوفهم كاملين في رابط العرض")
+            else:
+                lines.append(f"... and {rest} more options -- see them all via the offer link")
+    return lines
+
+
 def _format_offer_card(meta: dict, lang: str) -> str:
     """Formats one offer's metadata into the structured emoji card the
     SYSTEM_PROMPT tells the LLM to reproduce. Returns an empty string if the
-    offer has neither a price nor a discount to share."""
+    offer has neither a price nor a discount to share.
+
+    Multi-tier offers (dim_type_price) render a price RANGE + an options
+    list instead of the single summary price the offer embeds -- the site
+    shows every purchasable option (offer 8291 lists 18 meal coupons), so a
+    one-line "Price: 95 EGP" card was silently wrong for those."""
     title = meta.get("title") or ""
     merchant = meta.get("merchant") or ""
     price = meta.get("price")
@@ -926,6 +1024,12 @@ def _format_offer_card(meta: dict, lang: str) -> str:
 
     if not _has_value(price) and not _has_value(discount):
         return ""
+
+    n_tiers = meta.get("n_tiers") or 0
+    min_price = meta.get("min_price")
+    max_price = meta.get("max_price")
+    has_range = n_tiers > 1 and min_price is not None and max_price is not None \
+        and float(min_price) != float(max_price)
 
     def fmt(v):
         v = str(v)
@@ -942,12 +1046,16 @@ def _format_offer_card(meta: dict, lang: str) -> str:
             lines.append(f"المتجر: {merchant}")
         if category:
             lines.append(f"الفئة: {category}")
-        if _has_value(price):
+        if has_range:
+            lines.append(f"السعر: من {fmt(min_price)} حتى {fmt(max_price)} {currency} ({n_tiers} خيارات)")
+        elif _has_value(price):
             lines.append(f"السعر: {fmt(price)} {currency}")
-        if _has_value(old_price) and old_price not in (0, "0") and str(old_price) != str(price):
+        if not has_range and _has_value(old_price) and old_price not in (0, "0") and str(old_price) != str(price):
             lines.append(f"بدل ما كان {fmt(old_price)} {currency}")
         if _has_value(discount):
             lines.append(f"🔥 خصم {fmt(discount)}%")
+        if has_range:
+            lines.extend(_tier_card_lines(meta, lang))
         if _has_value(meta.get("expiry")):
             lines.append(f"ساري حتى {fmt(meta.get('expiry'))}")
         if url:
@@ -960,12 +1068,16 @@ def _format_offer_card(meta: dict, lang: str) -> str:
             lines.append(f"Merchant: {merchant}")
         if category:
             lines.append(f"Category: {category}")
-        if _has_value(price):
+        if has_range:
+            lines.append(f"Price: from {fmt(min_price)} to {fmt(max_price)} {currency} ({n_tiers} options)")
+        elif _has_value(price):
             lines.append(f"Price: {fmt(price)} {currency}")
-        if _has_value(old_price) and old_price not in (0, "0") and str(old_price) != str(price):
+        if not has_range and _has_value(old_price) and old_price not in (0, "0") and str(old_price) != str(price):
             lines.append(f"Was {fmt(old_price)} {currency}")
         if _has_value(discount):
             lines.append(f"🔥 Save {fmt(discount)}%")
+        if has_range:
+            lines.extend(_tier_card_lines(meta, lang))
         if _has_value(meta.get("expiry")):
             lines.append(f"Valid until {fmt(meta.get('expiry'))}")
         if url:
@@ -2796,7 +2908,7 @@ class RagEngine:
             lines.append(_STOCK_SOLD_SO_FAR[reply_lang].format(n=_iso(str(sold_count), reply_lang)))
         return "\n".join(lines)
 
-    def _get_superlative_offer_answer(self, query: str):
+    def _get_superlative_offer_answer(self, query: str, reply_lang: str = None):
         """Handles 'cheapest'/'most expensive'/'highest discount' style questions by sorting
         the FULL catalog's price metadata directly, instead of relying on
         top-k semantic retrieval to happen to surface the true extremum
@@ -2807,21 +2919,26 @@ class RagEngine:
         if direction is None:
             return None
 
-        reply_lang = detect_lang(query)
+        reply_lang = reply_lang or _reply_lang(query)
         if self.faceted is not None:
             # Scope to a single resolved merchant when the query names one
             # ("أرخص عرض في Dental Boss كام؟" -> cheapest within Dental Boss),
-            # otherwise the global catalog extremum. Live (not expired) offers
-            # are preferred; the >0 price and <=100 discount caps keep expired
-            # 0-price freebies and garbage >100% rows from ever winning.
+            # otherwise a resolved category ("eh el as3r 3nd el hotels?" ->
+            # cheapest within Travel & Activities), otherwise the global
+            # catalog extremum. Live (not expired) offers are preferred; the
+            # >0 price and <=100 discount caps keep expired 0-price freebies
+            # and garbage >100% rows from ever winning.
             merchants = self.faceted.resolve_merchants(query)
             scope = merchants[0] if merchants and len(merchants) == 1 else None
+            category = None
+            if scope is None:
+                category = self.faceted.resolve_category(query)
             method = {
                 "min": self.faceted.cheapest,
                 "max": self.faceted.most_expensive,
                 "max_discount": self.faceted.highest_discount,
             }[direction]
-            entries = method(reply_lang, merchant=scope)
+            entries = method(reply_lang, merchant=scope, category=category)
             if not entries:
                 return None
             self._last_retrieved = entries
@@ -3117,7 +3234,21 @@ class RagEngine:
                 # a known merchant/alias/product/category -- so the negative is
                 # deterministic. Do NOT fuzzy re-resolve it (that could match a
                 # real merchant sharing a word, e.g. "Star Lounge" -> "Trio
-                # Lounge", and wrongly cancel the negative).
+                # Lounge", and wrongly cancel the negative). All-Latin unknown
+                # tokens ("Starbucks") are answered without echoing the brand
+                # -- never fabricate/name a brand that doesn't exist.
+                if re.fullmatch(r"[A-Za-z0-9 &'’.,-]+", unknown):
+                    if reply_lang == "ar":
+                        return (
+                            "للأسف مفيش عندنا عروض من هذا التاجر حاليًا.\n"
+                            "لو محتاج مساعدة، اتواصل مع دعم Waffarha على "
+                            "support@waffarha.com."
+                        )
+                    return (
+                        "We currently don't have offers from this merchant in "
+                        "our catalog. If you need help, please contact "
+                        "Waffarha support at support@waffarha.com."
+                    )
                 if reply_lang == "ar":
                     return (
                         f"للأسف مفيش عندنا عروض من {unknown} حاليًا.\n"
@@ -3458,7 +3589,8 @@ class RagEngine:
         # can easily surface a merely-cheap offer instead of the actual
         # cheapest one in the ~800+ active offers. See
         # _get_superlative_offer_answer and eval category offer_ranking.
-        superlative_answer = self._get_superlative_offer_answer(query)
+        superlative_answer = self._get_superlative_offer_answer(
+            query, reply_lang=_reply_lang(query))
         if superlative_answer is not None:
             yield superlative_answer
             return

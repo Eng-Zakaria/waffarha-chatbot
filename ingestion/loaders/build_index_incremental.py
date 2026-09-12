@@ -216,6 +216,52 @@ def _format_tier_line(tier: Dict, lang: str) -> str:
     return line
 
 
+def _tier_meta(tiers: List[Dict]) -> Dict:
+    """Aggregates a dim_type_price tier list into offer-level metadata:
+    min/max purchasable price, tier count, and the LATEST tier expiry date.
+    Empty dict when no usable tiers are present. ISO dates compare correctly
+    as strings, so max() is a safe 'latest' pick."""
+    if not tiers:
+        return {}
+    prices = []
+    expiries = []
+    for t in tiers:
+        p = t.get("price")
+        if p is not None and p != "" and str(p).strip() != "":
+            try:
+                pf = float(p)
+            except (TypeError, ValueError):
+                pf = None
+            if pf is not None and pf > 0:
+                prices.append(pf)
+        e = t.get("expire_date")
+        if e:
+            s = re.split(r"[ T]", str(e))[0].strip()
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
+                expiries.append(s)
+    out = {"n_tiers": len(tiers)}
+    if prices:
+        out["min_price"] = min(prices)
+        out["max_price"] = max(prices)
+    if expiries:
+        out["tier_expiry"] = max(expiries)
+    return out
+
+
+def _effective_expiry(summary: str, tier_meta: Dict) -> str:
+    """Offer-level 'valid until' date: the later of the summary
+    dim_offers.offer_expire_date and the latest tier expiry. The site shows
+    the tier-level date when tiers exist, and taking the later date is also
+    the lenient choice for the expired-offer filter. Returns the summary
+    unchanged when there is no tier expiry."""
+    tier = (tier_meta or {}).get("tier_expiry")
+    if not tier:
+        return summary
+    if not summary:
+        return tier
+    return max(str(summary)[:10], str(tier)[:10])
+
+
 def load_offers() -> List[Dict]:
     path = os.path.join(config.INDEX_DIR, "offers_raw.json")
     if not os.path.exists(path):
@@ -239,24 +285,19 @@ def load_offers() -> List[Dict]:
             skipped_inactive += 1
             continue
 
-        expiry = pick_field(offer, fc["expiry"])
-        if expiry and not config.INCLUDE_EXPIRED_OFFERS:
-            try:
-                expiry_date = datetime.strptime(str(expiry).split(" ")[0], "%Y-%m-%d").date()
-                if expiry_date < datetime.now().date():
-                    skipped_inactive += 1
-                    continue
-            except (ValueError, TypeError):
-                pass
+        offer_id = pick_field(offer, fc["id"])
+        lang = offer.get("_lang", "en")
 
-        title = pick_field(offer, fc["title"])
-        if not title:
-            skipped_no_title += 1
-            continue
+        # NEW: resolve the dim_type_price tiers BEFORE expiry filtering -- see
+        # the comment in build_index.py's load_offers() for why the filter and
+        # the displayed "Valid until" must share one effective date.
+        tiers = type_prices.get(str(offer_id), [])
+        tier_meta = _tier_meta(tiers)
 
         expiry = pick_field(offer, fc["expiry"])
         if expiry:
             expiry = re.split(r"[ T]", str(expiry))[0].strip()
+        expiry = _effective_expiry(expiry, tier_meta)
 
         if expiry and not config.INCLUDE_EXPIRED_OFFERS:
             try:
@@ -269,8 +310,10 @@ def load_offers() -> List[Dict]:
             except ValueError:
                 pass
 
-        offer_id = pick_field(offer, fc["id"])
-        lang = offer.get("_lang", "en")
+        title = pick_field(offer, fc["title"])
+        if not title:
+            skipped_no_title += 1
+            continue
 
         partners = offer.get("partners")
         merchant = partners.get("part_name", "") if isinstance(partners, dict) else ""
@@ -360,6 +403,9 @@ def load_offers() -> List[Dict]:
                 "part_website": part_website,
                 "offer_fineprint_en": offer_fineprint_en, "offer_fineprint_ar": offer_fineprint_ar,
                 "waffarha_advice_en": waffarha_advice_en, "waffarha_advice_ar": waffarha_advice_ar,
+                "tiers": tiers, "n_tiers": tier_meta.get("n_tiers", 0),
+                "min_price": tier_meta.get("min_price"), "max_price": tier_meta.get("max_price"),
+                "tier_expiry": tier_meta.get("tier_expiry"),
             },
         })
 

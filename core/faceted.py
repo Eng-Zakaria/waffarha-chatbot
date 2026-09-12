@@ -246,6 +246,14 @@ class FacetedCatalog:
                 "price": _as_float(meta.get("price")),
                 "expiry": meta.get("expiry"),
                 "sections": {meta.get("section_id")},
+                # NEW -- aggregated dim_type_price tiers (added by build_index
+                # at index build time). Lets superlative/price-range answers
+                # reason over the actual purchasable option prices instead of
+                # only the summary dim_offers.actual_value.
+                "min_price": _as_float(meta.get("min_price")),
+                "max_price": _as_float(meta.get("max_price")),
+                "n_tiers": meta.get("n_tiers") or 0,
+                "tiers": meta.get("tiers") or [],
                 "text": "",
             })
             if lang == "ar":
@@ -588,6 +596,31 @@ class FacetedCatalog:
 
     # -- offer accessors ----------------------------------------------------
 
+    @staticmethod
+    def _lowest_price(rec):
+        """Lowest currently-purchasable price for an offer: the min of the
+        summary price and the dim_type_price tier minimum, when either exists."""
+        vals = [v for v in (rec.get("price"), rec.get("min_price")) if v is not None]
+        return min(vals) if vals else None
+
+    @staticmethod
+    def _highest_price(rec):
+        """Highest currently-purchasable price for an offer (summary price or
+        the max tier price, whichever is larger), or None."""
+        vals = [v for v in (rec.get("price"), rec.get("max_price")) if v is not None]
+        return max(vals) if vals else None
+
+    @staticmethod
+    def _price_span(rec):
+        """(lowest, highest) purchasable prices for an offer, or None when the
+        offer has no price at all. For a single-price offer both ends equal."""
+        lowest = FacetedCatalog._lowest_price(rec)
+        highest = FacetedCatalog._highest_price(rec)
+        if lowest is None and highest is None:
+            return None
+        return (lowest if lowest is not None else highest,
+                highest if highest is not None else lowest)
+
     def _recs_to_entries(self, recs, reply_lang: str, limit: int,
                          exclude_ids=None, price_filter=None) -> list:
         """Converts (oid, rec) pairs into engine-shaped {"metadata": doc} entries
@@ -600,8 +633,14 @@ class FacetedCatalog:
                 continue
             if price_filter:
                 lo, hi = price_filter
-                p = rec["price"]
-                if p is None or not (lo <= p <= hi):
+                span = self._price_span(rec)
+                if span is None:
+                    continue
+                # An offer qualifies when its purchasable span OVERLAPS the
+                # requested range (a multi-tier offer whose cheapest option is
+                # 95 EGP belongs under "under 200 EGP" even if a pricier tier
+                # exists).
+                if span[1] < lo or span[0] > hi:
                     continue
             doc = rec.get(reply_lang) or rec.get("en") or rec.get("ar")
             if doc is None:
@@ -646,43 +685,49 @@ class FacetedCatalog:
 
     # -- deterministic aggregation (slice 3) --------------------------------
 
-    def _superlative_pool(self, value_fn, merchant=None):
+    def _superlative_pool(self, value_fn, merchant=None, category=None):
         """[(value, oid, rec)] over the offer pool, optionally scoped to one
-        canonical merchant. value_fn maps a rec -> comparable number or None."""
+        canonical merchant and/or one category label. value_fn maps a rec ->
+        comparable number or None."""
         canon = self._canonical(merchant) if merchant else None
+        cat_label = CATEGORY_LABEL.get(category, category) if category else None
         out = []
         for oid, rec in self.offers.items():
             if canon and rec.get("merchant_canonical") != canon:
                 continue
+            if cat_label:
+                cats = {_category_of(s) for s in rec.get("sections") or ()}
+                if cat_label not in cats:
+                    continue
             v = value_fn(rec)
             if v is not None:
                 out.append((v, oid, rec))
         return out
 
-    def cheapest(self, reply_lang: str = "en", merchant: str = None):
+    def cheapest(self, reply_lang: str = "en", merchant: str = None, category: str = None):
         # NOTE: expired/0-price offers are intentionally NOT filtered out --
         # catalog offers are shown as-is, whatever their expiry says. Only
         # the optional merchant scope limits the pool.
-        pool = self._superlative_pool(lambda r: r["price"], merchant)
+        pool = self._superlative_pool(lambda r: self._lowest_price(r), merchant, category)
         if not pool:
             return None
         _, oid, rec = min(pool, key=lambda t: t[0])
         return self._recs_to_entries([(oid, rec)], reply_lang, 1)
 
-    def most_expensive(self, reply_lang: str = "en", merchant: str = None):
-        pool = self._superlative_pool(lambda r: r["price"], merchant)
+    def most_expensive(self, reply_lang: str = "en", merchant: str = None, category: str = None):
+        pool = self._superlative_pool(lambda r: self._highest_price(r), merchant, category)
         if not pool:
             return None
         _, oid, rec = max(pool, key=lambda t: t[0])
         return self._recs_to_entries([(oid, rec)], reply_lang, 1)
 
-    def highest_discount(self, reply_lang: str = "en", merchant: str = None):
+    def highest_discount(self, reply_lang: str = "en", merchant: str = None, category: str = None):
         # Impossible >100% rows (old_price >=2x list price) are data bugs and
         # are excluded from the "highest discount" ranking -- everything else,
         # expired or not, is eligible.
         pool = self._superlative_pool(
             lambda r: r["discount"] if (r["discount"] is not None and r["discount"] <= 100) else None,
-            merchant)
+            merchant, category)
         pool = [t for t in pool if not _rec_is_expired(t[2])] or pool
         if not pool:
             return None
@@ -691,12 +736,17 @@ class FacetedCatalog:
 
     def in_price_range(self, lo: float, hi: float, reply_lang: str = "en",
                        limit: int = 6) -> list:
-        """All offers whose price lands in [lo, hi], best-deal-first."""
+        """All offers whose purchasable price span overlaps [lo, hi] (a multi-
+        tier offer qualifies when ANY of its options is in range), cheapest-
+        option-first."""
         recs = []
         for oid, rec in self.offers.items():
-            p = rec["price"]
-            if p is not None and lo <= p <= hi:
-                recs.append((p, oid, rec))
+            span = self._price_span(rec)
+            if span is None:
+                continue
+            if span[1] < lo or span[0] > hi:
+                continue
+            recs.append((span[0], oid, rec))
         recs.sort(key=lambda t: t[0])
         return self._recs_to_entries([(o, r) for _, o, r in recs[:limit * 4]],
                                      reply_lang, limit)
@@ -763,6 +813,13 @@ class FacetedCatalog:
                         words[0] = stripped
                     else:
                         words = words[1:]
+            if words and any(w and w[0].isascii() and w[0].isalpha() for w in words) \
+                    and any("\u0600" <= ch <= "\u06FF" for ch in "".join(words)):
+                # A candidate mixing Arabic fragments with Latin words ("اسب
+                # لdate night" from 'مناسب لdate night') is never a brand --
+                # it's decoration residue. Drop it. Pure-Latin candidates
+                # ("Star Lounge") are still reported for the uppercase guard.
+                return ""
             return " ".join(words)
 
         for rx in self._INTRODUCER_RES:
