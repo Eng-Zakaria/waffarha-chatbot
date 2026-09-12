@@ -277,7 +277,7 @@ Killed (exit code 137)
 **Fix**: Increase limits in `docker-compose.prod.yml` or use smaller model:
 
 ```env
-OLLAMA_MODEL=qwen2.5:1.5b-instruct  # ~1GB vs ~2GB
+OLLAMA_MODEL=qwen2.5:3b-instruct  # ~2GB recommended for production
 ```
 
 ### Port already in use
@@ -471,7 +471,7 @@ jobs:
           docker run --rm \
             -v $(pwd)/data:/app/data:ro \
             waffarha-assistant:test \
-            python run_eval.py
+            python eval/run_eval.py
 
       - name: Push to registry
         if: github.ref == 'refs/heads/main'
@@ -491,7 +491,7 @@ jobs:
 ### Weekly
 - [ ] Check disk usage: `docker system df`
 - [ ] Review logs for errors: `docker compose logs --since=7d app`
-- [ ] Verify eval suite passes: `docker compose run --rm app python run_eval.py`
+- [ ] Verify eval suite passes: `docker compose run --rm app python eval/run_eval.py`
 
 ### Monthly
 - [ ] Update base images: `docker compose pull && docker compose up --build -d`

@@ -4,22 +4,22 @@ A production-ready customer support chat widget for [Waffarha](https://waffarha.
 
 ---
 
-## 🎯 Key Features
+## Key Features
 
 | Feature | Description |
 |---------|-------------|
 | **Bilingual Support** | English & Arabic (RTL-aware UI, multilingual embeddings) |
-| **Smart Retrieval** | Hybrid vector + lexical search with intent classification |
-| **Direct Answers** | Template-based shortcuts for FAQs & offers (no LLM call) |
+| **Smart Retrieval** | Hybrid vector (FAISS) + lexical (BM25) search with intent classification |
+| **Direct Answers** | Template-based shortcuts for FAQs & offers (no LLM call when confident) |
 | **Personal Queries** | Live ClickHouse lookups for "my coupons", "order status", spending |
-| **Session Memory** | Redis-backed memory of shown offers/FAQs for follow-up resolution |
+| **Session Memory** | Redis/local memory of shown offers/FAQs for follow-up resolution |
 | **Multiple Vector Backends** | FAISS (default), Chroma, Qdrant, LanceDB, pgvector — swap via config |
 | **Evaluation Harness** | 100+ test cases with CI-ready pass/fail exit codes |
 | **Docker-First Deploy** | Model-baked images, zero-runtime network dependencies |
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -29,22 +29,23 @@ A production-ready customer support chat widget for [Waffarha](https://waffarha.
                            │ POST /api/chat
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          app.py (FastAPI)                            │
-│  • CORS, static file serving                                        │
-│  • Request/response shaping                                         │
-│  • Identity resolution (auth proxy → user_id)                       │
+│                          app.py (FastAPI shim)                       │
+│  • Re-exports core.app (see core/app.py)                             │
+│  • CORS, static file serving, /api/chat, /api/chat/stream            │
+│  • Concurrency control (generation semaphore)                        │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │
           ┌────────────────┼────────────────┐
           ▼                ▼                ▼
 ┌─────────────────┐ ┌─────────────┐ ┌───────────────┐
 │   RagEngine     │ │  Identity   │ │   Memory      │
-│  (rag_engine.py)│ │  Resolver   │ │  (memory.py)  │
-│                 │ │ (identity.py)│ │               │
-│ • Vector search │ │             │ │ • Redis/local │
-│ • Intent class  │ │ • Static    │ │ • Session-scoped│
-│ • Direct answer │ │ • Header    │ │ • Shown items │
-│ • Fact-check    │ │ • Session   │ │ • 1hr TTL     │
+│  (core/rag_     │ │  Resolver   │ │  (memory.py)  │
+│   engine.py)    │ │(core/identity│ │               │
+│                 │ │ .py)         │ │ • Redis/local │
+│ • Vector search │ │             │ │ • Session-scoped│
+│ • Intent class  │ │ • Static    │ │ • Shown items │
+│ • Direct answer │ │ • Header    │ │ • 1hr TTL     │
+│ • Fact-check    │ │ • Session   │ │               │
 │ • LLM fallback  │ │             │ │               │
 └────────┬────────┘ └─────────────┘ └───────────────┘
          │
@@ -58,43 +59,48 @@ A production-ready customer support chat widget for [Waffarha](https://waffarha.
 
 ---
 
-## 📦 Module Reference
+## Module Reference
 
 | File | Purpose | Key Exports |
 |------|---------|-------------|
-| `app.py` | FastAPI server, `/api/chat` endpoint, static serving | `app`, `ChatRequest`, `ChatResponse` |
-| `config.py` | All runtime configuration via env vars | `EMBEDDING_DEVICE`, `OLLAMA_MODEL`, `MIN_RELEVANCE_SCORE`, etc. |
-| `rag_engine.py` | Core RAG logic: retrieval, intent, direct answers, fact-check | `RagEngine`, `detect_lang`, `answer()` |
-| `vectorstores.py` | Unified vector store interface (FAISS/Chroma/Qdrant/…) | `get_store()`, `VectorStore` ABC |
-| `memory.py` | Session-scoped memory of shown offers/FAQs | `MemoryStore`, `get_memory_store()` |
-| `identity.py` | Trusted user_id resolution from request | `IdentityResolver`, `get_identity_resolver()` |
-| `personal_queries.py` | Live ClickHouse queries for user-specific data | `is_personal_query()`, `answer_personal_query()` |
-| `ingest/build_index.py` | Build vector indexes from `data/*.json` | CLI: `--backend`, `--embedding-model` |
-| `ingest/fetch_offers.py` | Scrape live offers from Waffarha mobile API | CLI: writes `data/offers_raw.json` |
-| `ingest/*_clickhouse.py` | Alternative ClickHouse-based data fetchers | Various fetch scripts |
-| `common.py` | Shared eval utilities (engine cache, test runner) | `get_engine()`, `run_one()` |
-| `run_eval.py` | CLI to run `queries.json` against RagEngine | `python run_eval.py --help` |
-| `queries.json` | 100+ eval test cases with assertions | Test cases: `expected_source`, `expected_id`, keywords |
+| `app.py` | FastAPI shim — re-exports `core.app` for `uvicorn app:app` | `app` |
+| `core/app.py` | FastAPI server, `/api/chat` + `/api/chat/stream` endpoints | `app`, `ChatRequest`, `ChatResponse` |
+| `core/config.py` | All runtime configuration via env vars | `EMBEDDING_MODEL`, `OLLAMA_MODEL`, `MIN_RELEVANCE_SCORE`, etc. |
+| `core/rag_engine.py` | Core RAG logic: retrieval, intent, direct answers, fact-check | `RagEngine`, `detect_lang`, `answer()` |
+| `core/rag_perfection.py` | Arabizi/Franco normalization, out-of-scope guardrails | `normalize_arabizi_and_arabic()`, `check_out_of_scope_guardrail()` |
+| `vectorstores/vectorstores.py` | Unified vector store interface (FAISS/Chroma/Qdrant/…) | `get_store()`, `VectorStore` ABC |
+| `vectorstores/bm25_store.py` | BM25 lexical search + RRF fusion | `reciprocal_rank_fusion()` |
+| `memory/memory.py` | Session-scoped memory of shown offers/FAQs | `MemoryStore`, `get_memory_store()` |
+| `core/identity.py` | Trusted user_id resolution from request | `IdentityResolver`, `get_identity_resolver()` |
+| `personal/personal_queries.py` | Live ClickHouse queries for user-specific data | `is_personal_query()`, `answer_personal_query()` |
+| `catalog/catalog_queries.py` | Live ClickHouse queries for public catalog data | `is_catalog_query()`, `CatalogQueryService` |
+| `ingestion/loaders/build_index.py` | Build vector indexes from `data/*.json` | CLI: `python ingestion/loaders/build_index.py` |
+| `ingestion/sources/fetch_offers.py` | Scrape live offers from Waffarha mobile API | CLI: `python ingestion/sources/fetch_offers.py` |
+| `ingestion/sources/fetch_*_clickhouse.py` | ClickHouse-based data fetchers | Various fetch scripts |
+| `tests/manual_test_runner.py` | Manual verification of Perfection Pillars | CLI: `python tests/manual_test_runner.py` |
+| `eval/run_eval.py` | Run `queries.json` eval suite against RagEngine | CLI: `python eval/run_eval.py` |
+| `eval/queries.json` | 100+ eval test cases with assertions | Test cases: `expected_source`, `expected_id`, keywords |
 
 ---
 
-## 🚀 Quick Start (Local Development)
+## Quick Start (Local Development)
 
 ### Prerequisites
 
 - Python 3.11+
 - [Ollama](https://ollama.com) installed and running
-- Redis (Docker recommended)
+- Redis (optional — set `MEMORY_BACKEND=local` to skip)
 
 ### 1. Environment Setup
 
 ```bash
-# Clone & enter project
+# Enter project
 cd waffarha-chatbot
 
 # Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m venv venv
+venv\Scripts\activate       # Windows
+# source venv/bin/activate  # macOS/Linux
 
 # Install dependencies
 pip install -r requirements.txt
@@ -105,17 +111,18 @@ pip install -r requirements.txt
 ```bash
 # Terminal 1: Ollama (LLM server)
 ollama serve
-ollama pull qwen2.5:1.5b-instruct  # or qwen2.5:3b-instruct for better quality
+ollama pull qwen2.5:3b-instruct
 
-# Terminal 2: Redis (session memory)
+# Terminal 2 (optional): Redis for session memory
 docker run -d --name waffarha-redis -p 6379:6379 redis:7-alpine
 ```
 
 ### 3. Configure Environment
 
 ```bash
-cp .env.example .env
-# Edit .env — at minimum, WAFFARHA_SECURITY_KEY is required for offer fetching
+copy .env.example .env    # Windows
+# cp .env.example .env    # macOS/Linux
+# Edit .env — WAFFARHA_SECURITY_KEY required for offer fetching
 ```
 
 ### 4. Run the Server
@@ -126,18 +133,18 @@ uvicorn app:app --reload --port 8000
 
 Open **http://localhost:8000** — the chat widget loads from `static/` and talks to the real backend.
 
-> ⚡ **First message takes 10–30s** (embedding model loads, Ollama warms up). Subsequent responses are fast.
+> First message takes ~10–30s (embedding model loads, Ollama warms up). Subsequent responses are fast.
 
 ---
 
-## 🐳 Docker Deployment (Production-Ready)
+## Docker Deployment
 
-The Docker setup **bakes the Ollama model and embedding model into images at build time**, so production servers need **zero outbound network access** at runtime.
+The Docker setup bakes Ollama model + embedding model into images at build time so production needs zero outbound network.
 
-### Files Required at Project Root
+### Files at Project Root
 
 ```
-├── Dockerfile              # App image
+├── dockerfile              # App image
 ├── docker-compose.yml      # Orchestrates app + ollama + redis
 ├── .dockerignore
 ├── .env.example
@@ -149,145 +156,143 @@ The Docker setup **bakes the Ollama model and embedding model into images at bui
 
 ```bash
 # One-time: copy env template and set your security key
-cp .env.example .env
-# Edit .env — WAFFARHA_SECURITY_KEY is mandatory
+copy .env.example .env    # Windows
+# cp .env.example .env    # macOS/Linux
 
 # Build images (downloads models — takes several minutes)
 docker compose up --build
 
-# Subsequent starts are fast (models already in images)
+# Subsequent starts are fast
 docker compose up
 ```
 
 Open **http://localhost:8000**.
 
-### Why This Docker Design?
+### Why This Docker Design
 
 | Aspect | Approach | Benefit |
 |--------|----------|---------|
-| **Ollama Model** | Baked in `ollama-docker` image at build time | No registry access needed on prod servers |
-| **Embedding Model** | Downloaded during app image build | Same — offline runtime |
-| **Data Volume** | `ollama_models` named volume | Model persists across container recreates |
-| **Healthchecks** | Redis + Ollama both have healthchecks | Compose waits for dependencies |
-| **Single Origin** | App serves widget + API | No CORS, no separate static hosting |
-
-### Production Notes
-
-- **Change `OLLAMA_MODEL`** in `.env` → rebuilds `ollama` image only
-- **Scale app** with `docker compose up --scale app=3` (Redis shares memory)
-- **Logs**: `docker compose logs -f app`
-- **Shell**: `docker compose exec app bash`
+| Ollama Model | Baked in `ollama-docker` image at build time | No registry access on prod |
+| Embedding Model | Downloaded during app image build | Offline runtime |
+| Data Volume | `ollama_models` named volume | Persists across recreates |
+| Healthchecks | Redis + Ollama both have healthchecks | Compose waits for deps |
 
 ---
 
-## 🔧 Configuration Reference (.env)
+## Configuration Reference (.env)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `EMBEDDING_DEVICE` | `cpu` | `cpu` or `cuda` — device for sentence-transformers |
-| `EMBEDDING_MODEL` | `intfloat/multilingual-e5-base` | HF model for embeddings |
-| `OLLAMA_MODEL` | `qwen2.5:1.5b-instruct` | Ollama model tag for generation |
+| `EMBEDDING_DEVICE` | `cpu` | `cpu` or `cuda` |
+| `EMBEDDING_MODEL` | `intfloat/multilingual-e5-large` | HF model for embeddings |
+| `OLLAMA_MODEL` | `qwen2.5:3b-instruct` | Ollama model tag |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
-| `OLLAMA_NUM_CTX` | `2048` | Context window for generation |
+| `OLLAMA_NUM_CTX` | `1536` | Context window for generation |
 | `VECTOR_BACKEND` | `faiss` | `faiss` \| `chroma` \| `qdrant` \| `lancedb` \| `pgvector` |
-| `INDEX_DIR` | `data/index` | Root directory for vector indexes |
-| `MIN_RELEVANCE_SCORE` | `0.22` | Cosine similarity threshold for retrieval |
-| `LEXICAL_BONUS_WEIGHT` | `0.08` | BM25-style lexical boost weight |
-| `FAQ_DIRECT_ANSWER_SCORE` | `0.38` | Score threshold for FAQ direct-answer shortcut |
-| `OFFER_DIRECT_ANSWER_SCORE` | `0.30` | Score threshold for offer direct-answer shortcut |
-| `MEMORY_BACKEND` | `redis` | `redis` \| `local` (local = in-process dict, dev only) |
+| `INDEX_DIR` | `data/index/<model>/<backend>/` | Auto-computed from embedding model + backend |
+| `MIN_RELEVANCE_SCORE` | `0.30` | Cosine similarity floor |
+| `MIN_RELEVANCE_SCORE_STRICT` | `0.45` | Hard refusal floor |
+| `RELEVANCE_CHECK_SCORE` | `0.55` | Skip LLM relevance check above this |
+| `LEXICAL_BONUS_WEIGHT` | `0.50` | Lexical overlap boost weight |
+| `INTENT_BONUS_WEIGHT` | `0.18` | Intent classification soft bonus |
+| `ENTITY_MATCH_BONUS` | `0.40` | Bonus when query mentions known merchant |
+| `TITLE_MATCH_BONUS` | `0.50` | Per-query-word title match bonus |
+| `FAQ_DIRECT_ANSWER_SCORE` | `0.65` | FAQ template shortcut trigger |
+| `OFFER_DIRECT_ANSWER_SCORE` | `0.65` | Offer template shortcut trigger |
+| `MEMORY_BACKEND` | `redis` | `redis` \| `local` (dev only, no Redis needed) |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `IDENTITY_BACKEND` | `static` | `static` \| `header` \| `session` |
-| `STATIC_USER_ID` | `12345` | Test user ID for `static` identity backend |
-| `IDENTITY_HEADER` | `X-User-ID` | Header name for `header` identity backend |
+| `STATIC_TEST_USER_ID` | `0` | Test user ID for `static` backend |
 | `CLICKHOUSE_HOST` | `localhost` | ClickHouse HTTP host |
 | `CLICKHOUSE_PORT` | `8123` | ClickHouse HTTP port |
-| `CLICKHOUSE_USERNAME` | `default` | ClickHouse username |
-| `CLICKHOUSE_PASSWORD` | (empty) | ClickHouse password |
-| `CLICKHOUSE_DATABASE` | `default` | ClickHouse database |
-| `WAFFARHA_SECURITY_KEY` | *required* | API key for offer fetching scripts |
+| `PERSONAL_QUERIES_ENABLED` | `true` | Enable live ClickHouse personal queries |
+| `CATALOG_QUERIES_ENABLED` | `true` | Enable live ClickHouse catalog queries |
+| `WAFFARHA_SECURITY_KEY` | *(required)* | API key for offer fetching scripts |
+| `MAX_CONCURRENT_GENERATIONS` | `4` | Max parallel Ollama generation slots |
+| `GENERATION_QUEUE_TIMEOUT` | `30` | Seconds before 503 on queue overflow |
 
 ---
 
-## 📚 Data Pipeline
+## Data Pipeline
 
 ### Static Knowledge Base (RAG Index)
 
 ```
 data/
-├── faqs.json                    # Curated FAQ entries (id, question, answer, category)
-├── faqs_payment_methods.json    # Auto-generated from ClickHouse dim_payment_methods
-├── offers_raw.json              # Live offers scraped from mobile API
+├── faqs.json                    # Curated FAQ entries
+├── faqs_payment_methods.json    # Payment method FAQs from ClickHouse
+├── offers_raw.json              # Live offers from mobile API
 ├── type_prices.json             # Offer type → price mappings
-└── faqs_purchasing_status.json  # Purchasing status FAQs
+├── faqs_purchasing_status.json  # Purchasing status FAQs
+└── index/                       # Built vector indexes (auto-generated)
+    └── intfloat__multilingual-e5-large/
+        ├── faiss/               # FAISS index
+        └── bm25.pkl             # BM25 lexical index (if hybrid enabled)
 ```
 
 ### Building Indexes
 
 ```bash
-# Default: FAISS with multilingual-e5-base
-python ingest/build_index.py
+# Build index (uses EMBEDDING_MODEL + VECTOR_BACKEND from .env)
+python ingestion/loaders/build_index.py
 
-# Chroma instead
-python ingest/build_index.py --backend chroma
+# Specify backend explicitly
+python ingestion/loaders/build_index.py --backend faiss
+python ingestion/loaders/build_index.py --backend chroma
 
-# Both backends, different embedding model
-python ingest/build_index.py --backend both --embedding-model intfloat/multilingual-e5-small
+# Incremental build (only embeds changed docs)
+python ingestion/loaders/build_index_incremental.py
 ```
 
-Indexes are written to `data/index/<embedding_model>/<backend>/` — multiple combinations coexist.
+Indexes are written to `data/index/<embedding_model>/<backend>/`.
 
 ### Refreshing Offers
 
 ```bash
-# Fetch fresh offers from Waffarha API (requires WAFFARHA_SECURITY_KEY)
-python ingest/fetch_offers.py
+# Fetch fresh offers from Waffarha mobile API (requires WAFFARHA_SECURITY_KEY)
+python ingestion/sources/fetch_offers.py
 
-# Or use ClickHouse-based fetchers (requires ClickHouse credentials)
-python ingest/fetch_offers_clickhouse.py
-python ingest/fetch_partners_clickhouse.py
-# ...etc.
+# Or use ClickHouse-based fetchers (requires ClickHouse credentials in .env)
+python ingestion/sources/fetch_offers_clickhouse.py
+python ingestion/sources/fetch_partners_clickhouse.py
+python ingestion/sources/fetch_payment_methods_clickhouse.py
+python ingestion/sources/fetch_purchasing_status_clickhouse.py
+python ingestion/sources/fetch_type_price_clickhouse.py
+python ingestion/sources/get_customers_offers.py
+
+# Sync all ClickHouse data
+python ingestion/transformers/sync_clickhouse.py
 
 # Then rebuild index
-python ingest/build_index.py
+python ingestion/loaders/build_index.py
 ```
 
 ---
 
-## 🧪 Evaluation System
+## Evaluation System
 
-The project includes a comprehensive evaluation harness with **100+ test cases** covering:
+The project includes a comprehensive evaluation harness with **100+ test cases** covering offer lookups, FAQ answers, follow-up memory, out-of-scope deflection, hallucination guards, and multi-language queries.
 
-- **Offer direct answers** (price, discount, merchant)
-- **FAQ direct answers** (registration, purchase, refunds)
-- **Personal queries** (my coupons, order status, spending)
-- **Follow-up resolution** ("how much before discount?")
-- **Negative cases** (disabled offers, out-of-scope questions)
-- **Arabic queries** (RTL, Arabic embeddings)
-- **Cross-lingual** (Arabic query → English answer, vice versa)
-
-### Running Evaluations
+### Running Automated Evaluations
 
 ```bash
-# Basic run (uses config defaults)
-python run_eval.py
+# Run full eval suite against queries.json
+python eval/run_eval.py
 
-# Override embedding model / backend
-python run_eval.py --embedding-model intfloat/multilingual-e5-small --backend chroma
-
-# Override LLM
-python run_eval.py --llm-model qwen2.5:3b-instruct --temperature 0.0
+# Override model / backend
+python eval/run_eval.py --embedding-model intfloat/multilingual-e5-base --backend faiss
+python eval/run_eval.py --llm-model qwen2.5:3b-instruct --temperature 0.0
 
 # Custom query file
-python run_eval.py --queries my_test_cases.json
+python eval/run_eval.py --queries my_test_cases.json
 ```
 
 ### Output
 
 ```
-eval/results/<timestamp>_<tag>/
-├── full.json    # Complete results per query (retrieval, generation, assertions)
-└── summary.csv  # Spreadsheet-friendly: id, category, query, pass/fail, latency
+eval/results/<timestamp>_tag/
+├── full.json     # Complete per-query results (retrieval scores, generation, assertions)
+└── summary.csv   # Spreadsheet-friendly: id, category, query, pass/fail, latency
 ```
 
 ### CI Integration
@@ -295,126 +300,128 @@ eval/results/<timestamp>_<tag>/
 Exit code is **1 if any assertion fails** — wire directly into CI:
 
 ```yaml
-# .github/workflows/eval.yml
 - name: Run RAG Evaluation
-  run: python run_eval.py
+  run: python eval/run_eval.py
 ```
 
-### Test Case Schema (`queries.json`)
+### Test Case Schema (`eval/queries.json`)
 
 ```json
 {
   "id": "unique_test_id",
-  "category": "offer_direct_answer | faq_direct_answer | personal_query | followup | negative",
+  "category": "offer_direct_answer | faq_direct_answer | personal_query | followup | negative | hallucination_check",
   "query": "User's question",
   "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
-  "recent_offers": [{"offer_id": 123, "title": "KFC", "price_before": 500, "price_after": 189}],
-  "expected_source": "faq | offer | personal",
+  "recent_offers": [{"metadata": {"source": "offer", "id": 123, "merchant": "KFC"}}],
+  "expected_source": "faq | offer | personal | null",
   "expected_id": 123,
   "expected_keywords": ["189", "EGP"],
   "forbidden_keywords": ["fabricated_price"],
-  "lang": "en | ar",
+  "lang": "en | ar | mixed",
   "note": "Human-readable context for this test case"
 }
 ```
 
----
+### Manual Testing
 
-## 🔬 Model Performance & Benchmarking
-
-### Embedding Models Tested
-
-| Model | Dimensions | Size | Index Build Time | Retrieval Quality (Recall@10) |
-|-------|------------|------|------------------|-------------------------------|
-| `intfloat/multilingual-e5-small` | 384 | ~130MB | ~45s | Baseline |
-| `intfloat/multilingual-e5-base` | 768 | ~430MB | ~2min | +12% over small |
-| `intfloat/multilingual-e5-large` | 1024 | ~1.3GB | ~6min | +8% over base |
-
-> **Recommendation**: `multilingual-e5-base` is the sweet spot for Arabic+English.
-
-### LLM Models Tested (Ollama)
-
-| Model | Size | Speed (tokens/s) | Quality (subjective) | Best For |
-|-------|------|------------------|---------------------|----------|
-| `qwen2.5:1.5b-instruct` | ~1GB | ~45 | Good | Fast responses, low RAM |
-| `qwen2.5:3b-instruct` | ~2GB | ~25 | Better | Production default |
-| `qwen2.5:7b-instruct` | ~4.5GB | ~12 | Best | High-quality, needs GPU |
-| `llama3.2:3b-instruct` | ~2GB | ~20 | Good | Alternative |
-
-### Retrieval Thresholds (config.py)
-
-These thresholds were tuned on the eval set:
-
-| Threshold | Value | Purpose |
-|-----------|-------|---------|
-| `MIN_RELEVANCE_SCORE` | 0.22 | Global cosine similarity floor |
-| `FAQ_DIRECT_ANSWER_SCORE` | 0.38 | FAQ template shortcut trigger |
-| `OFFER_DIRECT_ANSWER_SCORE` | 0.30 | Offer template shortcut trigger |
-| `LEXICAL_BONUS_WEIGHT` | 0.08 | BM25 boost for exact term matches |
+```bash
+# Run the 5-perfection-pillar manual test script
+python tests/manual_test_runner.py
+```
 
 ---
 
-## 🛠️ Development Guide
+## Model Performance Reference
+
+### Embedding Models
+
+| Model | Dimensions | Size | Notes |
+|-------|------------|------|-------|
+| `intfloat/multilingual-e5-small` | 384 | ~130MB | Fast, decent Arabic |
+| `intfloat/multilingual-e5-base` | 768 | ~430MB | Sweet spot for AR+EN |
+| `intfloat/multilingual-e5-large` | 1024 | ~1.3GB | Best quality (default) |
+| `BAAI/bge-m3` | 1024 | ~2.3GB | Multilingual, hybiud |
+
+### LLM Models (Ollama)
+
+| Model | Size | Notes |
+|-------|------|-------|
+| `qwen2.5:1.5b-instruct` (legacy)| ~1GB | Fast, lower quality |
+| `qwen2.5:3b-instruct` | ~2GB | Production default |
+| `aya-expanse:8b` | ~5GB | Best Arabic quality |
+| `command-r7b-arabic` | ~5GB | Arabic-optimized |
+
+---
+
+## Development Guide
 
 ### Project Structure
 
 ```
 waffarha-chatbot/
-├── app.py                      # FastAPI server
-├── config.py                   # Configuration
-├── rag_engine.py               # Core RAG logic
-├── vectorstores.py             # Vector store abstraction
-├── memory.py                   # Session memory
-├── identity.py                 # Auth / user_id resolution
-├── personal_queries.py         # ClickHouse personal data queries
-├── common.py                   # Eval utilities
-├── run_eval.py                 # Eval CLI
-├── queries.json                # Test cases
-├── requirements.txt
-├── dockerfile
-├── docker-compose.yml
-├── DOCKER.md
-├── .env.example
-├── static/
-│   └── index.html              # Chat widget (vanilla JS)
-├── ingest/
-│   ├── build_index.py          # Index builder
-│   ├── fetch_offers.py         # API scraper
-│   ├── fetch_*_clickhouse.py   # ClickHouse fetchers
-│   └── catalog_queries.py      # Catalog query service
+├── app.py                      # Shim — re-exports core.app for uvicorn
+├── core/
+│   ├── app.py                  # FastAPI server, /api/chat, /api/chat/stream
+│   ├── config.py               # All runtime configuration
+│   ├── rag_engine.py           # Core RAG: retrieve(), answer(), answer_stream()
+│   ├── rag_perfection.py       # Arabizi normalization, guardrails, intent classification
+│   └── identity.py             # User identity resolution
+├── vectorstores/
+│   ├── vectorstores.py         # VectorStore ABC + get_store() factory
+│   └── bm25_store.py           # BM25 lexical search + RRF fusion
+├── memory/
+│   └── memory.py               # Session-scoped MemoryStore (Redis or local)
+├── personal/
+│   └── personal_queries.py     # ClickHouse personal data queries
+├── catalog/
+│   └── catalog_queries.py      # ClickHouse public catalog queries
+├── ingestion/
+│   ├── loaders/
+│   │   ├── build_index.py      # Build vector indexes
+│   │   └── build_index_incremental.py  # Incremental rebuild
+│   ├── sources/
+│   │   ├── fetch_offers.py     # Mobile API scraper
+│   │   ├── fetch_*_clickhouse.py  # ClickHouse data fetchers
+│   │   └── get_customers_offers.py  # Per-customer offer fetcher
+│   └── transformers/
+│       └── sync_clickhouse.py  # ClickHouse sync utility
 ├── data/
 │   ├── faqs.json
 │   ├── offers_raw.json
 │   ├── faqs_payment_methods.json
-│   ├── type_prices.json
 │   ├── faqs_purchasing_status.json
-│   └── index/                  # Built vector indexes
+│   └── index/                  # Built vector indexes (auto-generated)
 ├── eval/
-│   └── results/                # Evaluation outputs
-└── ollama-docker/
-    └── ollama-Dockerfile       # Model-baked Ollama image
+# Eval CLI moved to `eval/run_eval.py`             # Eval CLI
+│   ├── queries.json            # 100+ test cases
+│   └── results/                # Evaluation output
+├── tests/
+│   ├── manual_test_runner.py   # Manual pillar verification
+│   ├── memory_comprehensive_test.py
+│   └── unit/                   # Unit tests
+├── static/
+│   └── index.html              # Chat widget (vanilla JS)
+├── dockerfile
+├── docker-compose.yml
+├── .env.example
+└── requirements.txt
 ```
 
 ### Adding a New Vector Backend
 
-1. Implement `VectorStore` ABC in `vectorstores.py`:
-   ```python
-   class MyBackendStore(VectorStore):
-       def __init__(self, ...): ...
-       def add(self, embeddings, metadatas): ...
-       def search(self, query_embedding, k): ...  # Must return cosine similarity
-       def persist(self): ...
-   ```
+1. Implement `VectorStore` ABC in `vectorstores/vectorstores.py`
 2. Register in `get_store()` factory
 3. Add dependency to `requirements.txt` (optional)
-4. Test: `python ingest/build_index.py --backend mybackend`
+4. Test: `python ingestion/loaders/build_index.py --backend mybackend`
 
-### Adding a New Personal Query Type
+### Adding Test Cases
 
-1. Add intent pattern to `_PERSONAL_PATTERNS` in `personal_queries.py`
-2. Add SQL query method in `PersonalQueryService`
-3. Add response formatter
-4. Add test cases to `queries.json` with `"category": "personal_query"`
+Add to `eval/queries.json` with:
+- Unique `id`
+- Clear `category`
+- Realistic `query` (from actual user logs if possible)
+- Assertions (`expected_source`, `expected_id`, `expected_keywords`)
+- `note` explaining the test intent
 
 ### Running Tests Locally
 
@@ -423,104 +430,40 @@ waffarha-chatbot/
 ruff check .
 
 # Type check
-mypy app.py rag_engine.py config.py
+mypy app.py core/app.py core/rag_engine.py core/config.py
 
 # Eval suite
-python run_eval.py
+python eval/run_eval.py
+
+# Manual pillar test
+python tests/manual_test_runner.py
 ```
 
 ---
 
-## 🔒 Security Considerations
+## Security Considerations
 
 | Layer | Protection |
 |-------|------------|
-| **User Identity** | `identity.py` is the **only** source of `user_id` — never trust client input |
-| **Personal Queries** | All SQL scoped by trusted `user_id`; no raw identifiers from user |
-| **API Keys** | `WAFFARHA_SECURITY_KEY` only used in ingest scripts, never in chat path |
-| **CORS** | Configured in `app.py` — restrict `allow_origins` in production |
-| **Rate Limiting** | Not built-in — add via nginx/API gateway in production |
-| **Secrets** | `.env` in `.gitignore`; use Docker secrets / env injection in prod |
-
-### Production Identity Backend
-
-For real users, implement `AuthBackedIdentityResolver` in `identity.py`:
-
-```python
-class AuthBackedIdentityResolver(IdentityResolver):
-    def resolve(self, request) -> int | None:
-        # Validate session token from cookie/header against your auth system
-        # Return verified user_id or None
-        ...
-```
-
-Then set `IDENTITY_BACKEND=auth` in production `.env`.
+| User Identity | `identity.py` is the only source of `user_id` — never trust client input |
+| Personal Queries | All SQL scoped by trusted `user_id`; no raw identifiers from user |
+| API Keys | `WAFFARHA_SECURITY_KEY` only used in ingest scripts, never in chat path |
+| CORS | Configured in `core/app.py` — restrict `allow_origins` in production |
+| Rate Limiting | Not built-in — add via nginx/API gateway in production |
+| Secrets | `.env` in `.gitignore`; use Docker secrets / env injection in prod |
 
 ---
 
-## 📈 Monitoring & Observability
-
-### Logging
-
-All modules use `logging.getLogger("waffarha-app")` — configure once in `app.py`:
-
-```python
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
-```
-
-### Key Metrics to Track
-
-| Metric | Source | Alert Threshold |
-|--------|--------|-----------------|
-| `/api/chat` latency (p95) | FastAPI middleware | > 3s |
-| Retrieval score distribution | `rag_engine.py` logs | Shift below 0.2 |
-| Direct-answer hit rate | `rag_engine.py` logs | < 60% |
-| Personal query error rate | `personal_queries.py` | > 5% |
-| Redis memory usage | `memory.py` TTL stats | > 80% maxmemory |
-
----
-
-## 🤝 Contributing
-
-### Workflow
-
-1. **Fork** the repository
-2. **Create branch**: `git checkout -b feature/your-feature`
-3. **Make changes** — follow existing code style (type hints, docstrings)
-4. **Run eval**: `python run_eval.py` — must pass
-5. **Submit PR** with description of changes and eval results
-
-### Code Style
-
-- **Type hints** on all public functions
-- **Docstrings** on all modules, classes, public methods (Google style)
-- **Logging** via `log = logging.getLogger("waffarha-app")`
-- **No hardcoded values** — everything in `config.py` / `.env`
-
-### Adding Test Cases
-
-Add to `queries.json` with:
-- Unique `id`
-- Clear `category`
-- Realistic `query` (from actual user logs if possible)
-- Assertions (`expected_source`, `expected_id`, `expected_keywords`)
-- `note` explaining the test intent
-
----
-
-## 📄 License
+## License
 
 Internal Waffarha project — not for external distribution.
 
 ---
 
-## 🔗 Related Documentation
+## Related Documentation
 
 - **[DOCKER.md](DOCKER.md)** — Detailed Docker deployment guide
-- **[DEVELOPMENT.md](DEVELOPMENT.md)** — Extended development guide
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** — Deep dive into RAG pipeline
-- **[EVALUATION.md](EVALUATION.md)** — Evaluation methodology & results
-- **[API.md](API.md)** — API reference for `/api/chat` endpoint
+- **[CLICKHOUSE_LOCAL_SETUP.md](CLICKHOUSE_LOCAL_SETUP.md)** — Local ClickHouse setup for development
+- **[RATE_LIMIT_FIX.md](RATE_LIMIT_FIX.md)** — Rate limiting implementation notes
+- **[EVALUATION_REPORT.md](../EVALUATION_REPORT.md)** — Latest evaluation results
+- **[HALLUCINATION_ANALYSIS.md](../HALLUCINATION_ANALYSIS.md)** — Hallucination audit findings
