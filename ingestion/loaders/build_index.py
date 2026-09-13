@@ -28,7 +28,7 @@ import pickle
 import re
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from core import config
 from core.embedding_providers import get_embedding_provider, canonical_model_key
 from vectorstores.vectorstores import get_store

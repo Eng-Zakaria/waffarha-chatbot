@@ -201,7 +201,7 @@ _FAQ_INTENT_WORDS = {
     # (faq_arabic_refund used this instead of "استرداد", which was the only
     # refund word previously listed).
     "how do i", "how can i", "how to", "what is", "what are", "how does",
-    "ازاي", "إزاي", "ايه هو", "إيه هو", "كيف", "طريقة", "استرجع",
+    "ازاي", "إزاي", "ايه هو", "إيه هو", "كيف", "طريقة", "استرجع", "information",
     # NEW: Arabic FAQ-specific words that were missing
     "معلومات", "خصوصية", "سياسة", "عن وفرها", "ما هي وفرها", "ازاي اشتري", "كيفية الشراء",
     "وسايل الدفع", "طرق الدفع", "حذف حسابي", "اعادة تعيين", "تغيير الباسورد",
@@ -449,10 +449,19 @@ _FAQ_TOPIC_RULES = [
     ("transfer", r"(تحويل|a7awel|ahawel|اعمل تحويل)\b[^؟?]{0,30}?(فلوس|flous|فلوسا|المال|محفظة)?\b", "payment_48_info", False),
     # ---- gift vouchers ----
     ("gift", r"(بطاقة هدية|بطاقات هدية|هدية|gift|قسيمة|قسائم|voucher)", "faq_10", False),
-    # ---- privacy ----
-    ("privacy", r"(privacy|خصوصية|البيانات الخاصة|بياناتك|بتجمعوا معلومات|بتجمع معلومات)", "faq_13_privacy", False),
+    # ---- privacy (what data does the company collect / share) ----
+    ("privacy", r"(privacy|خصوصية|البيانات الخاصة|بياناتك|بياناتي|بيانات العملاء|بيانات الشركة|بيانات الحساب|بتجمعوا معلومات|بتجمع معلومات|بتجمعوا بيانات|بتجمع بيانات|بتخزنوا بيانات|بتشاركوا بيانات|بتبعتوا بيانات|داتا|data collection|what\s+information|collect\w*\s+(?:information|data)|share\w*\s+(?:information|data)|information\s+(?:do|does|you)\s+collect|بيانات لي)", "faq_13_privacy", False),
     # ---- cashback policy ----
     ("cashback", r"(كاش باك|كاشباك|cashback)", "faq_11", False),
+    # ---- company information / what is Waffarha. Conservative on purpose:
+    # only fire when the question clearly asks about Waffarha itself -- the
+    # English pattern is end-anchored so "how does Waffarha offer X"? doesn't
+    # get hijacked into the about-FAQ instead of an offer lookup. The Arabic
+    # variants keep "وفرها" plus an explicit question cue, and the shared
+    # offer-word guard above already drops any query that clearly wants
+    # عروض/offers.
+    ("about_company_en", r"\b(?:what is|what's|about|tell me about)\s+waffarha\b\s*[?!.]*$", "faq_12_about", False),
+    ("about_company", r"(ما هي وفرها|ما هو وفرها|ايه (?:هي )?وفرها|إيه (?:هي )?وفرها|معلومات عن وفرها|معلومات عن الشركة|عن شركة وفرها|شركة وفرها دي|وفرها بتشتغل|وفرها بتحكي|وفرها عاملة|وفرها شغالة|وفرها بتعمل|وفرها بتوفر|ازاي وفرها بتشتغل|إزاي وفرها بتشتغل|كيف وفرها بتشتغل|وفرها بتشتغل ازاي|وفرها بتشتغل إزاي|وفرها بتشتغل كيف|شرح وفرها|فكرة وفرها|يعني ايه وفرها|معنى وفرها|قصت وفرها)", "faq_12_about", False),
 ]
 
 
@@ -665,6 +674,22 @@ def _classify_intent(query: str) -> str:
     if is_faq and not is_offer:
         return "faq"
     return "mixed"
+
+
+def _should_restrict_to_faq(query: str) -> bool:
+    """True when a query is *strongly* FAQ-intent: it carries FAQ vocabulary
+    and zero offer vocabulary ("معلومات عن وفرها", "What is Waffarha's
+    refund policy?", "خصوصية بياناتكم"). retrieve() uses this as a HARD
+    source gate -- such queries' candidates are capped to FAQ docs only, so
+    a broad company-info/policy question can never be answered with offers.
+
+    Deliberately one-directional (unlike the old hard intent filter, see the
+    config.INTENT_BONUS_WEIGHT comment): a question that ALSO carries an
+    offer-ish word ("How do I use my purchased coupon?", "عايز أعرف سياسة
+    الاسترجاع لو دفعت كاش؟") stays in the soft-bonus path, because its FAQ
+    doc must remain reachable but an offer doc can also legitimately win
+    ranks. Only the pure "faq with no offer signal" case is capped here."""
+    return _classify_intent(query or "") == "faq"
 
 
 def _normalize_num(value) -> str:
@@ -2425,10 +2450,23 @@ class RagEngine:
             if len(w) >= 2 and not _is_lexical_stopword(w)
         ]
         intent = _classify_intent(retrieval_query)
+        # NEW: hard FAQ-source gate for strong FAQ intent. Generic
+        # information/about/policy questions routinely embed closer to an
+        # unrelated offer than to the one FAQ doc that actually answers them
+        # -- FAQ docs are a tiny minority of the corpus and their answer text
+        # is full of offer/discount words. Capping such queries' candidate
+        # pool to FAQ-source docs guarantees they can never come back as
+        # offers; questions that ALSO carry offer signal ("how do I use my
+        # coupon?") stay on the soft-bonus path below so their FAQ doc stays
+        # reachable. See _should_restrict_to_faq.
+        faq_only = _should_restrict_to_faq(query)
  
         candidates = []
         for score, idx in raw_results:
             doc = self.docs[idx]
+            source = doc["metadata"]["source"]
+            if faq_only and source != "faq":
+                continue
  
             # CHANGED: was a hard `continue` that excluded the non-matching
             # source ENTIRELY from candidates -- e.g. intent=="offer" (from
@@ -2441,7 +2479,6 @@ class RagEngine:
             # Intent is now a soft additive bonus like lexical_bonus below
             # -- it nudges ranking toward the classified source without
             # ever making the other source unreachable.
-            source = doc["metadata"]["source"]
             intent_bonus = config.INTENT_BONUS_WEIGHT if intent == source else 0.0
  
             lexical_hits = sum(1 for w in query_words if w.lower() in doc["text"].lower())
@@ -2587,7 +2624,7 @@ class RagEngine:
  
         selected = deduped[:top_k]
 
-        if multi_item and mentioned_merchants:
+        if multi_item and mentioned_merchants and not faq_only:
             # A merchant named explicitly in the query must not get dropped
             # just because some unrelated candidate scored higher -- pull in
             # that merchant's best-scoring doc from the full candidate pool
@@ -2623,6 +2660,11 @@ class RagEngine:
             }
             for target in followup_targets:
                 tmeta = target["metadata"]
+                # NEW: never pin an offer back in for a FAQ-gated query -- the
+                # hard gate above already capped candidates to FAQ docs; an
+                # offer follow-up target would defeat that guarantee.
+                if faq_only and tmeta.get("source") != "faq":
+                    continue
                 key = (tmeta.get("source"), str(tmeta.get("id")))
                 if key in present_ids:
                     continue
