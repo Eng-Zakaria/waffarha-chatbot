@@ -121,7 +121,7 @@ OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 # CHANGED: default embedding model upgraded to BGE-M3 for better Arabic retrieval.
 # Set EMBEDDING_MODEL env var to override. Available models: intfloat/multilingual-e5-base,
 # intfloat/multilingual-e5-large, BAAI/bge-m3, sentence-transformers/paraphrase-multilingual-mpnet-base-v2
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "qwen3-embedding:0.6b")
 
 # CHANGED: default vector store backend upgraded to Qdrant for better scalability.
 # Set VECTOR_STORE_BACKEND env var to override. Options: faiss, qdrant, chroma, lancedb, pgvector
