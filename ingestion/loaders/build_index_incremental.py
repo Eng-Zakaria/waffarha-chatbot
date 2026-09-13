@@ -37,7 +37,7 @@ from typing import Dict, List, Set, Tuple, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from core import config
-from core.embedding_providers import get_embedding_provider
+from core.embedding_providers import get_embedding_provider, canonical_model_key
 from vectorstores.vectorstores import get_store
 
 
@@ -49,7 +49,9 @@ def safe_name(model_name: str) -> str:
 
 
 def index_dir(embedding_model: str, backend: str) -> str:
-    d = os.path.join(config.INDEX_DIR, "index", safe_name(embedding_model), backend)
+    # Canonicalize so bare "qwen3-embedding:0.6b" and "ollama:qwen3-embedding:0.6b"
+    # write into the SAME directory (see core/embedding_providers.py).
+    d = os.path.join(config.INDEX_DIR, "index", safe_name(canonical_model_key(embedding_model)), backend)
     os.makedirs(d, exist_ok=True)
     return d
 
@@ -717,7 +719,9 @@ def incremental_update(embedding_model: str, backend: str,
 
 def main():
     parser = argparse.ArgumentParser(description="Incremental vector index builder")
-    parser.add_argument("--backend", choices=["faiss", "chroma", "qdrant", "lancedb", "pgvector", "all"], default="faiss")
+    parser.add_argument("--backend", choices=["faiss", "chroma", "qdrant", "lancedb", "pgvector", "all"],
+                        default=config.VECTOR_STORE_BACKEND,
+                        help="Vector store backend. Defaults to config.VECTOR_STORE_BACKEND.")
     parser.add_argument("--embedding-model", default=config.EMBEDDING_MODEL,
                          help="Embedding model. A sentence-transformers model id, or a "
                               "provider-prefixed id: 'ollama:qwen3-embedding:0.6b' or "

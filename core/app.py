@@ -2,8 +2,9 @@
 Waffarha Assistant -- backend.
 
 Wires the chat widget (static/index.html) to RagEngine (rag_engine.py),
-which does retrieval over the prebuilt FAISS index in
-data/index/<embedding_model>/faiss/ and generation via a local Ollama model.
+which does retrieval over the prebuilt vector index in
+data/index/<embedding_model>/<backend>/ (see core/config.py) and generation
+via a local Ollama model.
 
 Run:
     pip install -r requirements.txt
@@ -172,7 +173,7 @@ def get_engine() -> RagEngine:
         return _engine
     with _engine_lock:
         if _engine is None:          # re-check: someone else may have built it
-            log.info("Loading RagEngine (embedding model + FAISS index + Ollama check)...")
+            log.info(f"Loading RagEngine (embedding model + {config.VECTOR_STORE_BACKEND} index + Ollama check)...")
             _engine = RagEngine()
             log.info("RagEngine ready.")
     return _engine
@@ -188,7 +189,7 @@ async def get_engine_async() -> RagEngine:
 
 @app.on_event("startup")
 async def _warm_up_engine():
-    """Loads RagEngine (embedding model + FAISS index + Ollama check) as
+    """Loads RagEngine (embedding model + vector index + Ollama check) as
     soon as the container starts, instead of leaving it to the first real
     request. Restarting the app container doesn't restart Ollama/Redis --
     they're already warm -- but this process's own memory is empty on every

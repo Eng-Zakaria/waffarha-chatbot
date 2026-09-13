@@ -15,13 +15,14 @@ _ENGINE_CACHE: Dict[tuple, RagEngine] = {}
 
 def get_engine(
     embedding_model: Optional[str] = None,
-    backend: str = "faiss",
+    backend: Optional[str] = None,
     llm_model: Optional[str] = None,
     llm_options: Optional[dict] = None,
     force_llm_generation: bool = False,
     no_retrieval: bool = False,
 ) -> RagEngine:
     """Returns a cached or newly created RagEngine instance."""
+    backend = backend or core_config.VECTOR_STORE_BACKEND
     key = (
         embedding_model or core_config.EMBEDDING_MODEL,
         backend,

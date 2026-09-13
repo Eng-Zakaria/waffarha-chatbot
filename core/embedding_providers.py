@@ -25,6 +25,8 @@ Every provider presents the same ``encode()`` surface as
 contract the VectorStore backends and the score thresholds in config.py
 depend on, so swapping providers requires no changes below this module.
 """
+import re
+
 import numpy as np
 
 from core import config
@@ -98,15 +100,65 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
     def __init__(self, model_name: str, host: str | None = None):
         self.name = model_name
         self.host = host or config.OLLAMA_HOST
-        self.url = f"{self.host.rstrip('/')}/api/embed"
+        base = self.host.rstrip("/")
+        self.url = f"{base}/api/embed"
+        self._legacy_url = f"{base}/api/embeddings"
+        # Old Ollama builds (< 0.3.x) don't serve the batched /api/embed
+        # endpoint at all -- they only have the legacy single-document
+        # /api/embeddings. Detected lazily on the first 404 (plain "page not
+        # found", not a JSON model error) and used for every subsequent batch.
+        self._legacy = False
+
+    def _legacy_embed(self, batch):
+        import requests
+        embeddings = []
+        for text in batch:
+            resp = requests.post(self._legacy_url, json={
+                "model": self.name,
+                "prompt": text,
+            }, timeout=(10, 300))
+            if resp.status_code != 200:
+                try:
+                    err = resp.json().get("error", "")
+                except (ValueError, AttributeError):
+                    err = ""
+                raise RuntimeError(
+                    f"Ollama embedding failed for {self.name} over "
+                    f"{self._legacy_url}: {err or f'HTTP {resp.status_code}'}"
+                )
+            data = resp.json()
+            if "embedding" in data:
+                embeddings.append(data["embedding"])
+            elif "data" in data and isinstance(data["data"], list) and data["data"]:
+                embeddings.append(data["data"][0]["embedding"])
+            else:
+                raise RuntimeError(
+                    f"Unexpected Ollama /api/embeddings response for {self.name}: "
+                    f"{list(data.keys())}"
+                )
+        return embeddings
 
     def _embed_batch(self, batch):
         import requests
+        if self._legacy:
+            return self._legacy_embed(batch)
         resp = requests.post(self.url, json={
             "model": self.name,
             "input": list(batch),
             "truncate": True,
         }, timeout=(10, 300))
+        if resp.status_code == 404:
+            try:
+                err = resp.json().get("error", "")
+            except (ValueError, AttributeError):
+                err = ""
+            if err:
+                raise RuntimeError(f"Ollama embedding error for {self.name}: {err}")
+            # Endpoint itself missing -> fall back to the legacy API for good.
+            self._legacy = True
+            print(f"Ollama at {self.host} has no /api/embed -- falling back to "
+                  f"legacy /api/embeddings (slower, one request per doc).")
+            return self._legacy_embed(batch)
         resp.raise_for_status()
         data = resp.json()
         if "embeddings" not in data:
@@ -208,15 +260,58 @@ class JinaEmbeddingProvider(EmbeddingProvider):
 # prefixes that one another. Current set only has single-token prefixes.
 _PREFIXES = ("ollama:", "jina:")
 
+# Bare Ollama embedding tags (no "ollama:" prefix) that are auto-detected so
+# "qwen3-embedding:0.6b" and "ollama:qwen3-embedding:0.6b" behave identically.
+# The generic "-embedding" token rule below catches the qwen3-/qwen-embedding
+# families; this set covers the common tags without "embedding" in the name.
+_KNOWN_OLLAMA_EMBED_TAGS = {
+    "nomic-embed-text",
+    "mxbai-embed-large",
+    "snowflake-arctic-embed",
+    "snowflake-arctic-embed2",
+    "bge-m3",
+    "bge-m4",
+    "minilm",
+    "all-minilm",
+    "granite-embedding",
+}
+
+
+def _is_ollama_embed_tag(model_name: str) -> bool:
+    """True for a bare Ollama embedding tag (HF ids always contain '/')."""
+    if "/" in model_name:
+        return False
+    base = model_name.split(":")[0].strip().lower()
+    tokens = set(re.split(r"[^a-z0-9]+", base))
+    return base in _KNOWN_OLLAMA_EMBED_TAGS or "embedding" in tokens
+
+
+def canonical_model_key(model_name: str) -> str:
+    """
+    Canonical embedding-model identifier used for the on-disk index name.
+
+    Applies the provider prefix so that a bare Ollama embedding tag
+    ("qwen3-embedding:0.6b") and its prefixed form ("ollama:...") resolve to
+    the SAME directory and the SAME provider. Jina tags are already
+    unambiguous ("jina:" prefix); anything else is a sentence-transformers id.
+    """
+    if model_name.startswith(_PREFIXES):
+        return model_name
+    if _is_ollama_embed_tag(model_name):
+        return f"ollama:{model_name}"
+    return model_name
+
 
 def get_embedding_provider(model_name: str, device: str | None = None, **kwargs) -> EmbeddingProvider:
     """
     Build the right embedding provider for a model name.
 
-    ``ollama:<model>`` routes to Ollama's ``/api/embed``; ``jina:<model>``
-    routes to Jina AI's hosted API; anything else is treated as a
-    sentence-transformers model id and runs locally.
+    ``ollama:<model>`` (or a bare known Ollama embedding tag such as
+    ``qwen3-embedding:0.6b``) routes to Ollama's ``/api/embed``;
+    ``jina:<model>`` routes to Jina AI's hosted API; anything else is treated
+    as a sentence-transformers model id and runs locally.
     """
+    model_name = canonical_model_key(model_name)
     if model_name.startswith("ollama:"):
         return OllamaEmbeddingProvider(model_name[len("ollama:"):])
     if model_name.startswith("jina:"):

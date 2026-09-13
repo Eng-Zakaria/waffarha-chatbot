@@ -18,7 +18,7 @@ import re
 import ollama
 
 from core import config
-from core.embedding_providers import get_embedding_provider  # CHANGED
+from core.embedding_providers import get_embedding_provider, canonical_model_key  # CHANGED
 from core.rag_perfection import normalize_arabizi_and_arabic, check_out_of_scope_guardrail, classify_intent_robust
 from vectorstores.vectorstores import get_store  # CHANGED
 from personal.personal_queries import is_personal_query, PERSONAL_ERROR
@@ -1601,7 +1601,9 @@ class RagEngine:
                                 purely from its pre-trained knowledge with NO retrieval context.
                                 This is the "LLM-only" mode for comparison against RAG.
         """
-        self.embedding_model_name = embedding_model or config.EMBEDDING_MODEL
+        # CHANGED: canonicalized so a bare Ollama tag ("qwen3-embedding:0.6b")
+        # and its "ollama:" prefixed form resolve to the same index directory.
+        self.embedding_model_name = canonical_model_key(embedding_model or config.EMBEDDING_MODEL)
         self.backend = backend or config.VECTOR_STORE_BACKEND
         self.llm_model = llm_model or config.OLLAMA_MODEL
         self.llm_options = llm_options or {}  # NEW
