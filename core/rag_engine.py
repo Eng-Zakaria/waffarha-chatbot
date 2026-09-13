@@ -16,9 +16,9 @@ import random
 import re
 
 import ollama
-from sentence_transformers import SentenceTransformer
 
 from core import config
+from core.embedding_providers import get_embedding_provider  # CHANGED
 from core.rag_perfection import normalize_arabizi_and_arabic, check_out_of_scope_guardrail, classify_intent_robust
 from vectorstores.vectorstores import get_store  # CHANGED
 from personal.personal_queries import is_personal_query, PERSONAL_ERROR
@@ -1629,7 +1629,7 @@ class RagEngine:
                 f"  python ingest/build_index.py --backend {backend} --embedding-model {self.embedding_model_name}"
             )
 
-        self.embed_model = SentenceTransformer(self.embedding_model_name, device=config.EMBEDDING_DEVICE)
+        self.embed_model = get_embedding_provider(self.embedding_model_name, device=config.EMBEDDING_DEVICE)  # CHANGED: supports ollama:/jina: prefixes
 
         # faiss doesn't take a persist_path (save()/load() use store_path directly).
         # Every other backend needs one: chroma/qdrant/lancedb require it outright,
@@ -2382,7 +2382,8 @@ class RagEngine:
                     log.debug("Excluding offer %r (verdict=%s)", exclude_key, verdict)
 
         q_emb = self.embed_model.encode(
-            [retrieval_query], normalize_embeddings=True, convert_to_numpy=True
+            [retrieval_query], normalize_embeddings=True, convert_to_numpy=True,
+            task="retrieval.query",  # CHANGED: asymmetric-task hint for jina:v5-style models
         ).astype("float32")
 
         raw_results = self.store.search(q_emb, candidate_k)[0]

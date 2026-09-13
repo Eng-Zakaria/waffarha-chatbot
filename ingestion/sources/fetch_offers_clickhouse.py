@@ -63,6 +63,12 @@ _OFFER_COLUMNS = [
     "offer_desc_en", "offer_desc_ar",
     "actual_value", "offer_value", "offer_discount",
     "offer_expire_date", "offer_status", "deleted_at",
+    # NEW: dim_offers.coupon_expire_date -- the deadline until which purchased
+    # coupons of this offer stay redeemable, distinct from offer_expire_date
+    # (when the offer stops being sold). Kept as a third "valid until" source:
+    # build_index.py picks the LATEST of the three (summary / tier / coupon)
+    # so the bot never under-reports a cutoff the data actually allows.
+    "coupon_expire_date",
     "offer_sold_coponos", "offer_no_coponos",
     "special_display",
     "rate", "rate_count",
@@ -168,6 +174,7 @@ def _row_to_lang_offer(row: dict, lang: str) -> dict:
         "offer_value": _clean(row["offer_value"]),
         "offer_discount": _clean(row["offer_discount"]),
         "offer_expire_date": _clean(row["offer_expire_date"]),
+        "coupon_expire_date": _clean(row.get("coupon_expire_date")),
         "offer_status": _clean(row["offer_status"]),
         # NEW vs. the JSON pipeline: these are clean integers straight from
         # the warehouse, not a "18086 sold coupons" string to regex-parse

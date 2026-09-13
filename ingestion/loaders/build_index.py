@@ -9,10 +9,17 @@ without editing config.py each time:
     python ingest/build_index.py --backend faiss
     python ingest/build_index.py --backend chroma
     python ingest/build_index.py --backend both --embedding-model intfloat/multilingual-e5-small
+    python ingest/build_index.py --embedding-model ollama:qwen3-embedding:0.6b
+    python ingest/build_index.py --backend faiss --embedding-model jina:jina-embeddings-v5-text-small
 
 Each (embedding_model, backend) combination is written to its own directory
 under data/index/<embedding_model>/<backend>/, so multiple builds coexist
 and eval/run_matrix.py can point RagEngine at any of them.
+
+Besides sentence-transformers model ids, the --embedding-model flag accepts
+API-backed providers via a prefix (see core/embedding_providers.py):
+  ollama:<model>     -> Ollama /api/embed, e.g. ollama:qwen3-embedding:0.6b
+  jina:<model>       -> Jina AI hosted API, e.g. jina:jina-embeddings-v5-text-small
 """
 import argparse
 import json
@@ -21,10 +28,9 @@ import pickle
 import re
 import sys
 
-from sentence_transformers import SentenceTransformer
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import config
+from core.embedding_providers import get_embedding_provider
 from vectorstores.vectorstores import get_store
 
 
@@ -225,20 +231,27 @@ def _tier_meta(tiers: list) -> dict:
     return out
 
 
-def _effective_expiry(summary: str, tier_meta: dict) -> str:
-    """Offer-level 'valid until' date: the later of the summary
-    dim_offers.offer_expire_date and the latest tier expiry. The site shows
-    the tier-level date when tiers exist (offer 8291: summary 2026-08-31 vs
-    tiers valid until 2026-09-30), so the summary alone makes the bot answer
-    with a stale cutoff. Taking the later date is also the lenient choice for
-    the expired-offer filter -- never drops an offer a tier is still selling.
-    Returns the input summary unchanged when there's no tier expiry."""
+def _effective_expiry(summary: str, tier_meta: dict, coupon: str = "") -> str:
+    """Offer-level 'valid until' date: the LATEST of the summary
+    dim_offers.offer_expire_date, the latest tier expiry, and optionally
+    dim_offers.coupon_expire_date. The site shows the tier/coupon-level date
+    when one exists (offer 8291: summary 2026-08-31 vs tiers valid until
+    2026-09-30), so the summary alone makes the bot answer with a stale
+    cutoff. Taking the later date is also the lenient choice for the
+    expired-offer filter -- never drops an offer a tier is still selling.
+    Returns the input summary unchanged when there's no later expiry."""
+    candidates = []
+    if summary:
+        candidates.append(str(summary)[:10])
     tier = (tier_meta or {}).get("tier_expiry")
-    if not tier:
+    if tier:
+        candidates.append(str(tier)[:10])
+    if coupon:
+        candidates.append(str(coupon)[:10])
+    good = [c for c in candidates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", c)]
+    if not good:
         return summary
-    if not summary:
-        return tier
-    return max(str(summary)[:10], str(tier)[:10])
+    return max(good)
 
 
 def load_offers() -> list:
@@ -281,7 +294,10 @@ def load_offers() -> list:
         expiry = pick_field(offer, fc["expiry"])
         if expiry:
             expiry = re.split(r"[ T]", str(expiry))[0].strip()
-        expiry = _effective_expiry(expiry, tier_meta)
+        coupon_expiry = pick_field(offer, ["coupon_expire_date"], default="")
+        if coupon_expiry:
+            coupon_expiry = re.split(r"[ T]", str(coupon_expiry))[0].strip()
+        expiry = _effective_expiry(expiry, tier_meta, coupon_expiry)
 
         # Check if offer has expired (against the effective date above)
         if expiry and not config.INCLUDE_EXPIRED_OFFERS:
@@ -474,7 +490,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--backend", choices=["faiss", "chroma", "qdrant", "lancedb", "pgvector", "all"], default="faiss")
     parser.add_argument("--embedding-model", default=config.EMBEDDING_MODEL,
-                         help="Any sentence-transformers model id. Overrides config.EMBEDDING_MODEL.")
+                         help="Embedding model. A sentence-transformers model id, or a "
+                              "provider-prefixed id: 'ollama:qwen3-embedding:0.6b' or "
+                              "'jina:jina-embeddings-v5-text-small'. Overrides config.EMBEDDING_MODEL.")
     parser.add_argument("--batch-size", type=int, default=64,
                          help="Encode batch size. Lower it (e.g. 16) when running on a small GPU.")
     args = parser.parse_args()
@@ -484,8 +502,8 @@ def main():
         print("No documents to index. Aborting.")
         return
 
-    print(f"Loading embedding model: {args.embedding_model} (first run downloads it) ...")
-    model = SentenceTransformer(args.embedding_model, device=config.EMBEDDING_DEVICE)
+    print(f"Loading embedding model: {args.embedding_model} (first run downloads SentenceTransformer models) ...")
+    model = get_embedding_provider(args.embedding_model, device=config.EMBEDDING_DEVICE)
 
     # Encode ONCE per embedding model, not once per backend -- build_for() used to
     # call model.encode() itself, so `--backend all` silently re-embedded the whole
@@ -496,7 +514,7 @@ def main():
     texts = [d["text"] for d in docs]
     embeddings = model.encode(
         texts, batch_size=args.batch_size, show_progress_bar=True,
-        normalize_embeddings=True, convert_to_numpy=True,
+        normalize_embeddings=True, convert_to_numpy=True, task="retrieval.passage",
     ).astype("float32")
 
     backends = ["faiss", "chroma", "qdrant", "lancedb", "pgvector"] if args.backend == "all" else [args.backend]

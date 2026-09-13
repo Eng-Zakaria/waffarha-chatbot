@@ -13,9 +13,11 @@ COPY ingest/ ./ingest/
 
 # Bake the embedding model into the image at build time (see DOCKER.md) so
 # the container never needs network access to huggingface.co at runtime.
+# Only relevant for local sentence-transformers models -- "ollama:" / "jina:"
+# prefixed models are API-backed and have nothing to pre-download.
 ARG EMBEDDING_MODEL=BAAI/bge-m3
 ENV EMBEDDING_MODEL=${EMBEDDING_MODEL}
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('${EMBEDDING_MODEL}')"
+RUN python -c "import os; m=os.getenv('EMBEDDING_MODEL'); assert m and not (m.startswith('ollama:') or m.startswith('jina:')), 'no local model to bake'; from sentence_transformers import SentenceTransformer; SentenceTransformer(m)"
 
 EXPOSE 8000
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

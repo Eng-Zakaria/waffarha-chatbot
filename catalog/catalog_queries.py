@@ -349,7 +349,7 @@ _BASE_SELECT = """
         o.mobile_offer_title_en, o.mobile_offer_title_ar,
         o.offer_brief_en, o.offer_brief_ar,
         o.actual_value, o.offer_value, o.offer_discount,
-        o.offer_expire_date, o.offer_status,
+        o.offer_expire_date, o.coupon_expire_date, o.offer_status,
         o.offer_fineprint_en, o.offer_fineprint_ar,
         o.waffarha_advice_en, o.waffarha_advice_ar,
         o.special_display, o.offer_sold_coponos,
@@ -689,13 +689,16 @@ class CatalogQueryService:
         has_range = n_tiers > 1 and min_price is not None and max_price is not None \
             and float(min_price) != float(max_price)
 
-        # Effective expiry = the later of the summary date and the latest tier
-        # date (the site shows the tier date -- offer 8291: summary 2026-08-31
-        # vs tiers valid until 2026-09-30).
+        # Effective expiry = the later of the summary date, the latest tier
+        # date, and any coupon_expire_date (the site shows the tier/coupon
+        # date -- offer 8291: summary 2026-08-31 vs tiers valid until
+        # 2026-09-30).
+        c = row.get("coupon_expire_date")
         eff_expiry = expiry
-        te = row.get("tier_expiry")
-        if te and (not eff_expiry or str(te)[:10] > str(eff_expiry)[:10]):
-            eff_expiry = te
+        for date_candidate in (row.get("tier_expiry"), c):
+            s = str(date_candidate)[:10] if date_candidate else ""
+            if s and (not eff_expiry or s > str(eff_expiry)[:10]):
+                eff_expiry = s
 
         parts = [f"- {title}"]
 

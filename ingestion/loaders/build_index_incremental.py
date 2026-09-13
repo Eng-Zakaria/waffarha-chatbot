@@ -11,6 +11,12 @@ This is much faster than rebuilding the entire index from scratch.
 Usage:
     python ingestion/loaders/build_index_incremental.py --backend faiss
     python ingestion/loaders/build_index_incremental.py --backend chroma --embedding-model intfloat/multilingual-e5-small
+    python ingestion/loaders/build_index_incremental.py --embedding-model ollama:qwen3-embedding:0.6b
+    python ingestion/loaders/build_index_incremental.py --backend faiss --embedding-model jina:jina-embeddings-v5-text-small
+
+The --embedding-model flag accepts sentence-transformers model ids plus
+API-backed providers via a prefix (see core/embedding_providers.py):
+ollama:<model> -> Ollama /api/embed; jina:<model> -> Jina AI hosted API.
 
 The script maintains a manifest file (index_manifest.json) that tracks:
 - Document hashes (content + metadata) for change detection
@@ -29,10 +35,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Tuple, Optional
 
-from sentence_transformers import SentenceTransformer
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from core import config
+from core.embedding_providers import get_embedding_provider
 from vectorstores.vectorstores import get_store
 
 
@@ -248,18 +253,25 @@ def _tier_meta(tiers: List[Dict]) -> Dict:
     return out
 
 
-def _effective_expiry(summary: str, tier_meta: Dict) -> str:
-    """Offer-level 'valid until' date: the later of the summary
-    dim_offers.offer_expire_date and the latest tier expiry. The site shows
-    the tier-level date when tiers exist, and taking the later date is also
-    the lenient choice for the expired-offer filter. Returns the summary
-    unchanged when there is no tier expiry."""
+def _effective_expiry(summary: str, tier_meta: Dict, coupon: str = "") -> str:
+    """Offer-level 'valid until' date: the LATEST of the summary
+    dim_offers.offer_expire_date, the latest tier expiry, and optionally
+    dim_offers.coupon_expire_date. The site shows the tier/coupon-level date
+    when one exists, and taking the later date is also the lenient choice for
+    the expired-offer filter. Returns the summary unchanged when there is no
+    later expiry."""
+    candidates = []
+    if summary:
+        candidates.append(str(summary)[:10])
     tier = (tier_meta or {}).get("tier_expiry")
-    if not tier:
+    if tier:
+        candidates.append(str(tier)[:10])
+    if coupon:
+        candidates.append(str(coupon)[:10])
+    good = [c for c in candidates if re.fullmatch(r"\d{4}-\d{2}-\d{2}", c)]
+    if not good:
         return summary
-    if not summary:
-        return tier
-    return max(str(summary)[:10], str(tier)[:10])
+    return max(good)
 
 
 def load_offers() -> List[Dict]:
@@ -297,7 +309,10 @@ def load_offers() -> List[Dict]:
         expiry = pick_field(offer, fc["expiry"])
         if expiry:
             expiry = re.split(r"[ T]", str(expiry))[0].strip()
-        expiry = _effective_expiry(expiry, tier_meta)
+        coupon_expiry = pick_field(offer, ["coupon_expire_date"], default="")
+        if coupon_expiry:
+            coupon_expiry = re.split(r"[ T]", str(coupon_expiry))[0].strip()
+        expiry = _effective_expiry(expiry, tier_meta, coupon_expiry)
 
         if expiry and not config.INCLUDE_EXPIRED_OFFERS:
             try:
@@ -563,11 +578,12 @@ def incremental_update(embedding_model: str, backend: str,
     new_embeddings = None
     if new_or_modified:
         print(f"  Encoding {len(new_or_modified)} new/modified documents...")
-        model = SentenceTransformer(embedding_model, device=config.EMBEDDING_DEVICE)
+        model = get_embedding_provider(embedding_model, device=config.EMBEDDING_DEVICE)
         new_texts = [d["text"] for d in new_or_modified]
         new_embeddings = model.encode(
             new_texts, batch_size=64, show_progress_bar=True,
             normalize_embeddings=True, convert_to_numpy=True,
+            task="retrieval.passage",
         ).astype("float32")
 
     # Rebuild FAISS index with all embeddings
@@ -649,11 +665,12 @@ def incremental_update(embedding_model: str, backend: str,
         store = get_store(backend, persist_path=None if backend == "faiss" else store_path)
 
         # Encode all docs
-        model = SentenceTransformer(embedding_model, device=config.EMBEDDING_DEVICE)
+        model = get_embedding_provider(embedding_model, device=config.EMBEDDING_DEVICE)
         texts = [d["text"] for d in all_docs]
         embeddings = model.encode(
             texts, batch_size=64, show_progress_bar=True,
             normalize_embeddings=True, convert_to_numpy=True,
+            task="retrieval.passage",
         ).astype("float32")
 
         store.build(embeddings, all_docs)
@@ -702,7 +719,9 @@ def main():
     parser = argparse.ArgumentParser(description="Incremental vector index builder")
     parser.add_argument("--backend", choices=["faiss", "chroma", "qdrant", "lancedb", "pgvector", "all"], default="faiss")
     parser.add_argument("--embedding-model", default=config.EMBEDDING_MODEL,
-                         help="Any sentence-transformers model id. Overrides config.EMBEDDING_MODEL.")
+                         help="Embedding model. A sentence-transformers model id, or a "
+                              "provider-prefixed id: 'ollama:qwen3-embedding:0.6b' or "
+                              "'jina:jina-embeddings-v5-text-small'. Overrides config.EMBEDDING_MODEL.")
     parser.add_argument("--force-full", action="store_true",
                          help="Force full rebuild instead of incremental update")
     args = parser.parse_args()
@@ -724,11 +743,12 @@ def main():
         if args.force_full or not manifest.get("documents"):
             print(f"\nNo existing manifest or --force-full specified, doing full rebuild for {backend}")
             start_time = time.time()
-            model = SentenceTransformer(args.embedding_model, device=config.EMBEDDING_DEVICE)
+            model = get_embedding_provider(args.embedding_model, device=config.EMBEDDING_DEVICE)
             texts = [d["text"] for d in current_docs]
             embeddings = model.encode(
                 texts, batch_size=64, show_progress_bar=True,
                 normalize_embeddings=True, convert_to_numpy=True,
+                task="retrieval.passage",
             ).astype("float32")
             elapsed = time.time() - start_time
             print(f"  Encoding took {elapsed:.1f}s")

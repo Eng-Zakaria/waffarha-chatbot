@@ -121,6 +121,9 @@ OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 # CHANGED: default embedding model upgraded to BGE-M3 for better Arabic retrieval.
 # Set EMBEDDING_MODEL env var to override. Available models: intfloat/multilingual-e5-base,
 # intfloat/multilingual-e5-large, BAAI/bge-m3, sentence-transformers/paraphrase-multilingual-mpnet-base-v2
+# NEW: API-based embedding providers are also supported via a model prefix --
+# "ollama:qwen3-embedding:0.6b" (needs OLLAMA_HOST) or "jina:jina-embeddings-v5-text-small"
+# (needs JINA_API_KEY). See core/embedding_providers.py for the provider routing.
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3")
 
 # CHANGED: default vector store backend upgraded to Qdrant for better scalability.
@@ -321,6 +324,13 @@ PARTNERS_STATUS_LIVE = {"active"}
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+
+# NEW: Jina AI hosted embeddings API settings (used by the ``jina:`` model
+# prefix in build_index.py / build_index_incremental.py / rag_engine.py).
+# JINA_API_KEY is mandatory for those models; get one at https://jina.ai.
+JINA_API_KEY = os.getenv("JINA_API_KEY")
+JINA_API_URL = os.getenv("JINA_API_URL", "https://api.jina.ai/v1/embeddings")
+
 MAX_TOKENS = 500         
 OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "1536"))  
 
