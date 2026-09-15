@@ -1,38 +1,36 @@
 """
-Pulls active offers from ClickHouse (main.dim_offers joined to
-main.dim_partners) and writes data/offers_raw.json in EXACTLY the shape
-fetch_offers.py already produces from the mobile API -- so build_index.py's
-load_offers() / pick_field() / OFFER_FIELD_CANDIDATES machinery needs ZERO
-changes to consume it. This is a drop-in alternative offer source, not a
-new pipeline.
+THE canonical offer source (since PHASE 4 retired the mobile-API scrape,
+ingestion/sources/fetch_offers.py). Pulls active offers from ClickHouse
+(main.dim_offers joined to main.dim_partners) and writes data/offers_raw.json
+in the shape load_offers() / pick_field() / OFFER_FIELD_CANDIDATES expect --
+so build_index.py needs ZERO changes to consume it.
+
+Driven by the single refresh entry point:
+    python ingestion/refresh.py            # fetch + build
+    python ingestion/refresh.py --steps sources build   # just offers + build
 
 Why this works with no changes downstream:
     config.OFFER_FIELD_CANDIDATES already expects keys like "actual_value",
     "offer_value", "offer_discount", "offer_expire_date" -- because those
     are literally the ClickHouse column names dim_offers already uses.
-    (The mobile API apparently returns the same underlying field names.)
-    The one thing the JSON-API pipeline does that ClickHouse doesn't do for
-    you automatically is split into one record PER LANGUAGE (fetch_offers.py
-    calls the API once per lang in config.LANGS and tags each result
-    "_lang"). dim_offers instead has both _en/_ar columns on the SAME row,
-    so this script does that split itself: each ClickHouse row becomes TWO
-    synthetic offer dicts (one "en", one "ar"), each populated with ONLY
-    that language's columns under the SAME generic key names load_offers()
-    already looks for (e.g. "mobile_offer_title_en" only appears in the en
-    dict, "mobile_offer_title_ar" only in the ar dict) -- so pick_field()'s
-    candidate-list fallback picks the right one automatically, same as it
-    does today for real API responses.
+    (The retired mobile API returned the same underlying field names.)
+    dim_offers has both _en/_ar columns on the SAME row, so this script
+    splits each ClickHouse row into TWO synthetic offer dicts (one "en", one
+    "ar"), each populated with ONLY that language's columns under the SAME
+    generic key names load_offers() already looks for (e.g.
+    "mobile_offer_title_en" only appears in the en dict, "mobile_offer_title_ar"
+    only in the ar dict) -- so pick_field()'s candidate-list fallback picks the
+    right one automatically.
 
 Usage:
     # Sanity-check the query/column mapping against real data first:
-    python ingest/fetch_offers_clickhouse.py --debug
+    python ingestion/sources/fetch_offers_clickhouse.py --debug
 
     # Then pull everything and (over)write data/offers_raw.json:
-    python ingest/fetch_offers_clickhouse.py
+    python ingestion/sources/fetch_offers_clickhouse.py
 
-    # Merge into a separate file instead of overwriting the API's output,
-    # e.g. if you want both sources side by side while validating this one:
-    python ingest/fetch_offers_clickhouse.py --output offers_raw_ch.json
+    # Merge into a separate file (lineage studies / side-by-side validation):
+    python ingestion/sources/fetch_offers_clickhouse.py --output offers_raw_ch.json
 
 Requires: pip install clickhouse-connect
 Requires: CLICKHOUSE_PASSWORD (and friends) in .env -- see config.py.
@@ -165,8 +163,8 @@ def _clean_text(text) -> str:
 
 def _row_to_lang_offer(row: dict, lang: str) -> dict:
     """Builds ONE synthetic offer dict for ONE language from a joined
-    ClickHouse row, containing only the fields fetch_offers.py's real API
-    responses would contain for that language -- see module docstring."""
+    ClickHouse row, containing only that language's fields in the shape
+    load_offers()/pick_field() expect -- see module docstring."""
     suffix = f"_{lang}"
     offer = {
         "offer_id": _clean(row["offer_id"]),
@@ -288,8 +286,8 @@ def main():
     parser.add_argument("--debug", action="store_true", help="Fetch 3 rows and print the raw + mapped shape")
     parser.add_argument("--output", default="offers_raw.json",
                          help="Filename under config.INDEX_DIR to write. Defaults to offers_raw.json "
-                              "(same file fetch_offers.py writes -- overwrites it). Pass a different "
-                              "name to keep this source separate while validating it.")
+                              "(load_offers() reads this canonical file). Pass a different "
+                              "name to keep a separate copy while validating this source.")
     args = parser.parse_args()
 
     if args.debug:
@@ -305,7 +303,7 @@ def main():
 
     n_rows = len(offers) // len(config.LANGS)
     print(f"\nDone. {n_rows} offer row(s) x {len(config.LANGS)} lang(s) = {len(offers)} offer dicts saved to {out_path}")
-    print("Next: python ingest/build_index.py --backend faiss   (or your usual backend/embedding-model flags)")
+    print("Next: python ingestion/refresh.py --skip-fetch   (rebuild the index from the refreshed data/)")
 
 
 if __name__ == "__main__":

@@ -15,9 +15,9 @@ small additive change (see the CHANGED comment added there) instead of
 this script needing to know anything about doc/embedding shape itself.
 
 Usage:
-    python ingest/fetch_payment_methods_clickhouse.py --debug     # raw dump
-    python ingest/fetch_payment_methods_clickhouse.py --preview   # filtered candidate list, no write
-    python ingest/fetch_payment_methods_clickhouse.py --write     # writes data/faqs_payment_methods.json
+    python ingestion/sources/fetch_payment_methods_clickhouse.py --debug     # raw dump
+    python ingestion/sources/fetch_payment_methods_clickhouse.py --preview   # filtered candidate list, no write
+    python ingestion/sources/fetch_payment_methods_clickhouse.py --write     # writes data/faqs_payment_methods.json
 """
 import argparse
 import datetime
@@ -207,10 +207,10 @@ def _build_faq_records(row: dict) -> list:
         records.append({
             "id": f"payment_{pid}_info",
             "category": "payment",
-            "category_ar": "الدفع",
+            "category_ar": "Ø§Ù„Ø¯ÙØ¹",
             "question_en": f"How does paying with {name_en} work?",
             "answer_en": desc_en or desc_ar,
-            "question_ar": f"إزاي أدفع بـ {name_ar}؟",
+            "question_ar": f"Ø¥Ø²Ø§ÙŠ Ø£Ø¯ÙØ¹ Ø¨Ù€ {name_ar}ØŸ",
             "answer_ar": desc_ar or desc_en,
         })
 
@@ -224,10 +224,10 @@ def _build_faq_records(row: dict) -> list:
         records.append({
             "id": f"payment_{pid}_refund",
             "category": "payment",
-            "category_ar": "الدفع",
+            "category_ar": "Ø§Ù„Ø¯ÙØ¹",
             "question_en": f"What is the refund policy if I paid with {name_en}?",
             "answer_en": refund_en or refund_ar,
-            "question_ar": f"إيه سياسة الاسترجاع لو دفعت بـ {name_ar}؟",
+            "question_ar": f"Ø¥ÙŠÙ‡ Ø³ÙŠØ§Ø³Ø© Ø§Ù„Ø§Ø³ØªØ±Ø¬Ø§Ø¹ Ù„Ùˆ Ø¯ÙØ¹Øª Ø¨Ù€ {name_ar}ØŸ",
             "answer_ar": refund_ar or refund_en,
         })
 
@@ -256,7 +256,7 @@ def run_write():
     n_refund = sum(1 for r in all_records if r["id"].endswith("_refund"))
     print(f"\nDone. {len(rows)} payment method(s) -> {n_info} info + {n_refund} refund FAQ record(s) "
           f"= {len(all_records)} total, saved to {out_path}")
-    print("Next: python ingest/build_index.py --backend faiss   (load_faqs() now also reads this file)")
+    print("Next: python ingestion/loaders/build_index.py --backend faiss   (load_faqs() now also reads this file)")
 
 
 def main():

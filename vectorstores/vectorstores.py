@@ -247,7 +247,7 @@ class QdrantStore(VectorStore):
         if self.qdrant_url and not self.client.collection_exists(self.collection_name):
             raise FileNotFoundError(
                 f"Qdrant collection '{self.collection_name}' not found on {self.qdrant_url} -- "
-                f"rebuild it first, e.g.: python ingest/build_index.py --backend qdrant "
+                f"rebuild it first, e.g.: python ingestion/loaders/build_index.py --backend qdrant "
                 f"--embedding-model <model>"
             )
 
@@ -313,7 +313,7 @@ class PgVectorStore(VectorStore):
     `persist_path` isn't a filesystem path here (there's no local file to
     write) -- it's just hashed into a stable table name, so the existing
     call pattern (`get_store(backend, persist_path=...)` from
-    ingest/build_index.py / eval/bench_vectorstores.py) still works
+    ingestion/loaders/build_index.py / eval/bench_vectorstores.py) still works
     unmodified for this backend too.
     """
     name = "pgvector"

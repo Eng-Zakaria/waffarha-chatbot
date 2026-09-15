@@ -39,10 +39,10 @@ def run_manual_tests():
     # 2. Test Out-of-Scope Guardrails
     print("\n--- [Pillar 3] Testing Out-of-Scope Guardrails ---")
     queries_oos = [
-        ("عاملين إيه الجو في القاهرة النهاردة؟", "Weather query"),
-        ("عندي وجع رأس، آخذ إيه دواء؟", "Medical query"),
-        ("نكتة حلوة كده", "Joke query"),
-        ("عندكم عرض كنتاكي بكام؟", "Valid Waffarha query"),
+        ("Ø¹Ø§Ù…Ù„ÙŠÙ† Ø¥ÙŠÙ‡ Ø§Ù„Ø¬Ùˆ ÙÙŠ Ø§Ù„Ù‚Ø§Ù‡Ø±Ø© Ø§Ù„Ù†Ù‡Ø§Ø±Ø¯Ø©ØŸ", "Weather query"),
+        ("Ø¹Ù†Ø¯ÙŠ ÙˆØ¬Ø¹ Ø±Ø£Ø³ØŒ Ø¢Ø®Ø° Ø¥ÙŠÙ‡ Ø¯ÙˆØ§Ø¡ØŸ", "Medical query"),
+        ("Ù†ÙƒØªØ© Ø­Ù„ÙˆØ© ÙƒØ¯Ù‡", "Joke query"),
+        ("Ø¹Ù†Ø¯ÙƒÙ… Ø¹Ø±Ø¶ ÙƒÙ†ØªØ§ÙƒÙŠ Ø¨ÙƒØ§Ù…ØŸ", "Valid Waffarha query"),
     ]
     for q, desc in queries_oos:
         deflection = check_out_of_scope_guardrail(q, "ar")
@@ -56,11 +56,11 @@ def run_manual_tests():
     # 3. Test Intent Classification
     print("\n--- [Pillar 1] Testing Robust Intent Routing ---")
     queries_intent = [
-        "السلام عليكم",
-        "أرخص عرض عندكم قد إيه؟",
-        "إزاي أشتري كوبون من التطبيق؟",
-        "الطقس عامل ايه",
-        "عايز اعرف عرض كنتاكي بكام",
+        "Ø§Ù„Ø³Ù„Ø§Ù… Ø¹Ù„ÙŠÙƒÙ…",
+        "Ø£Ø±Ø®Øµ Ø¹Ø±Ø¶ Ø¹Ù†Ø¯ÙƒÙ… Ù‚Ø¯ Ø¥ÙŠÙ‡ØŸ",
+        "Ø¥Ø²Ø§ÙŠ Ø£Ø´ØªØ±ÙŠ ÙƒÙˆØ¨ÙˆÙ† Ù…Ù† Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ØŸ",
+        "Ø§Ù„Ø·Ù‚Ø³ Ø¹Ø§Ù…Ù„ Ø§ÙŠÙ‡",
+        "Ø¹Ø§ÙŠØ² Ø§Ø¹Ø±Ù Ø¹Ø±Ø¶ ÙƒÙ†ØªØ§ÙƒÙŠ Ø¨ÙƒØ§Ù…",
     ]
     for q in queries_intent:
         intent = classify_intent_robust(q)
@@ -74,8 +74,8 @@ def run_manual_tests():
         engine = RagEngine()
         test_queries = [
             "3ayez a3raf kam offer el KFC?",
-            "أرخص عرض عندكم",
-            "طريقة استرداد ثمن الكوبون",
+            "Ø£Ø±Ø®Øµ Ø¹Ø±Ø¶ Ø¹Ù†Ø¯ÙƒÙ…",
+            "Ø·Ø±ÙŠÙ‚Ø© Ø§Ø³ØªØ±Ø¯Ø§Ø¯ Ø«Ù…Ù† Ø§Ù„ÙƒÙˆØ¨ÙˆÙ†",
         ]
         for q in test_queries:
             print(f"\nQuery: {q}")
@@ -85,7 +85,7 @@ def run_manual_tests():
             print("=" * 60)
     except Exception as e:
         print(f"Note: RAG Engine initialization skipped or index not fully built: {e}")
-        print("To run full RAG retrieval tests, ensure index is built via 'python ingest/build_index.py'")
+        print("To run full RAG retrieval tests, ensure index is built via 'python ingestion/loaders/build_index.py'")
 
 if __name__ == "__main__":
     run_manual_tests()

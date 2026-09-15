@@ -626,10 +626,13 @@ class FacetedCatalog:
         """Converts (oid, rec) pairs into engine-shaped {"metadata": doc} entries
         in rank order, picking the metadata that matches reply_lang."""
         out = []
+        excluded = None
+        if exclude_ids:
+            excluded = {str(e) for e in exclude_ids if e is not None}
         for oid, rec in recs:
             if limit is not None and len(out) >= limit:
                 break
-            if exclude_ids and oid in exclude_ids:
+            if excluded and oid is not None and str(oid) in excluded:
                 continue
             if price_filter:
                 lo, hi = price_filter

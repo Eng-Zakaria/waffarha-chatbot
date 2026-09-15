@@ -26,8 +26,8 @@ this file up automatically if present (see the NEW block added there).
     ships to customers.
 
 Usage:
-    python ingest/fetch_purchasing_status_clickhouse.py --debug   # investigate only
-    python ingest/fetch_purchasing_status_clickhouse.py --write   # writes data/faqs_purchasing_status.json
+    python ingestion/sources/fetch_purchasing_status_clickhouse.py --debug   # investigate only
+    python ingestion/sources/fetch_purchasing_status_clickhouse.py --write   # writes data/faqs_purchasing_status.json
 
 Requires: pip install clickhouse-connect
 Requires: CLICKHOUSE_PASSWORD (and friends) in .env -- see config.py.
@@ -90,21 +90,21 @@ _ANSWER_EN = {
 }
 
 _ANSWER_AR = {
-    "Paid": "تم استلام وتأكيد دفعتك لهذا الطلب.",
-    "In Process": "تم تأكيد طلبك وجارٍ تنفيذه حاليًا.",
-    "Used": "تم استخدام هذا الكوبون بالفعل.",
-    "Canceled": "تم إلغاء هذا الطلب أو الكوبون.",
-    "Refund": "تم استرداد قيمة هذا الطلب.",
-    "Pending": "طلبك في انتظار تأكيد الدفع.",
-    "Waiting": "طلبك في وضع الانتظار قبل استكمال الخطوات التالية.",
-    "V Pending": "طلبك في مرحلة انتظار التحقق.",
-    "Expired": "انتهت صلاحية هذا الكوبون ولم يعد صالحًا للاستخدام.",
-    "In Refund Process": "تم بدء عملية استرداد قيمة طلبك وجارٍ تنفيذها.",
-    "Fawry Pending": "لم يتم تأكيد الدفع عبر فوري حتى الآن.",
+    "Paid": "ØªÙ… Ø§Ø³ØªÙ„Ø§Ù… ÙˆØªØ£ÙƒÙŠØ¯ Ø¯ÙØ¹ØªÙƒ Ù„Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨.",
+    "In Process": "ØªÙ… ØªØ£ÙƒÙŠØ¯ Ø·Ù„Ø¨Ùƒ ÙˆØ¬Ø§Ø±Ù ØªÙ†ÙÙŠØ°Ù‡ Ø­Ø§Ù„ÙŠÙ‹Ø§.",
+    "Used": "ØªÙ… Ø§Ø³ØªØ®Ø¯Ø§Ù… Ù‡Ø°Ø§ Ø§Ù„ÙƒÙˆØ¨ÙˆÙ† Ø¨Ø§Ù„ÙØ¹Ù„.",
+    "Canceled": "ØªÙ… Ø¥Ù„ØºØ§Ø¡ Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨ Ø£Ùˆ Ø§Ù„ÙƒÙˆØ¨ÙˆÙ†.",
+    "Refund": "ØªÙ… Ø§Ø³ØªØ±Ø¯Ø§Ø¯ Ù‚ÙŠÙ…Ø© Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨.",
+    "Pending": "Ø·Ù„Ø¨Ùƒ ÙÙŠ Ø§Ù†ØªØ¸Ø§Ø± ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø¯ÙØ¹.",
+    "Waiting": "Ø·Ù„Ø¨Ùƒ ÙÙŠ ÙˆØ¶Ø¹ Ø§Ù„Ø§Ù†ØªØ¸Ø§Ø± Ù‚Ø¨Ù„ Ø§Ø³ØªÙƒÙ…Ø§Ù„ Ø§Ù„Ø®Ø·ÙˆØ§Øª Ø§Ù„ØªØ§Ù„ÙŠØ©.",
+    "V Pending": "Ø·Ù„Ø¨Ùƒ ÙÙŠ Ù…Ø±Ø­Ù„Ø© Ø§Ù†ØªØ¸Ø§Ø± Ø§Ù„ØªØ­Ù‚Ù‚.",
+    "Expired": "Ø§Ù†ØªÙ‡Øª ØµÙ„Ø§Ø­ÙŠØ© Ù‡Ø°Ø§ Ø§Ù„ÙƒÙˆØ¨ÙˆÙ† ÙˆÙ„Ù… ÙŠØ¹Ø¯ ØµØ§Ù„Ø­Ù‹Ø§ Ù„Ù„Ø§Ø³ØªØ®Ø¯Ø§Ù….",
+    "In Refund Process": "ØªÙ… Ø¨Ø¯Ø¡ Ø¹Ù…Ù„ÙŠØ© Ø§Ø³ØªØ±Ø¯Ø§Ø¯ Ù‚ÙŠÙ…Ø© Ø·Ù„Ø¨Ùƒ ÙˆØ¬Ø§Ø±Ù ØªÙ†ÙÙŠØ°Ù‡Ø§.",
+    "Fawry Pending": "Ù„Ù… ÙŠØªÙ… ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø¯ÙØ¹ Ø¹Ø¨Ø± ÙÙˆØ±ÙŠ Ø­ØªÙ‰ Ø§Ù„Ø¢Ù†.",
 }
 
 _CATEGORY_EN = "purchase_status"
-_CATEGORY_AR = "حالة الطلب"
+_CATEGORY_AR = "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
 
 
 def _build_faq_records(rows: list):
@@ -123,7 +123,7 @@ def _build_faq_records(rows: list):
             "question_en": f'What does the order status "{name}" mean?',
             "answer_en": _ANSWER_EN[name],
             "category": _CATEGORY_EN,
-            "question_ar": f'ماذا تعني حالة الطلب "{row.get("pur_status_name_ar") or name}"؟',
+            "question_ar": f'Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ "{row.get("pur_status_name_ar") or name}"ØŸ',
             "answer_ar": _ANSWER_AR.get(name, _ANSWER_EN[name]),
             "category_ar": _CATEGORY_AR,
         })
@@ -179,7 +179,7 @@ def run_write():
         print(f"Skipped {len(skipped)} row(s):")
         for s in skipped:
             print(f"  {s}")
-    print("\nRun ingest/build_index.py to fold these into the index (see the NEW block in load_faqs()).")
+    print("\nRun ingestion/loaders/build_index.py to fold these into the index (see the NEW block in load_faqs()).")
 
 
 def main():

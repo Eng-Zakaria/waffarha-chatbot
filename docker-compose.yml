@@ -88,7 +88,11 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b-instruct}
-      WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:?set WAFFARHA_SECURITY_KEY in .env}
+      # (PHASE 4) WAFFARHA_SECURITY_KEY was removed with the retired mobile-API
+      # offer scrape (ingestion/sources/fetch_offers.py); offer ingestion now
+      # reads ClickHouse only. Passed through for the standalone eval script
+      # (eval/qwen_vs_claude_eval.py), no longer required to boot the app.
+      WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:-}
       REDIS_URL: redis://redis:6379/0
       EMBEDDING_DEVICE: cpu
       # Must match ollama's OLLAMA_NUM_PARALLEL above -- see app.py's
@@ -118,7 +122,11 @@ services:
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b-instruct}
-      WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:?set WAFFARHA_SECURITY_KEY in .env}
+      # (PHASE 4) WAFFARHA_SECURITY_KEY was removed with the retired mobile-API
+      # offer scrape (ingestion/sources/fetch_offers.py); offer ingestion now
+      # reads ClickHouse only. Passed through for the standalone eval script
+      # (eval/qwen_vs_claude_eval.py), no longer required to boot the app.
+      WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:-}
       REDIS_URL: redis://redis:6379/0
       EMBEDDING_DEVICE: cpu
     depends_on:

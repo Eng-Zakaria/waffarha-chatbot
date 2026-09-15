@@ -572,6 +572,17 @@ _INJECTION_PATTERNS = [
         r"تجاهل التعليمات",
         r"انت الان|أنت الآن",
         r"اظهر التعليمات",
+        # Stage-4 additive: Egyptian-Arabic / franco phrasings the detec-
+        # tor above missed ("تجاهل كل التعليمات السابقة", "أعرض محتوى
+        # البرومبت", "انت دلوقتي مسئول", franco "egy el awamer"...). The
+        # instruction-hierarchy line stays the primary defense; these
+        # short-circuit the most clear-cut local-language attempts.
+        r"تجاهل\s+(?:كل|جميع\s+التعليمات|كل\s+التعليمات|التعليمات\s+السابقة)",
+        r"انسى\s+(?:كل|جميع)?\s*(?:التعليمات|الأوامر|الاوامر|القواعد)",
+        r"(?:أعرض|اعرض|اظهر|أظهر)\s+(?:لي\s+)?(?:البرومبت|البرومت|السيستم|محتوى\s+البرومبت|محتوى\s+البرومت|التعليمات\s+الرئيسية)",
+        r"(?:انت|أنت)\s+(?:دلوقتي|الان|الآن)\s+(?:مدير|مسئول|المالك)",
+        r"egy\s+(?:el\s+)?awamer(?:\s|$)",
+        r"2ol\s+(?:el\s+)?system",
     ]
 ]
 # Our own prompt-scaffolding labels -- if these appear literally inside the
@@ -1608,8 +1619,8 @@ class RagEngine:
           llm_model         -- Ollama model tag. Defaults to config.OLLAMA_MODEL.
           index_dir         -- directory holding this (embedding_model, backend) combo's
                                 docs.pkl [+ index.faiss]. Defaults to the layout written by
-                                the patched ingest/build_index.py
-                                (data/index/<embedding_model>/<backend>/).
+                                ingestion/loaders/build_index.py
+                                (data/index/<embedding_model>/<backend>/, plus index_manifest.json).
           llm_options       -- NEW: optional dict overriding individual Ollama generation
                                 options (temperature, top_p, repeat_penalty, num_ctx,
                                 num_predict, ...) for THIS engine instance. Anything not
@@ -1653,7 +1664,8 @@ class RagEngine:
         if not os.path.exists(docs_path):
             raise FileNotFoundError(
                 f"Index not found at {index_dir}. Run:\n"
-                f"  python ingest/build_index.py --backend {backend} --embedding-model {self.embedding_model_name}"
+                f"  python ingestion/refresh.py --skip-fetch     (rebuild from existing data/)\n"
+                f"  python ingestion/refresh.py                  (fetch from ClickHouse, then build)"
             )
 
         self.embed_model = get_embedding_provider(self.embedding_model_name, device=config.EMBEDDING_DEVICE)  # CHANGED: supports ollama:/jina: prefixes
@@ -1661,7 +1673,7 @@ class RagEngine:
         # faiss doesn't take a persist_path (save()/load() use store_path directly).
         # Every other backend needs one: chroma/qdrant/lancedb require it outright,
         # and pgvector silently falls back to a shared table name without it -- same
-        # bug found and fixed in ingest/build_index.py's build_for().
+        # bug found and fixed in ingestion/loaders/build_index.py's build_for().
         self.store = get_store(self.backend, persist_path=None if self.backend == "faiss" else store_path)  # CHANGED
         self.store.load(store_path)  # CHANGED
 
@@ -1682,6 +1694,35 @@ class RagEngine:
 
         with open(docs_path, "rb") as f:
             self.docs = pickle.load(f)
+
+        # PHASE 4: cross-check the loaded index against its manifest
+        # (index_manifest.json, written by ingestion/refresh.py -> build_index.py).
+        # A mismatch here means this index directory was built with a different
+        # embedding model / backend than the one the engine was asked for.
+        # Informational only -- never fatal, so startup never breaks over it.
+        self.index_manifest = None
+        try:
+            _mpath = os.path.join(index_dir, "index_manifest.json")
+            if os.path.exists(_mpath):
+                import json as _json
+                with open(_mpath, "r", encoding="utf-8") as _f:
+                    self.index_manifest = _json.load(_f)
+                _m_emb = self.index_manifest.get("embedding_model")
+                _m_back = self.index_manifest.get("backend")
+                from core.embedding_providers import canonical_model_key as _cmk
+                if _m_emb and (_m_emb != _cmk(self.embedding_model_name) or _m_back != self.backend):
+                    log.warning("index manifest mismatch at %s: built for embedding=%s backend=%s "
+                                "but engine was asked for embedding=%s backend=%s; retrieval may be "
+                                "reading a mismatched index -- re-run 'python ingestion/refresh.py'",
+                                index_dir, _m_emb, _m_back, _cmk(self.embedding_model_name), self.backend)
+                else:
+                    _s = self.index_manifest.get("stats", {})
+                    log.info("index manifest OK at %s: %s docs (%s faq / %s offer), built by %s at %s",
+                             index_dir, _s.get("total_docs"), _s.get("faq_count"),
+                             _s.get("offer_count"), self.index_manifest.get("built_by"),
+                             self.index_manifest.get("updated_at"))
+        except Exception as _e:
+            log.debug("no readable index manifest at %s: %s", index_dir, _e)
 
         # NEW: known merchant names, longest-first, used to detect queries
         # that name 2+ merchants at once ("what's the deal at X and Y") so
@@ -1731,7 +1772,7 @@ class RagEngine:
 
     def _load_partners_snapshot(self) -> list | None:
         """Loads the dim_partners merchant-identity snapshot written by
-        ingest/fetch_partners_clickhouse.py --snapshot. Returns a list of
+        ingestion/sources/fetch_partners_clickhouse.py --snapshot. Returns a list of
         {part_id, name_en, name_ar, status} dicts, or None when the snapshot
         is missing/empty/corrupt (-> FacetedCatalog keeps legacy behavior)."""
         try:
@@ -2557,6 +2598,16 @@ class RagEngine:
             candidates.append({
                 "score": float(score),
                 "combined_score": combined_score,
+                # NEW: score-inflation accounting (see config.EMBEDDING_SCORE_KEY
+                # rationale). embedding_score is the raw embedding similarity
+                # BEFORE any retrieval bonuses land -- ranking still uses
+                # combined_score (bonuses are legitimate for ordering), but
+                # qualification gates that should be immune to bonus inflation
+                # (direct-answer shortcuts, refusal floors) read embedding_score
+                # instead. bonus_total is the additive bonus carved out of
+                # combined_score, kept observable so thresholds are auditable.
+                "embedding_score": float(score),
+                "bonus_total": max(0.0, combined_score - float(score)),
                 # NEW: carried through so the direct-answer shortcuts can
                 # tell "the model is confident because of ACTUAL query-word
                 # grounding" apart from "the model is confident purely on
@@ -2762,6 +2813,15 @@ class RagEngine:
         top = retrieved[0]
         if top["metadata"].get("source") != "faq":
             return None
+        # NEW: bonus-inflation-safe qualification (see config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE).
+        # ranking bonuses must never be what tips a weak embedding match over the
+        # direct-answer confidence bar -- the raw similarity has to clear the floor too.
+        if top.get("embedding_score", top.get("combined_score", 0.0)) < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
+            log.debug(
+                "FAQ direct answer blocked by embedding floor: query=%r emb=%.3f < %.3f",
+                query, top.get("embedding_score", 0.0), config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
+            )
+            return None
         if top["combined_score"] < config.FAQ_DIRECT_ANSWER_SCORE:
             return None
         # CHANGED: multi_item now covers both explicit comparison wording AND
@@ -2842,6 +2902,13 @@ class RagEngine:
             return None
         top = retrieved[0]
         if top["metadata"].get("source") != "offer":
+            return None
+        # NEW: bonus-inflation-safe qualification (see config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE).
+        if top.get("embedding_score", top.get("combined_score", 0.0)) < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
+            log.debug(
+                "Offer direct answer blocked by embedding floor: query=%r emb=%.3f < %.3f",
+                query, top.get("embedding_score", 0.0), config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
+            )
             return None
         if top["combined_score"] < config.OFFER_DIRECT_ANSWER_SCORE:
             return None
@@ -2940,6 +3007,13 @@ class RagEngine:
             return None
         top = retrieved[0]
         if top["metadata"].get("source") != "offer":
+            return None
+        # NEW: bonus-inflation-safe qualification (see config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE).
+        if top.get("embedding_score", top.get("combined_score", 0.0)) < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
+            log.debug(
+                "Stock direct answer blocked by embedding floor: query=%r emb=%.3f < %.3f",
+                query, top.get("embedding_score", 0.0), config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
+            )
             return None
         if top["combined_score"] < config.OFFER_DIRECT_ANSWER_SCORE:
             return None
@@ -3537,38 +3611,14 @@ class RagEngine:
         # PILLAR 4: Normalize Arabizi/Franco-Arabic input for better matching
         normalized_query = normalize_arabizi_and_arabic(query)
 
-        
-        # NEW: personal-data queries ("my coupons", "my orders") are answered
-        # from live ClickHouse (fct_coupons) scoped to the resolved user_id,
-        # not from the static RAG index. Only active when
-        # PERSONAL_QUERIES_ENABLED and a user_id was resolved (see identity.py).
-        if user_id is not None and config.PERSONAL_QUERIES_ENABLED and is_personal_query(query):
-            try:
-                result = self._get_personal_service().handle(query, user_id, detect_lang(query))
-            except Exception as e:
-                log.warning("personal query failed for user_id=%s query=%r: %s", user_id, query, e)
-                result = {"answer": PERSONAL_ERROR.get(detect_lang(query), PERSONAL_ERROR["en"]), "sources": []}
-            if result and result.get("answer"):
-                yield result["answer"]
-            return
-
-        # NEW: live catalog queries (merchant, price, ranking, location, tags)
-        # hit ClickHouse directly for fresh data instead of the static FAISS index.
-        # Only active when CATALOG_QUERIES_ENABLED.
-        if config.CATALOG_QUERIES_ENABLED and is_catalog_query(query):
-            try:
-                # FIX for Issue #2: Pass session_id to catalog service for comparison queries
-                session_id = getattr(self, '_current_session_id', None)
-                result = self._get_catalog_service().handle(query, detect_lang(query), session_id=session_id)
-            except Exception as e:
-                log.warning("catalog query failed for query=%r: %s", query, e)
-                result = {"answer": CATALOG_ERROR.get(detect_lang(query), CATALOG_ERROR["en"]), "sources": []}
-            if result and result.get("answer"):
-                # FIX for Issue #5: Clean any bidi/control characters before yielding
-                answer = self._clean_bidi_artifacts(result["answer"])
-                yield answer
-            return
-
+        # PHASE-3 ALIGNMENT: these refusal guards used to run AFTER the
+        # personal/catalog short-circuits below, so a structured path could
+        # answer even when the main RAG path would have refused the query
+        # outright (nonexistent merchant, inactive merchant, out-of-scope).
+        # Moving them here -- ahead of EVERY answer-producing path (personal,
+        # catalog, superlative, faceted, retrieval) -- makes the same on-topic
+        # score floor gate all of them. See PHASE0_ASSESSMENT.md risk area
+        # "Hallucination via mixed retrieval paths".
         # NEW: a query naming a merchant we don't actually have never
         # reaches retrieval/generation -- previously a nonexistent brand
         # like "Starbucks Egypt" could score 0.95+ against some unrelated
@@ -3607,6 +3657,37 @@ class RagEngine:
         oos = check_out_of_scope_guardrail(query, detect_lang(query))
         if oos:
             yield oos
+            return
+
+        # NEW: personal-data queries ("my coupons", "my orders") are answered
+        # from live ClickHouse (fct_coupons) scoped to the resolved user_id,
+        # not from the static RAG index. Only active when
+        # PERSONAL_QUERIES_ENABLED and a user_id was resolved (see identity.py).
+        if user_id is not None and config.PERSONAL_QUERIES_ENABLED and is_personal_query(query):
+            try:
+                result = self._get_personal_service().handle(query, user_id, detect_lang(query))
+            except Exception as e:
+                log.warning("personal query failed for user_id=%s query=%r: %s", user_id, query, e)
+                result = {"answer": PERSONAL_ERROR.get(detect_lang(query), PERSONAL_ERROR["en"]), "sources": []}
+            if result and result.get("answer"):
+                yield result["answer"]
+            return
+
+        # NEW: live catalog queries (merchant, price, ranking, location, tags)
+        # hit ClickHouse directly for fresh data instead of the static FAISS index.
+        # Only active when CATALOG_QUERIES_ENABLED.
+        if config.CATALOG_QUERIES_ENABLED and is_catalog_query(query):
+            try:
+                # FIX for Issue #2: Pass session_id to catalog service for comparison queries
+                session_id = getattr(self, '_current_session_id', None)
+                result = self._get_catalog_service().handle(query, detect_lang(query), session_id=session_id)
+            except Exception as e:
+                log.warning("catalog query failed for query=%r: %s", query, e)
+                result = {"answer": CATALOG_ERROR.get(detect_lang(query), CATALOG_ERROR["en"]), "sources": []}
+            if result and result.get("answer"):
+                # FIX for Issue #5: Clean any bidi/control characters before yielding
+                answer = self._clean_bidi_artifacts(result["answer"])
+                yield answer
             return
 
         # NEW: A -- anchored follow-up answers. "قارن بين العرضين", "التاني",

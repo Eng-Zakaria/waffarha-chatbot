@@ -10,7 +10,7 @@ number?" currently have nothing in the corpus to answer them from -- IF the
 relevant columns are actually populated for real, currently-listed partners.
 This script is investigation only (no write), same as
 fetch_type_price_clickhouse.py --debug: figure out coverage and status
-semantics on real data before writing any ingest/merge logic.
+semantics on real data before building any merge logic.
 
 What it checks:
   - distinct `status` values (need to know which partners are "live" the
@@ -25,8 +25,8 @@ What it checks:
     dead/test rows sitting unused in dim_partners)
 
 Usage:
-    python ingest/fetch_partners_clickhouse.py --debug
-    python ingest/fetch_partners_clickhouse.py --snapshot [path]
+    python ingestion/sources/fetch_partners_clickhouse.py --debug
+    python ingestion/sources/fetch_partners_clickhouse.py --snapshot [path]
 
 The --snapshot mode writes the shareable merchant-identity table that
 core/faceted.py consumes at chat time: distinct (part_id, part_name_en,
@@ -196,3 +196,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -24,8 +24,6 @@ The script maintains a manifest file (index_manifest.json) that tracks:
 - Last sync timestamp
 """
 import argparse
-import hashlib
-import json
 import os
 import pickle
 import re
@@ -39,68 +37,23 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from core import config
 from core.embedding_providers import get_embedding_provider, canonical_model_key
 from vectorstores.vectorstores import get_store
-
-
-MANIFEST_FILENAME = "index_manifest.json"
+# PHASE 4: the manifest format + helpers live in ONE shared module with the
+# full builder (build_index.py) -- the incremental updater must never write a
+# manifest shape the full builder wouldn't (or vice versa).
+from ingestion.loaders.index_manifest import (  # noqa: E402
+    MANIFEST_FILENAME,
+    build_manifest,
+    compute_doc_hash,
+    corpus_hash,
+    index_dir,
+    load_manifest,
+    manifest_path,
+    save_manifest,
+)
 
 
 def safe_name(model_name: str) -> str:
     return model_name.replace("/", "__").replace(":", "_")
-
-
-def index_dir(embedding_model: str, backend: str) -> str:
-    # Canonicalize so bare "qwen3-embedding:0.6b" and "ollama:qwen3-embedding:0.6b"
-    # write into the SAME directory (see core/embedding_providers.py).
-    d = os.path.join(config.INDEX_DIR, "index", safe_name(canonical_model_key(embedding_model)), backend)
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
-def manifest_path(embedding_model: str, backend: str) -> str:
-    d = index_dir(embedding_model, backend)
-    return os.path.join(d, MANIFEST_FILENAME)
-
-
-def load_manifest(embedding_model: str, backend: str) -> Dict:
-    """Load the index manifest, or return empty if doesn't exist."""
-    path = manifest_path(embedding_model, backend)
-    if os.path.exists(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {
-        "embedding_model": embedding_model,
-        "backend": backend,
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
-        "documents": {},  # doc_id -> {hash, metadata, index_position}
-        "stats": {
-            "total_docs": 0,
-            "faq_count": 0,
-            "offer_count": 0
-        }
-    }
-
-
-def save_manifest(embedding_model: str, backend: str, manifest: Dict):
-    """Save the index manifest."""
-    manifest["updated_at"] = datetime.now().isoformat()
-    path = manifest_path(embedding_model, backend)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, ensure_ascii=False, indent=2)
-
-
-def compute_doc_hash(doc: Dict) -> str:
-    """Compute a hash of the document content + metadata for change detection."""
-    # Create a deterministic representation
-    content = {
-        "text": doc["text"],
-        "metadata": {
-            k: v for k, v in doc["metadata"].items()
-            if k not in ("_indexed_at",)  # Exclude timestamp fields
-        }
-    }
-    content_str = json.dumps(content, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(content_str.encode("utf-8")).hexdigest()[:16]
 
 
 # Reuse the doc building logic from build_index.py
@@ -279,7 +232,7 @@ def _effective_expiry(summary: str, tier_meta: Dict, coupon: str = "") -> str:
 def load_offers() -> List[Dict]:
     path = os.path.join(config.INDEX_DIR, "offers_raw.json")
     if not os.path.exists(path):
-        print("No data/offers_raw.json found yet -- skipping offers (run ingest/fetch_offers.py first).")
+        print("No data/offers_raw.json found yet -- skipping offers (run ingestion/refresh.py to fetch + build).")
         return []
 
     with open(path, "r", encoding="utf-8") as f:
@@ -505,31 +458,10 @@ def rebuild_index(embedding_model: str, backend: str, docs: List[Dict], embeddin
     with open(docs_path, "wb") as f:
         pickle.dump(docs, f)
 
-    # Create new manifest
-    manifest = {
-        "embedding_model": embedding_model,
-        "backend": backend,
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
-        "documents": {},
-        "stats": {
-            "total_docs": len(docs),
-            "faq_count": sum(1 for d in docs if d["metadata"]["source"] == "faq"),
-            "offer_count": sum(1 for d in docs if d["metadata"]["source"] == "offer")
-        }
-    }
-
-    for i, doc in enumerate(docs):
-        source = doc["metadata"]["source"]
-        doc_id = doc["metadata"]["id"]
-        lang = doc["metadata"]["lang"]
-        stable_id = f"{source}:{doc_id}:{lang}"
-        manifest["documents"][stable_id] = {
-            "hash": compute_doc_hash(doc),
-            "metadata": doc["metadata"],
-            "index_position": i
-        }
-
+    # PHASE 4: reuse the full builder's manifest writer so both paths emit the
+    # identical schema (source hashes, corpus hash, build config, per-doc records).
+    manifest = build_manifest(docs, embedding_model, backend,
+                              built_by="build_index_incremental.py")
     save_manifest(embedding_model, backend, manifest)
     print(f"Saved index to {store_path}")
     print(f"Saved docs to  {docs_path}")
@@ -708,6 +640,9 @@ def incremental_update(embedding_model: str, backend: str,
     manifest["stats"]["total_docs"] = len(all_docs)
     manifest["stats"]["faq_count"] = sum(1 for d in all_docs if d["metadata"]["source"] == "faq")
     manifest["stats"]["offer_count"] = sum(1 for d in all_docs if d["metadata"]["source"] == "offer")
+    # PHASE 4: keep the corpus-level lineage hash in sync with the docs actually
+    # in the index after an incremental update.
+    manifest["source"]["corpus_hash"] = corpus_hash(manifest["documents"])
     save_manifest(embedding_model, backend, manifest)
 
     print(f"Updated index saved to {store_path}")

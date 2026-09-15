@@ -1,16 +1,23 @@
 """
-Builds a vector index over data/faqs.json + data/offers_raw.json.
+Builds a vector index over data/faqs.json + data/offers_raw.json (plus the
+optional additive data/faqs_payment_methods.json, data/faqs_purchasing_status.json
+and data/type_prices.json), and writes an index manifest next to every built
+index (see ingestion/loaders/index_manifest.py).
 
-Same doc-building logic as the original build_index.py -- what's new is that
-the index target (FAISS / Chroma / both) and the embedding model are CLI
-args, not hardcoded, so you can build multiple combinations for benchmarking
-without editing config.py each time:
+The RECOMMENDED entry point is the single-refresh pipeline that collapses the
+whole ingestion chain into one command:
 
-    python ingest/build_index.py --backend faiss
-    python ingest/build_index.py --backend chroma
-    python ingest/build_index.py --backend both --embedding-model intfloat/multilingual-e5-small
-    python ingest/build_index.py --embedding-model ollama:qwen3-embedding:0.6b
-    python ingest/build_index.py --backend faiss --embedding-model jina:jina-embeddings-v5-text-small
+    python ingestion/refresh.py            # fetch from ClickHouse + rebuild index
+    python ingestion/refresh.py --skip-fetch   # rebuild from existing data/ files
+
+This script remains callable directly -- the index target (FAISS / Chroma /
+Qdrant / ...) and the embedding model are CLI args:
+
+    python ingestion/loaders/build_index.py --backend faiss
+    python ingestion/loaders/build_index.py --backend chroma
+    python ingestion/loaders/build_index.py --backend all --embedding-model intfloat/multilingual-e5-small
+    python ingestion/loaders/build_index.py --embedding-model ollama:qwen3-embedding:0.6b
+    python ingestion/loaders/build_index.py --backend faiss --embedding-model jina:jina-embeddings-v5-text-small
 
 Each (embedding_model, backend) combination is written to its own directory
 under data/index/<embedding_model>/<backend>/, so multiple builds coexist
@@ -20,6 +27,16 @@ Besides sentence-transformers model ids, the --embedding-model flag accepts
 API-backed providers via a prefix (see core/embedding_providers.py):
   ollama:<model>     -> Ollama /api/embed, e.g. ollama:qwen3-embedding:0.6b
   jina:<model>       -> Jina AI hosted API, e.g. jina:jina-embeddings-v5-text-small
+
+Dev/test helpers (refresh.py forwards these):
+  --max-rows N       cap the number of docs indexed (sample build)
+  --out-dir PATH     write the index into an explicit directory instead of
+                     data/index/<model>/<backend>/ (the manifest lands there too)
+
+A manifest file (index_manifest.json) is written into each built index
+directory: embedding model + backend, source-file hashes + corpus hash, build
+config that affects the corpus, doc counts, and per-doc hashes for incremental
+change detection.
 """
 import argparse
 import json
@@ -32,6 +49,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from core import config
 from core.embedding_providers import get_embedding_provider, canonical_model_key
 from vectorstores.vectorstores import get_store
+from ingestion.loaders.index_manifest import (  # PHASE 4: manifest next to every index
+    MANIFEST_FILENAME,
+    build_manifest,
+    save_manifest_to_dir,
+)
 
 
 def load_faqs() -> list:
@@ -39,7 +61,7 @@ def load_faqs() -> list:
     with open(path, "r", encoding="utf-8") as f:
         faqs = json.load(f)
 
-    # NEW: ingest/fetch_payment_methods_clickhouse.py --write produces this
+    # NEW: ingestion/sources/fetch_payment_methods_clickhouse.py --write produces this
     # file in the exact same raw record shape as faqs.json (id/question_en/
     # answer_en/category/question_ar/answer_ar/category_ar), sourced from
     # main.dim_payment_methods instead of hand-curated -- so it's simply
@@ -53,7 +75,7 @@ def load_faqs() -> list:
         faqs = faqs + payment_faqs
         print(f"Loaded {len(payment_faqs)} payment-method FAQ record(s) from {payment_faqs_path}")
 
-    # NEW: ingest/fetch_purchasing_status_clickhouse.py --write produces this
+    # NEW: ingestion/sources/fetch_purchasing_status_clickhouse.py --write produces this
     # file, same raw record shape and same optional/additive contract as
     # faqs_payment_methods.json above -- sourced from
     # main.dim_purchasing_status, filtered to customer-facing status names
@@ -141,7 +163,7 @@ def _extract_sold_count(offer: dict):
     return int(m.group(1)) if m else None
 
 
-# NEW: ingest/fetch_type_price_clickhouse.py --write produces this file --
+# NEW: ingestion/sources/fetch_type_price_clickhouse.py --write produces this file --
 # {str(offer_id): [tier_dict, ...]}, already filtered to status=1 (currently
 # purchasable) tiers only -- see that script's module docstring for why
 # status=1 vs 0 is the right filter. Optional and additive, same pattern as
@@ -257,7 +279,7 @@ def _effective_expiry(summary: str, tier_meta: dict, coupon: str = "") -> str:
 def load_offers() -> list:
     path = os.path.join(config.INDEX_DIR, "offers_raw.json")
     if not os.path.exists(path):
-        print("No data/offers_raw.json found yet -- skipping offers (run ingest/fetch_offers.py first).")
+        print("No data/offers_raw.json found yet -- skipping offers (run ingestion/refresh.py to fetch + build).")
         return []
 
     with open(path, "r", encoding="utf-8") as f:
@@ -453,9 +475,10 @@ def index_dir(embedding_model: str, backend: str) -> str:
     return d
 
 
-def build_for(embedding_model: str, backend: str, docs: list, embeddings):
+def build_for(embedding_model: str, backend: str, docs: list, embeddings,
+              out_dir: str = None, built_by: str = "build_index.py"):
     print(f"\n=== embedding={embedding_model}  backend={backend} ===")
-    d = index_dir(embedding_model, backend)
+    d = out_dir if out_dir else index_dir(embedding_model, backend)
     docs_path = os.path.join(d, "docs.pkl")
     store_path = os.path.join(d, "index.faiss") if backend == "faiss" else d
 
@@ -487,6 +510,15 @@ def build_for(embedding_model: str, backend: str, docs: list, embeddings):
     print(f"Saved index to {store_path}")
     print(f"Saved docs to  {docs_path}")
 
+    # PHASE 4: write the index manifest (model/backend, source + corpus hashes,
+    # per-doc change-detection records) INTO the same index directory, so any
+    # consumer -- including build_index_incremental.py and the RagEngine
+    # startup check -- can see what this index was built from and when.
+    manifest = build_manifest(docs, embedding_model, backend, built_by=built_by)
+    save_manifest_to_dir(d, manifest)
+    print(f"Saved manifest to {os.path.join(d, MANIFEST_FILENAME)}"
+          f" (corpus_hash={manifest['source']['corpus_hash']})")
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -499,12 +531,20 @@ def main():
                               "'jina:jina-embeddings-v5-text-small'. Overrides config.EMBEDDING_MODEL.")
     parser.add_argument("--batch-size", type=int, default=64,
                          help="Encode batch size. Lower it (e.g. 16) when running on a small GPU.")
+    parser.add_argument("--max-rows", type=int, default=None,
+                        help="Dev/test: cap documents indexed (e.g. --max-rows 500 for a sample build).")
+    parser.add_argument("--out-dir", default=None,
+                        help="Dev/test: write the index (and manifest) into this directory instead of "
+                             "data/index/<model>/<backend>/.")
     args = parser.parse_args()
 
     docs = load_faqs() + load_offers()
     if not docs:
         print("No documents to index. Aborting.")
         return
+    if args.max_rows:
+        docs = docs[:args.max_rows]
+        print(f"NOTE: --max-rows {args.max_rows} applied -- indexing a {len(docs)}-doc sample.")
 
     print(f"Loading embedding model: {args.embedding_model} (first run downloads SentenceTransformer models) ...")
     model = get_embedding_provider(args.embedding_model, device=config.EMBEDDING_DEVICE)
@@ -523,7 +563,7 @@ def main():
 
     backends = ["faiss", "chroma", "qdrant", "lancedb", "pgvector"] if args.backend == "all" else [args.backend]
     for backend in backends:
-        build_for(args.embedding_model, backend, docs, embeddings)
+        build_for(args.embedding_model, backend, docs, embeddings, out_dir=args.out_dir)
 
     n_faqs = sum(1 for d in docs if d["metadata"]["source"] == "faq")
     n_offers = sum(1 for d in docs if d["metadata"]["source"] == "offer")

@@ -9,7 +9,7 @@ via a local Ollama model.
 Run:
     pip install -r requirements.txt
     ollama serve                              # if not already running
-    ollama pull qwen2.5:1.5b-instruct          # or whatever OLLAMA_MODEL is set to
+    ollama pull qwen2.5:3b-instruct           # or whatever OLLAMA_MODEL is set to
     uvicorn app:app --reload --port 8000
 
 Then open http://localhost:8000 -- the widget will be served from static/
@@ -49,7 +49,7 @@ except ImportError:
     class RedisError(Exception):
         pass
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -121,6 +121,23 @@ def get_identity():
     return _identity 
 
 
+def _memory_session_key(session_id: str, user_id: Optional[int]) -> str:
+    """Scope server-side session memory under the resolved user when one is
+    known.
+
+    The client-supplied session_id is a convenience namespace for the
+    frontend, not a trust boundary -- two users on the same browser/device
+    could otherwise end up in the same "default"/shared bucket and see each
+    other's remembered offers and turns. Namespacing the key under the
+    *resolved* user_id (the only trusted identity, see identity.py) keeps
+    per-user memory isolated while still allowing anonymous catalog-only
+    sessions to use their raw session_id.
+    """
+    if user_id is not None:
+        return f"u{user_id}:{session_id}"
+    return session_id 
+
+
 # ---------------------------------------------------------------------------
 # CORS: only needed because the frontend can be hosted on a different origin
 # than this backend (e.g. GitHub Pages at eng-zakaria.github.io calling a
@@ -162,6 +179,13 @@ app.add_middleware(
 # _engine is None once inside it, so only the first thread to arrive
 # actually builds the engine; every other thread that was waiting on the
 # lock sees it's already built and returns it instead of building a second.
+#
+# The agentic engine (AgentEngine) is a SEPARATE lazy singleton below it,
+# built on top of the SAME RagEngine instance (wrapped in a facade + tool
+# registry). It powers the /api/agent/* routes only; /api/chat and
+# /api/chat/stream keep using plain RagEngine. Both share one exit for
+# "index missing / Ollama unreachable" so the health/503 behavior is
+# identical for the two surfaces.
 # ---------------------------------------------------------------------------
 _engine: Optional[RagEngine] = None
 _engine_lock = threading.Lock()
@@ -185,6 +209,45 @@ async def get_engine_async() -> RagEngine:
     doesn't stall every other request's event-loop-bound work (e.g. routing,
     the /api/health check) while it's happening."""
     return await asyncio.to_thread(get_engine)
+
+
+# ---------------------------------------------------------------------------
+# Agentic engine: one AgentEngine wrapping the SAME RagEngine as a facade,
+# plus the tool registry, built lazily like get_engine(). It backs the
+# /api/agent/chat and /api/agent/chat/stream routes -- a side-by-side
+# comparison surface for the old cascade (RagEngine) vs. the new agent
+# (AgentEngine) without touching the default widget behavior.
+# ---------------------------------------------------------------------------
+_agent_engine = None
+_agent_engine_lock = threading.Lock()
+
+
+def get_agent_engine():
+    """Lazily build the one shared AgentEngine. Uses the already-loaded
+    RagEngine instance as the data facade, so it does not double-load the
+    model or the vector index."""
+    global _agent_engine
+    if _agent_engine is not None:
+        return _agent_engine
+    with _agent_engine_lock:
+        if _agent_engine is None:
+            from agent.engine import AgentEngine
+            from agent.facade import rag_facade
+            from agent.tools import ToolRegistry
+            from agent.tools.catalog_tools import register_catalog_tools
+            from agent.tools.cascade_tools import register_cascade_tools
+
+            log.info("Building agentic engine (facade over shared RagEngine + tools)...")
+            facade = rag_facade(get_engine())
+            registry = register_catalog_tools(ToolRegistry())
+            register_cascade_tools(registry)
+            _agent_engine = AgentEngine(facade, registry)
+            log.info("Agentic engine ready (tools=%s).", registry.names())
+    return _agent_engine
+
+
+async def get_agent_engine_async():
+    return await asyncio.to_thread(get_agent_engine)
 
 
 @app.on_event("startup")
@@ -465,7 +528,7 @@ async def chat(req: ChatRequest):
         log.warning("Redis unavailable, continuing without session memory: %s", e)
         memory_store = None
 
-    session = memory_store.get(req.session_id) if memory_store else None
+    session = memory_store.get(_memory_session_key(req.session_id, user_id)) if memory_store else None
     try:
         # SessionMemory.recent() performs a Redis read.  Keep that blocking
         # network I/O off the event loop and preserve the documented
@@ -596,7 +659,7 @@ async def chat_stream(req: ChatRequest):
         log.warning("Redis unavailable, continuing without session memory: %s", e)
         memory_store = None
 
-    session = memory_store.get(req.session_id) if memory_store else None
+    session = memory_store.get(_memory_session_key(req.session_id, user_id)) if memory_store else None
     try:
         recent_offers = (
             await asyncio.to_thread(session.recent) if session else []
@@ -702,6 +765,280 @@ async def chat_stream(req: ChatRequest):
     )
 
 
+# ---------------------------------------------------------------------------
+# Agentic comparison surface (NEW): /api/agent/chat and /api/agent/chat/stream
+# run the SAME turn through AgentEngine (planner + typed tools + replan +
+# deterministic render) instead of the old RagEngine cascade. They mirror the
+# request/response shapes of the /api/chat endpoints and reuse the same
+# session memory, identity resolution and concurrency caps, so a single
+# browser widget (pointed at either base) behaves identically except for the
+# answer engine behind it. /api/chat is untouched -- the default widget stays
+# on the old cascade unless explicitly pointed at /api/agent/*.
+# ---------------------------------------------------------------------------
+def _agent_identity(user_id) -> str | None:
+    """Map a resolved identity to the string the planner reads ('known
+    customer' vs anonymous). Falls back to None (anonymous) like the REPL."""
+    return f"u{user_id}" if user_id is not None else None
+
+
+def _agent_evidence(engine) -> list:
+    """AgentEngine keeps the docs its tools actually showed on _last_evidence
+    (same {"metadata": {...}} shape RagEngine._last_retrieved uses), which is
+    what feeds source cards / offer cards / suggestions / session.remember.
+    Fall back to [] on engines that don't set it."""
+    return list(getattr(engine, "_last_evidence", []) or [])
+
+
+def _agent_status_text(engine, reply_lang: str, code: str) -> str:
+    """Humanized progress line for the SSE status event, localized like the
+    old per-token streaming so a planning-heavy turn never looks hung."""
+    return engine._status_text(reply_lang, code)
+
+
+def _chunk_text(text: str, size: int = 24):
+    """Split one finished answer into small token-sized chunks so the
+    frontend's per-token textContent painting still produces a typing feel.
+    word-boundary aware on spaces when possible."""
+    words = text.split(" ")
+    chunks, cur = [], ""
+    for w in words:
+        if cur and len(cur + " " + w) > size:
+            chunks.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w) if cur else w
+    if cur:
+        chunks.append(cur)
+    return chunks or [""]
+
+
+class AgentChatRequest(BaseModel):
+    """Same wire shape as ChatRequest for the /api/agent/* routes."""
+    query: str
+    lang: str = "en"
+    history: List[ChatTurn] = []
+    session_id: str = "default"
+
+
+# Swift non-streaming agent turn: run the full AgentEngine turn in a thread
+# then shape its evidence into the same cards/offers/suggestions the widget
+# renders for the old route.
+@app.post("/api/agent/chat", response_model=ChatResponse)
+async def agent_chat(req: AgentChatRequest):
+    user_id = None
+    if config.PERSONAL_QUERIES_ENABLED:
+        try:
+            user_id = await asyncio.to_thread(get_identity().resolve, req)
+        except Exception as e:
+            log.warning("identity resolution failed: %s", e)
+            user_id = None
+    query = (req.query or "").strip()
+    if not query:
+        raise HTTPException(400, "query is required")
+
+    try:
+        engine = await get_agent_engine_async()
+    except FileNotFoundError as e:
+        log.error("Index not found: %s", e)
+        raise HTTPException(503, str(e))
+    except RuntimeError as e:
+        log.error("Ollama unreachable: %s", e)
+        raise HTTPException(503, str(e))
+
+    try:
+        memory_store = await get_memory_store_async()
+    except RedisError as e:
+        log.warning("Redis unavailable, continuing without session memory: %s", e)
+        memory_store = None
+    session = memory_store.get(_memory_session_key(req.session_id, user_id)) if memory_store else None
+    try:
+        recent_offers = (
+            await asyncio.to_thread(session.recent) if session else []
+        )
+    except RedisError as e:
+        log.warning("Redis unavailable while reading session memory; continuing without it: %s", e)
+        session = None
+        recent_offers = []
+
+    try:
+        await _acquire_generation_slot()
+    except ServerBusyError:
+        raise HTTPException(
+            503,
+            detail="The assistant is handling a lot of requests right now. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        )
+
+    history = [{"role": t.role, "content": t.content} for t in req.history]
+    reply_lang = detect_lang(query)
+
+    try:
+        bot_answer = ""
+        for piece in engine.answer_stream(
+                query, reply_lang=reply_lang, history=history,
+                recent_offers=recent_offers, user_id=user_id,
+                identity=_agent_identity(user_id)):
+            if isinstance(piece, str):
+                bot_answer = piece
+        evidence = _agent_evidence(engine)
+    except Exception:
+        log.exception("agent /api/agent/chat failed for query=%r", query)
+        raise HTTPException(500, "The assistant hit an internal error. Please try again.")
+    finally:
+        _release_generation_slot()
+
+    if session:
+        try:
+            await asyncio.to_thread(session.remember, evidence[:3])
+            await asyncio.to_thread(session.remember_turns, query, bot_answer)
+        except RedisError as e:
+            log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
+
+    raw_sources = evidence
+    sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
+    suggestions = _build_suggestions(raw_sources, reply_lang)
+    offer_cards = _offer_cards(raw_sources[:5], reply_lang)
+    resp_type = "offers" if offer_cards else "text"
+    return {"answer": bot_answer, "type": resp_type, "offers": offer_cards,
+            "sources": sources, "suggestions": suggestions}
+
+
+# Streaming agent turn: same SSE shape as /api/chat/stream (meta/token/
+# status/done), plus a `status` event emitted as the agent reports each phase
+# (understanding -> plan -> execute -> replan -> respond) so a multi-second
+# planning turn shows visible progress instead of a blank bubble.
+@app.post("/api/agent/chat/stream")
+async def agent_chat_stream(req: AgentChatRequest):
+    user_id = None
+    if config.PERSONAL_QUERIES_ENABLED:
+        try:
+            user_id = await asyncio.to_thread(get_identity().resolve, req)
+        except Exception as e:
+            log.warning("identity resolution failed: %s", e)
+            user_id = None
+    query = (req.query or "").strip()
+    if not query:
+        raise HTTPException(400, "query is required")
+
+    try:
+        engine = await get_agent_engine_async()
+    except FileNotFoundError as e:
+        log.error("Index not found: %s", e)
+        raise HTTPException(503, str(e))
+    except RuntimeError as e:
+        log.error("Ollama unreachable: %s", e)
+        raise HTTPException(503, str(e))
+
+    try:
+        memory_store = await get_memory_store_async()
+    except RedisError as e:
+        log.warning("Redis unavailable, continuing without session memory: %s", e)
+        memory_store = None
+    session = memory_store.get(_memory_session_key(req.session_id, user_id)) if memory_store else None
+    try:
+        recent_offers = (
+            await asyncio.to_thread(session.recent) if session else []
+        )
+    except RedisError as e:
+        log.warning("Redis unavailable while reading session memory; continuing without it: %s", e)
+        session = None
+        recent_offers = []
+
+    try:
+        await _acquire_generation_slot()
+    except ServerBusyError:
+        raise HTTPException(
+            503,
+            detail="The assistant is handling a lot of requests right now. Please retry shortly.",
+            headers={"Retry-After": "5"},
+        )
+
+    history = [{"role": t.role, "content": t.content} for t in req.history]
+    reply_lang = detect_lang(query)
+
+    q: "pyqueue.Queue" = pyqueue.Queue()
+
+    def _run():
+        try:
+            def _progress(code):
+                q.put(("status", code))
+            for piece in engine.answer_stream(
+                    query, reply_lang=reply_lang, history=history,
+                    recent_offers=recent_offers, user_id=user_id,
+                    identity=_agent_identity(user_id), progress=_progress):
+                if isinstance(piece, str):
+                    for chunk in _chunk_text(piece):
+                        q.put(("token", chunk))
+                elif isinstance(piece, dict) and piece.get("kind") == "agent_turn_report":
+                    q.put(("report", piece["data"]))
+        except Exception as e:
+            q.put(("error", str(e)))
+        finally:
+            q.put(("_end", None))
+
+    async def event_gen():
+        loop = asyncio.get_event_loop()
+        thread_task = loop.run_in_executor(None, _run)
+
+        full_text = ""
+        status_sent = False
+        try:
+            while True:
+                kind, payload = await asyncio.to_thread(q.get)
+                if kind == "status":
+                    if not status_sent:
+                        # surface the first phase as soon as the stream opens
+                        status_sent = True
+                    yield f"event: status\ndata: {json.dumps({'phase': payload, 'text': _agent_status_text(engine, reply_lang, payload)})}{SSE_HEARTBEAT}"
+                    continue
+                if kind == "token":
+                    full_text += payload
+                    yield f"event: token\ndata: {json.dumps({'text': payload})}{SSE_HEARTBEAT}"
+                elif kind == "report":
+                    pass  # consumed once we have the answer/evidence
+                elif kind == "error":
+                    log.exception("agent chat_stream failed for query=%r: %s", query, payload)
+                    yield f"event: error\ndata: {json.dumps({'message': 'The assistant hit an internal error. Please try again.'})}{SSE_HEARTBEAT}"
+                    break
+                elif kind == "_end":
+                    break
+        finally:
+            _release_generation_slot()
+            await thread_task
+
+        cleaned, leaked = _strip_scaffolding_leaks(full_text)
+        if leaked:
+            log.warning("Scaffolding leak stripped post-stream for query=%r: %r", query, leaked)
+
+        evidence = _agent_evidence(engine)
+        # meta last (evidence is only known once the turn finished) -- the
+        # frontend reads meta on arrival and renders cards on 'done', so
+        # ordering is fine.
+        sources = [_source_card(d, reply_lang) for d in evidence[:3]]
+        suggestions = _build_suggestions(evidence, reply_lang)
+        offer_cards = _offer_cards(evidence[:5], reply_lang)
+        resp_type = "offers" if offer_cards else "text"
+        yield f"event: meta\ndata: {json.dumps({'type': resp_type, 'offers': offer_cards, 'sources': sources, 'suggestions': suggestions})}{SSE_HEARTBEAT}"
+
+        if session:
+            try:
+                await asyncio.to_thread(session.remember, evidence[:3])
+                await asyncio.to_thread(session.remember_turns, query, cleaned)
+            except RedisError as e:
+                log.warning("Redis unavailable while saving session memory; continuing without it: %s", e)
+
+        yield f"event: done\ndata: {json.dumps({'answer': cleaned})}{SSE_HEARTBEAT}"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @app.get("/api/health")
 def health():
     """Cheap liveness check that does NOT load the engine, so it stays fast
@@ -727,7 +1064,7 @@ def health():
 # frontend can just render them as if they came from localStorage.
 # ---------------------------------------------------------------------------
 @app.get("/api/session/{session_id}/history")
-async def get_session_history(session_id: str, limit: int = 20):
+async def get_session_history(session_id: str, limit: int = 20, request: Request = None):
     """Return conversation history for a session_id from server-side memory.
 
     Response format matches what the frontend expects:
@@ -737,14 +1074,26 @@ async def get_session_history(session_id: str, limit: int = 20):
             {"role": "assistant", "content": "..."}
         ]
     }
+
+    Mirrors the chat endpoints' memory namespacing: if a trusted user can be
+    resolved from the request's identity headers, the history is read from
+    that user's namespace (`u<uid>:<session_id>`) so a guessed session_id
+    from another user never returns their turns.
     """
+    user_id = None
+    if config.PERSONAL_QUERIES_ENABLED and request is not None:
+        try:
+            user_id = await asyncio.to_thread(get_identity().resolve, request)
+        except Exception as e:
+            log.warning("identity resolution failed: %s", e)
+            user_id = None
     try:
         memory_store = await get_memory_store_async()
     except RedisError as e:
         log.warning("Redis unavailable while reading session history: %s", e)
         raise HTTPException(503, "Session memory unavailable")
 
-    session = memory_store.get(session_id) if memory_store else None
+    session = memory_store.get(_memory_session_key(session_id, user_id)) if memory_store else None
     if not session:
         raise HTTPException(404, "Session not found")
 

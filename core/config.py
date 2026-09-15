@@ -8,37 +8,15 @@ load_dotenv()
 # EMBEDDING_DEVICE=cuda in your .env if you do have a GPU available.
 EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 
-OFFERS_API_URL = "https://api-test.waffarha.tech/api/sectionOffers"
+# PHASE 4: the legacy mobile-API scrape (fetch_offers.py) was retired in favor
+# of the single ClickHouse-based pipeline (ingestion/refresh.py). Removed with
+# it: OFFERS_API_URL, WAFFARHA_SECURITY_KEY / get_security_key(),
+# OFFERS_API_BASE_BODY, and CATEGORY_IDS -- they existed only for that scrape.
 
-_security_key = os.getenv("WAFFARHA_SECURITY_KEY")
-def get_security_key() -> str:
-    if not _security_key:
-        raise RuntimeError(
-            "WAFFARHA_SECURITY_KEY is not set. "
-            "This key is required to fetch fresh offers from the Waffarha API. "
-            "If you are only running the chatbot with a prebuilt index, you can ignore this error "
-            "by not running fetch_offers.py."
-        )
-    return _security_key
-
-OFFERS_API_BASE_BODY = {
-    "security_key": _security_key,
-    "app_version": "9.1.06",
-    "platform": "website",
-    "device_token": "6B0D864C-865B-410D-B1BE-E9A43507762F",
-    "brand": "Apple",
-    "model": "iPhone16,1",
-    "store": "AppStore",
-    "ip": "196.202.14.131",
-}
-
-CATEGORY_IDS = [1, 5, 6, 7, 8, 9, 11, 12, 15, 17, 18, 20, 10, 21, 22, 24, 25, 146, 147, 148]
-
-# NEW: connection settings for ingest/fetch_offers_clickhouse.py, an
-# alternative offer source to fetch_offers.py's mobile-API scrape. Same
-# lazy-error pattern as get_security_key() above -- only raises if something
-# actually tries to connect, so importing config.py (e.g. from rag_engine.py,
-# which never touches ClickHouse) never requires these to be set.
+# Connection settings for the canonical ClickHouse offer source
+# (ingestion/sources/fetch_offers_clickhouse.py, driven by ingestion/refresh.py).
+# All defaults stay lazy -- config.py is imported by rag_engine.py which never
+# touches ClickHouse, so these are only required when a fetch actually connects.
 CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "localhost")
 CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))  # clickhouse-connect default HTTP port
 # CHANGED: matches the actual .env var name in use (CLICKHOUSE_USERNAME),
@@ -54,9 +32,9 @@ CLICKHOUSE_SECURE = os.getenv("CLICKHOUSE_SECURE", "true" if CLICKHOUSE_PORT == 
 _clickhouse_password = os.getenv("CLICKHOUSE_PASSWORD", "clickhouse123")
 
 def get_clickhouse_client():
-    """Returns a connected clickhouse_connect client. Deferred import (like
-    get_security_key()'s deferred requirement) so nothing else in this repo
-    needs the clickhouse-connect package installed to import config.py.
+    """Returns a connected clickhouse_connect client. Deferred-import friendly:
+    nothing else in this repo needs the clickhouse-connect package installed
+    just to import config.py.
 
     IMPORTANT: this should be a READ-ONLY database user. fetch_offers_clickhouse.py
     only issues SELECTs, but there is no code-level enforcement of that --
@@ -274,6 +252,23 @@ OFFER_DIRECT_ANSWER_SAME_ENTITY_MARGIN = 0.18
 FAQ_DIRECT_ANSWER_NO_GROUNDING_MARGIN = 0.15
 OFFER_DIRECT_ANSWER_NO_GROUNDING_MARGIN = 0.15
 
+# Score-inflation-safe qualification floor for direct-answer shortcuts.
+# The FAQ/OFFER_DIRECT_ANSWER_SCORE thresholds above compare against
+# combined_score = embedding + lexical + intent + entity + title + price
+# bonuses, and those bonuses routinely add +0.5 to +1.6 (single-match
+# examples from the phase-3 baseline: embedding 0.507 -> combined 1.920,
+# embedding 0.633 -> combined 2.213). A threshold checked against an
+# arbitrarily bonus-inflated number is fragile BY MARGIN; requiring the
+# raw embedding similarity to ALSO clear this explicit floor makes the
+# bar meaningful BY CONSTRUCTION -- bonuses may rank a candidate, they may
+# not be what qualifies it. Calibrated against the real index: every FAQ
+# direct answer that actually fired in the phase-3 baseline had embedding
+# score >= 0.587, so 0.55 blocks zero genuine FAQ/offer/stock shortcut
+# answers while refusing bonus-puffed weak matches (e.g. embedding 0.507
+# boosted to 1.920). retrieve() carries embedding_score / bonus_total on
+# every candidate so this stays auditable end to end.
+DIRECT_ANSWER_MIN_EMBEDDING_SCORE = float(os.getenv("DIRECT_ANSWER_MIN_EMBEDDING_SCORE", "0.55"))
+
 # ---------------------------------------------------------------------------
 # HALLUCINATION GUARDS
 # ---------------------------------------------------------------------------
@@ -323,7 +318,20 @@ PARTNERS_STATUS_LIVE = {"active"}
 
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
+
+# AGENTIC LAYER (Stage 2): the agent's understanding/planning model is
+# configurable independently of the response-generation model so model roles
+# can be sized per stage (e.g. AGENT_MODEL=qwen2.5:1.5b-instruct for a cheaper
+# planner once planning quality is validated). Defaults to the same local
+# Ollama generation model so the agent works with zero extra setup.
+AGENT_MODEL = os.getenv("AGENT_MODEL", OLLAMA_MODEL)
+# Hard budgets so the agent can never loop unbounded: max structured LLM
+# calls and max tool executions per turn (see agent/engine.py).
+MAX_AGENT_LLM_CALLS = int(os.getenv("MAX_AGENT_LLM_CALLS", "3"))
+MAX_AGENT_TOOL_CALLS = int(os.getenv("MAX_AGENT_TOOL_CALLS", "3"))
+# Cap on tokens the planner is allowed to emit for its JSON decision.
+AGENT_PLAN_NUM_PREDICT = int(os.getenv("AGENT_PLAN_NUM_PREDICT", "600"))
 
 # NEW: Jina AI hosted embeddings API settings (used by the ``jina:`` model
 # prefix in build_index.py / build_index_incremental.py / rag_engine.py).
@@ -404,9 +412,11 @@ MEMORY_BACKEND = os.getenv("MEMORY_BACKEND", "redis").lower()
 
 # NEW: per-user ("my coupons / my orders") queries. These hit ClickHouse
 # live (fct_coupons) rather than the static RAG index, and are gated behind
-# identity resolution -- see identity.py. Off by default until a real auth
-# backend exists.
-PERSONAL_QUERIES_ENABLED = os.getenv("PERSONAL_QUERIES_ENABLED", "true").lower() == "true"
+# identity resolution -- see identity.py. Off by default: personal data must
+# never be served without a trusted, resolved identity backend, so enabling
+# them is an explicit per-deployment decision (set PERSONAL_QUERIES_ENABLED=true
+# only once IDENTITY_BACKEND/identity resolvers are configured for real users).
+PERSONAL_QUERIES_ENABLED = os.getenv("PERSONAL_QUERIES_ENABLED", "false").lower() == "true"
 IDENTITY_BACKEND = os.getenv("IDENTITY_BACKEND", "static").lower()
 STATIC_TEST_USER_ID = int(os.getenv("STATIC_TEST_USER_ID", "0") or "0")
 
@@ -426,7 +436,23 @@ FACETED_PRODUCT_TOP_PER_MERCHANT = int(os.getenv("FACETED_PRODUCT_TOP_PER_MERCHA
 FACETED_MERCHANT_TOP_K = int(os.getenv("FACETED_MERCHANT_TOP_K", "6") or "6")
 
 # NEW: identity backend configuration
-# IDENTITY_BACKEND=header: reads user_id from HTTP header (set by auth proxy/gateway)
+# IDENTITY_BACKEND=static: fixed test user. LOCAL DEV / DEMO ONLY.
+# IDENTITY_BACKEND=header: reads user_id from HTTP header (set by auth proxy/gateway).
+#   Only if this service is never exposed directly to clients (no verification).
+# IDENTITY_BACKEND=session: reads user_id from Redis session store.
+# IDENTITY_BACKEND=auth: verifies a signed X-User-ID / X-User-Auth header pair
+#   (HMAC-SHA256 over "<user_id>:<expiry>" with AUTH_SIGNING_SECRET). The ONLY
+#   production-safe option when the service is reachable by clients.
 IDENTITY_HEADER = os.getenv("IDENTITY_HEADER", "X-User-ID")
 # IDENTITY_BACKEND=session: reads user_id from Redis session store
 SESSION_COOKIE_NAME = os.getenv("SESSION_COOKIE_NAME", "session_id")
+# IDENTITY_BACKEND=auth: shared secret used to sign/verify the identity header
+#   pair. Empty (default) => auth backend refuses ALL personal queries
+#   (fail-closed). Generate one, e.g. `python -c "import secrets;print(secrets.token_hex(32))"`.
+AUTH_SIGNING_SECRET = os.getenv("AUTH_SIGNING_SECRET", "")
+# IDENTITY_BACKEND=auth: name of the signature header carrying
+#   "<expiry_unix_ts>:<hmac_sha256_hex("user_id:expiry")>".
+AUTH_SIGNATURE_HEADER = os.getenv("AUTH_SIGNATURE_HEADER", "X-User-Auth")
+# IDENTITY_BACKEND=auth: how far past the token's expiry (seconds) we still
+#   accept it -- absorbs clock skew between the signing auth layer and this app.
+AUTH_CLOCK_SKEW_SECONDS = int(os.getenv("AUTH_CLOCK_SKEW_SECONDS", "300") or "300")

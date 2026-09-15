@@ -2,8 +2,8 @@
 Checks whether main.dim_type_price actually represents multi-tier pricing
 worth capturing in the RAG index, before building any ingest logic for it.
 
-Current offer docs (see build_index.py's load_offers(), fed by either
-fetch_offers.py or fetch_offers_clickhouse.py) only ever show ONE price per
+Current offer docs (see build_index.py's load_offers(), fed by
+fetch_offers_clickhouse.py) only ever show ONE price per
 offer, taken straight from dim_offers.actual_value/offer_value. If a
 meaningful share of offers actually have several purchasable price options
 (e.g. "Single" vs "Family" vs "VIP" seating) sitting in dim_type_price, the
@@ -25,8 +25,8 @@ purchasable", status=0 is stale/superseded -- filtering to status=1 gives
 the live tier set.
 
 Usage:
-    python ingest/fetch_type_price_clickhouse.py --debug   # investigate only, no write (see above)
-    python ingest/fetch_type_price_clickhouse.py --write   # writes data/type_prices.json (status=1 only)
+    python ingestion/sources/fetch_type_price_clickhouse.py --debug   # investigate only, no write (see above)
+    python ingestion/sources/fetch_type_price_clickhouse.py --write   # writes data/type_prices.json (status=1 only)
 """
 import argparse
 import datetime
@@ -159,7 +159,7 @@ def run_write():
     n_offers = len(by_offer)
     n_tiers = sum(len(v) for v in by_offer.values())
     print(f"\nDone. {n_offers} offer(s) with active pricing tier(s) -> {n_tiers} tier record(s) saved to {out_path}")
-    print("Next: python ingest/build_index.py --backend faiss   (load_offers() now also reads this file)")
+    print("Next: python ingestion/loaders/build_index.py --backend faiss   (load_offers() now also reads this file)")
 
 
 def main():
