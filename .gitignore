@@ -97,7 +97,7 @@ $RECYCLE.BIN/
 # =============================================================================
 # These are throwaway debugging scripts -- not part of the codebase
 debug_*.py
-test_*.py
+/test_*.py
 simple_test.py
 analyze_*.py
 answer_format.py
