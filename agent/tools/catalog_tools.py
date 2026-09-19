@@ -12,8 +12,12 @@ ToolContext.facade, which stays the authoritative source of business logic.
 """
 from __future__ import annotations
 
+import datetime
+import os
+
 from typing import ClassVar
 
+from core.faceted import _expiry_date
 from agent.tools import Tool, ToolContext, ToolResult
 
 
@@ -64,6 +68,40 @@ def _dedup_offers(items: list) -> list:
         seen.add(key)
         out.append(it)
     return out
+
+
+def _reference_date() -> datetime.date:
+    """SINGLE source of truth for the runtime freshness reference date.
+
+    REFERENCE_DATE env var (ISO yyyy-mm-dd) overrides real "today" so dev/CI/
+    local can freeze the cutoff deterministically (the corpus max expiry is
+    2026-08-31; real "today" past that would empty every offer query). Invalid
+    values fall back to today.
+    """
+    raw = os.environ.get("REFERENCE_DATE")
+    if raw:
+        try:
+            return datetime.date.fromisoformat(raw.strip()[:10])
+        except ValueError:
+            pass
+    return datetime.date.today()
+
+
+def _fresh_only(items: list, reference_date: datetime.date | None = None) -> tuple[list, int]:
+    """Phase-5 runtime freshness gate: drop offers whose metadata.expiry is
+    strictly before the reference date (deterministic, same expiry parser the
+    audit cites), keep offers with no/unknown expiry. reference_date defaults
+    to `_reference_date()` (REFERENCE_DATE env or real "today"); tests pass
+    their dataset's authored "today" explicitly. Returns (kept, dropped_count)."""
+    reference_date = reference_date or _reference_date()
+    kept, dropped = [], 0
+    for it in items:
+        d = _expiry_date(it.get("metadata", {}).get("expiry"))
+        if d is not None and d < reference_date:
+            dropped += 1
+            continue
+        kept.append(it)
+    return kept, dropped
 
 
 class SearchOffersTool(Tool):
@@ -157,8 +195,9 @@ class SearchOffersTool(Tool):
                 item = {"metadata": meta, "_retrieval_score": r.get("combined_score")}
                 if _matches_price_span(item, price) and (not exclude or meta.get("id") not in exclude):
                     items.append(item)
-            items = _dedup_offers(items)[:limit]
             provenance = "hybrid:semantic"
+        items = _dedup_offers(items)[:limit]
+        items, dropped_fresh = _fresh_only(items)
 
         # deterministic negative for an unknown merchant mention
         if not items and not canonical and product is None and category is None:
@@ -169,14 +208,14 @@ class SearchOffersTool(Tool):
                     note={"kind": "unknown_merchant", "merchant": unknown},
                 )
 
-        items = _dedup_offers(items)[:limit]
         return ToolResult(
             ok=bool(items) or not items,  # ok even for a clean "no matches" negative
             items=items,
             summary=f"{len(items)} offer(s) via {provenance}"
             + (f" (price {price})" if price else ""),
             note={"kind": "matches" if items else "no_matches",
-                  "provenance": provenance, "relaxable_price": price is not None},
+                  "provenance": provenance, "relaxable_price": price is not None,
+                  "dropped_expired": dropped_fresh},
         )
 
 
