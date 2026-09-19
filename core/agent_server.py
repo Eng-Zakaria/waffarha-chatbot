@@ -29,7 +29,6 @@ from core.app import (
     ChatResponse,
     ServerBusyError,
     _acquire_generation_slot,
-    _agent_evidence,
     _agent_identity,
     _agent_status_text,
     _build_suggestions,
@@ -139,13 +138,15 @@ async def chat(req: ChatRequest):
 
     try:
         bot_answer = ""
+        raw_sources = []
         for piece in engine.answer_stream(
                 query, reply_lang=reply_lang, history=history,
                 recent_offers=recent_offers, user_id=user_id,
                 identity=_agent_identity(user_id)):
             if isinstance(piece, str):
                 bot_answer = piece
-        raw_sources = _agent_evidence(engine)
+            elif isinstance(piece, dict) and piece.get("kind") == "agent_turn_report":
+                raw_sources = piece.get("evidence") or []
     except Exception:
         log.exception("agent /api/chat failed for query=%r", query)
         raise HTTPException(500, "The assistant hit an internal error. Please try again.")
@@ -201,6 +202,7 @@ async def chat_stream(req: ChatRequest):
                         q.put(("token", {"text": chunk}))
                 elif isinstance(piece, dict) and piece.get("kind") == "agent_turn_report":
                     q.put(("report", piece["data"]))
+                    q.put(("evidence", piece.get("evidence") or []))
         except Exception as e:  # noqa: BLE001
             q.put(("error", str(e)))
         finally:
@@ -210,6 +212,7 @@ async def chat_stream(req: ChatRequest):
         loop = asyncio.get_event_loop()
         thread_task = loop.run_in_executor(None, _run)
         full_text = ""
+        evidence_payload = None
         try:
             while True:
                 kind, payload = await asyncio.to_thread(q.get)
@@ -219,6 +222,10 @@ async def chat_stream(req: ChatRequest):
                 if kind == "token":
                     full_text += payload.get("text", "")
                     yield f"event: token\ndata: {json.dumps(payload)}{SSE_HEARTBEAT}"
+                elif kind == "report":
+                    pass
+                elif kind == "evidence":
+                    evidence_payload = payload
                 elif kind == "error":
                     log.exception("agent chat_stream failed for query=%r: %s", query, payload)
                     yield f"event: error\ndata: {json.dumps({'message': 'The assistant hit an internal error. Please try again.'})}{SSE_HEARTBEAT}"
@@ -233,7 +240,7 @@ async def chat_stream(req: ChatRequest):
         if leaked:
             log.warning("Scaffolding leak stripped post-stream for query=%r: %r", query, leaked)
 
-        raw_sources = _agent_evidence(engine)
+        raw_sources = [] if evidence_payload is None else evidence_payload
         sources = [_source_card(d, reply_lang) for d in raw_sources[:3]]
         suggestions = _build_suggestions(raw_sources, reply_lang)
         offer_cards = _offer_cards(raw_sources[:5], reply_lang)

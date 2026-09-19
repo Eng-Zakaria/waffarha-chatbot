@@ -98,7 +98,8 @@ class AgentEngine:
                                    user_id, identity, user_name)
         out = self._run_turn(params, progress=progress)
         yield out["answer"]
-        yield {"kind": "agent_turn_report", "data": out["report"]}
+        yield {"kind": "agent_turn_report", "data": out["report"],
+               "evidence": out.get("evidence") or []}
 
     # ------------------------------------------------------------------ #
     # Turn parameterisation
@@ -292,6 +293,7 @@ class AgentEngine:
         state.metrics["llm_calls"] = m.llm_calls
         state.metrics["tool_calls"] = state.tool_calls
         state.metrics["evidence_ids"] = _offer_ids(state.evidence)
+        out["evidence"] = list(state.evidence or [])
         out["report"] = state.snapshot()
         return out
 
@@ -813,7 +815,8 @@ class AgentEngine:
         state.final_response = answer
         state.next_action = S.DONE
         state.completion = True
-        return {"answer": answer, "report": state.snapshot()}
+        return {"answer": answer, "report": state.snapshot(),
+                "evidence": list(state.evidence or [])}
 
     # ------------------------------------------------------------------ #
     # Rendering

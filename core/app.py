@@ -874,13 +874,15 @@ async def agent_chat(req: AgentChatRequest):
 
     try:
         bot_answer = ""
+        evidence = []
         for piece in engine.answer_stream(
                 query, reply_lang=reply_lang, history=history,
                 recent_offers=recent_offers, user_id=user_id,
                 identity=_agent_identity(user_id)):
             if isinstance(piece, str):
                 bot_answer = piece
-        evidence = _agent_evidence(engine)
+            elif isinstance(piece, dict) and piece.get("kind") == "agent_turn_report":
+                evidence = piece.get("evidence") or []
     except Exception:
         log.exception("agent /api/agent/chat failed for query=%r", query)
         raise HTTPException(500, "The assistant hit an internal error. Please try again.")
@@ -971,6 +973,7 @@ async def agent_chat_stream(req: AgentChatRequest):
                         q.put(("token", chunk))
                 elif isinstance(piece, dict) and piece.get("kind") == "agent_turn_report":
                     q.put(("report", piece["data"]))
+                    q.put(("evidence", piece.get("evidence") or []))
         except Exception as e:
             q.put(("error", str(e)))
         finally:
@@ -982,6 +985,7 @@ async def agent_chat_stream(req: AgentChatRequest):
 
         full_text = ""
         status_sent = False
+        evidence_payload = None
         try:
             while True:
                 kind, payload = await asyncio.to_thread(q.get)
@@ -996,6 +1000,8 @@ async def agent_chat_stream(req: AgentChatRequest):
                     yield f"event: token\ndata: {json.dumps({'text': payload})}{SSE_HEARTBEAT}"
                 elif kind == "report":
                     pass  # consumed once we have the answer/evidence
+                elif kind == "evidence":
+                    evidence_payload = payload
                 elif kind == "error":
                     log.exception("agent chat_stream failed for query=%r: %s", query, payload)
                     yield f"event: error\ndata: {json.dumps({'message': 'The assistant hit an internal error. Please try again.'})}{SSE_HEARTBEAT}"
@@ -1010,7 +1016,7 @@ async def agent_chat_stream(req: AgentChatRequest):
         if leaked:
             log.warning("Scaffolding leak stripped post-stream for query=%r: %r", query, leaked)
 
-        evidence = _agent_evidence(engine)
+        evidence = [] if evidence_payload is None else evidence_payload
         # meta last (evidence is only known once the turn finished) -- the
         # frontend reads meta on arrival and renders cards on 'done', so
         # ordering is fine.

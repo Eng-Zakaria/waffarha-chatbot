@@ -437,7 +437,7 @@ _FAQ_TOPIC_RULES = [
     # rule so "إيه سياسة الاسترجاع لو دفعت بـ ڤودافون كاش؟" still lands on the
     # brand-specific doc (payment_109_refund), but BEFORE refund_coupon so a
     # policy question is never short-circuited to the mechanics-only faq_8.
-    ("refund_policy", r"(سياسة\s*الاسترجاع|سياسة\s*الاسترداد|سياسة\s*الارجاع|سياسة\s*الإرجاع|refund\s*polic\w*|returns\s*polic\w*|شروط\s*الاسترجاع|مصاريف\s*الاسترجاع|بيتحسب\s*الاسترجاع|بتحسب\s*الاسترجاع|الاسترجاع\s*بكامل|الاسترجاع\s*على\s*دفعة|بنرجع\s*المبلغ|استرجاع\s*الفلوس\s*بياخد)", "faq_refund_policy", False),
+    ("refund_policy", r"(سياسة\s*الاسترجاع|سياسة\s*الاسترداد|سياسة\s*الارجاع|سياسة\s*الإرجاع|refund\s*polic\w*|returns\s*polic\w*|return\s*polic\w*|شروط\s*الاسترجاع|مصاريف\s*الاسترجاع|بيتحسب\s*الاسترجاع|بتحسب\s*الاسترجاع|الاسترجاع\s*بكامل|الاسترجاع\s*على\s*دفعة|بنرجع\s*المبلغ|استرجاع\s*الفلوس\s*بياخد)", "faq_refund_policy", False),
     ("refund_coupon", r"(?:استرجاع|استرداد|رجعت|refund|يرجع|الرجوع|ارجع|astarreg|astarj3|astarreg3)\b[^؟?]{0,60}?(?:كوبون|coupon|فلوس|المبلغ|قيمة العرض|بتاعه|koupon|kohen|flous)\b", "faq_8", True),
     ("refund_any", r"\brefund\b|استرجاع|استرداد|رجعت|astarreg|astarj3", "faq_8", True),
     # ---- coupon usage / how to use after purchase ----
