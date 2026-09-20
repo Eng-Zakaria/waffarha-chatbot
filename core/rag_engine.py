@@ -24,6 +24,11 @@ from vectorstores.vectorstores import get_store  # CHANGED
 from personal.personal_queries import is_personal_query, PERSONAL_ERROR
 from catalog.catalog_queries import is_catalog_query, CatalogQueryService, CATALOG_ERROR
 from core.faceted import FacetedCatalog
+from core.greetings import (  # A2 re-export shims (design section 2 + Gap 3)
+    GREETING_PHRASES,
+    THANKS_PHRASES,
+    SMALL_TALK_PHRASES,
+)
 
 # NEW: same logger name as app.py ("waffarha-app") so the follow-up LLM
 # fallback's warnings (see _llm_says_is_followup) show up in the same log
@@ -292,35 +297,13 @@ def _looks_like_superlative_price_query(query: str):
 # phrase, not substring, so a real question that happens to start with "hi"
 # ("hi, kofta offers?") is untouched -- only a message that IS just a
 # greeting short-circuits before retrieval runs at all.
-_GREETING_PHRASES = {
-    "hi", "hello", "hey", "hey there", "hiya", "yo", "good morning", "good evening",
-    "thanks", "thank you", "thanks!", "ok thanks", "okay thanks", "thanks a lot",
-    "مرحبا", "مرحباً", "اهلا", "أهلا", "اهلا بك", "أهلا بك", "أهلا بيك",
-    "اهلا بيك", "هاي", "هلا", "صباح الخير", "مساء الخير", "السلام عليكم",
-    "شكرا", "شكراً", "تسلم", "تسلملي", "متشكر", "متشكرين",
-    # Variants
-    "شكرا ليكم", "شكرا لكم", "شكراً ليكم", "شكراً لكم",
-    "أهلا بيك يا باشا", "أهلا بيك يا معلم",
-    "شكرًا ليكم", "شكرًا لكم",
-    # Normalize tanween variants
-    "شكر ليكم", "شكر لكم",
-    "أهلا بيك يا بيه",
-    # With tanween
-    "شكراً ليكم", "شكراً لكم", "شكرًا ليكم", "شكرًا لكم",
-    # Without tanween
-    "شكر ليكم", "شكر لكم",
-    # With tanween variants
-    "شكراً ليكم", "شكراً لكم", "شكرًا ليكم", "شكرًا لكم",
-    "شكر ليكم", "شكر لكم",
-    # NEW: Franco-Arabic (Latin-script) greetings -- these previously fell
-    # through to retrieval because detect_lang() sees no Arabic glyphs.
-    "salam", "salamu", "salam 3aleikom", "salam 3alekom", "salam 3lykom",
-    "salam 3alaykom", "3aleikom salam", "assalamu alaikum", "assalamo alaikom",
-    "ahlan", "ahlan bik", "ahlan biki", "ahlan wa sahlan", "ahlan ya",
-    "marhaba", "marhaban", "mar7aba", "3arramba", "sabah el kheir",
-    "sabah el 5er", "masa2 el kheir", "masa el kheir", "ezayak", "ezzayak",
-    "ezayyek", "halo", "hallow", "helo", "helow", "hay", "hii", "weshakhtar",
-}
+# A2 (Stage-1 router phase 1): the legacy name is now a re-export of the
+# unified tables in core.greetings. The union is a strict superset of the
+# historical literal set below (hamza/tanween variants preserved), so every
+# legacy call site/test keeps exact behavior; the unified normalizer
+# (normalize_router_text) additionally folds hamza/diacritics/case for the
+# router path.
+_GREETING_PHRASES = GREETING_PHRASES | THANKS_PHRASES | SMALL_TALK_PHRASES
 _GREETING_REPLY = {
     "en": "Hey there! I can help with offers, orders, cashback, and returns — what are you looking for?",
     "ar": "أهلاً بيك! أقدر أساعدك في العروض، طلباتك، الكاش باك، أو الاسترجاع — تحب تعرف إيه؟",

@@ -114,16 +114,39 @@ def _corroborated_product(proposed: object, grounded: str | None, faceted) -> bo
 # Grounding pass over a search_offers argument dict
 # ------------------------------------------------------------------ #
 
-def ground_search_args(args: dict, user_query: str | None, faceted) -> dict:
-    """Return (cleaned_args, dropped) where `cleaned_args` is the argument
-    dict with every unconfirmed filter removed and `dropped` is a list of
-    human-readable records: "unconfirmed entity dropped: <value>".
+def _merge_corroborated(cleaned: dict, key: str, value) -> str | None:
+    """Add a corroborated entity the planner omitted, without overwriting an
+    explicit already-grounded value. Returns a merge note when applied.
 
-    `args` is treated as untrusted planner output. Data the planner
-    invented (not corroborated by the user text / catalog resolvers) is
-    never passed to the tool.
+    Only called with a value the user's own words corroborated (`grounded_*`),
+    so this is the "keep corroborated entities" half of the contract -- it
+    never trusts an unconfirmed planner claim. Merchant is intentionally out of
+    scope: a bare merchant mention in a comparison/exclusion turn is not a
+    filter request, so only category/product (the corroborated facet keys the
+    planner most often drops) are restored."""
+    if key not in ("category", "product"):
+        return None
+    if cleaned.get(key) not in (None, "", []):
+        return None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    cleaned[key] = value
+    return f"corroborated entity merged: {key}={cleaned[key]}"
+
+
+def ground_search_args(args: dict, user_query: str | None, faceted) -> dict:
+    """Return (cleaned_args, meta) where `cleaned_args` is the argument dict
+    with every unconfirmed filter removed AND every entity the user's own
+    words corroborate merged back in, and `meta` records what happened:
+    "unconfirmed entity dropped: <value>" / "corroborated entity merged: ...".
+
+    `args` is treated as untrusted planner output. Data the planner invented
+    (not corroborated by the user text / catalog resolvers) is never passed to
+    the tool; corroborated data the planner omitted is restored, because the
+    tool call's filters must reflect what the user actually asked for.
     """
     dropped: list[str] = []
+    merged: list[str] = []
     cleaned = dict(args or {})
 
     q = user_query or ""
@@ -170,6 +193,17 @@ def ground_search_args(args: dict, user_query: str | None, faceted) -> dict:
             dropped.append(f"unconfirmed entity dropped: {proposed}")
             cleaned.pop("product", None)
 
+    # -- merge corroborated entities the planner omitted ---------------
+    # The corroborated entity dict is computed above; if the planner failed
+    # to carry one into the args (e.g. product=pizza for "عايز بيتزا من
+    # 100-150 جنيه"), the tool call would silently degrade to a price-only
+    # search. Restore it here so the executed filters match the user's words.
+    # An explicit, already-grounded value is never overwritten.
+    for key, value in (("category", g_category), ("product", g_product)):
+        note = _merge_corroborated(cleaned, key, value)
+        if note:
+            merged.append(note)
+
     # -- price bounds preserve only numbers the user actually wrote -----
     price = cleaned.get("price_range")
     if isinstance(price, (list, tuple)) and len(price) == 2:
@@ -205,6 +239,7 @@ def ground_search_args(args: dict, user_query: str | None, faceted) -> dict:
             cleaned["query"] = q
 
     return cleaned, {"dropped": dropped,
+                     "merged": merged,
                      "numbers_in_query": sorted(numbers),
                      "grounded": {"merchants": sorted(g_merchants),
                                   "category": g_category,

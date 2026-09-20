@@ -79,8 +79,9 @@ def build_plan_prompt(query: str, params: dict, tool_names: list,
         '  "entities": object — merchant/product/category names mentioned, e.g. '
         '{"merchant": ["KFC"]}\n'
         '  "constraints": object — {"price_range": [min, max], "exclude": [ids], "limit": n}\n'
-        '  "intent": one of "catalog", "comparison", "personal", "anchored", "quality", '
-        '"faq", "greeting", "closing", "out_of_scope", "other"\n'
+        '  "intent": one of "catalog", "comparison", "personal", "anchored", '
+        '"quality", "faq", "greeting", "closing", "out_of_scope", '
+        '"unclear", "other"\n'
         '  "references": list of strings — phrases that reference an offer/coupon mentioned '
         "in conversation (e.g. \"that coupon\", \"هالخصم\"); empty if none\n"
         '  "known_information": list of strings — concrete facts already resolved from '
@@ -98,6 +99,13 @@ def build_plan_prompt(query: str, params: dict, tool_names: list,
         '- "respond_one": answer directly with what is already known, no tool needed.\n'
         '- "respond_trace": also safe to answer now.\n'
         '- "respond_empty": answer with no offer evidence.\n'
+        '- "unclear" intent: choose this when the message has NO usable request -- a single '
+        "character, keyboard noise, an unrecognized greeting, or any input with no merchant, "
+        "category, product, price, policy, or personal target you can act on. Then set tool to "
+        '"none" and next_action to "clarify" (or "respond_one" for pure small talk/noise). '
+        "NEVER turn an unclear message into intent \"catalog\" -- a catalog listing is only the "
+        "right plan for an EXPLICIT browse request (\"show me what you have\", \"عايز اشوف كل "
+        'العروض\").\n'
         "- Constraints: ONLY include a constraint the user EXPLICITLY stated (their language). "
         "Do NOT invent price ranges, limits or exclusions. price_range must be a JSON array of "
         "TWO numbers [min, max]; if only an upper bound is known use [0, max].\n"

@@ -29,12 +29,14 @@ The trace only exposes structured decisions -- never chain-of-thought.
 from __future__ import annotations
 
 import json
+import re
 import time
 from collections.abc import Callable
 from typing import Any
 
 import agent.state as S
-from agent.grounding import ground_search_args
+from agent.grounding import (ground_search_args, grounded_category,
+                             grounded_product)
 from agent.planner import PlanParseError, build_plan_prompt, call_planner
 from agent.reference import corroborate_references, resolve_reference
 from agent.state import AgentState
@@ -124,10 +126,16 @@ class AgentEngine:
         identity_note = "known customer" if identity else "public (anonymous)"
 
         raw_offers = (recent_offers or [])[-8:]
+        # Retrieval gate: a deterministic, inspectable decision made ONCE per
+        # turn, BEFORE any catalog call. Greetings/thanks/smalltalk and
+        # general-knowledge questions must never trigger offer retrieval.
+        retrieval_allowed, retrieval_reason = _retrieval_allowed(
+            query, detected, _looks_like_explicit_browse(query))
         return {
             "query": query,
             "reply_lang": lang,
             "detected_intent": detected,
+            "retrieval_allowed": (retrieval_allowed, retrieval_reason),
             "conversation": conversation,
             "references": self._extract_references(history),
             "recent_offers": [
@@ -174,6 +182,8 @@ class AgentEngine:
         m = AgentMetrics()
         state.metrics["lang"] = lang
         state.metrics["intent_candidate"] = params["detected_intent"]
+        state.metrics["retrieval_allowed"] = params["retrieval_allowed"][0]
+        state.metrics["retrieval_gate_reason"] = params["retrieval_allowed"][1]
         state.metrics["budget_llm_calls"] = MAX_AGENT_LLM_CALLS
         state.metrics["budget_tool_calls"] = MAX_AGENT_TOOL_CALLS
 
@@ -241,6 +251,30 @@ class AgentEngine:
             detail=_json_dump({k: plan.get(k) for k in
                                ("entities", "constraints", "missing_information")
                                if plan.get(k)})[:400])
+
+        # FAQ-topic override (deterministic, no second router): when the
+        # existing FAQ topic router fires on THIS message (e.g. "مش عايز
+        # عروض، عايز اعرف سياسة الاسترجاع"), the turn is a policy/how-to
+        # question, not an offer search -- the plan is rewritten to
+        # retrieve_faq BEFORE the direct-respond / clarification / execute
+        # gates can claim the query as a failed offer lookup. It only fires
+        # when a FAQ-topic signal exists (_route_faq_topic is the router) and
+        # the planner picked anything but retrieve_faq.
+        if self._facade_faq_topic(params.get("query") or ""):
+            if plan.get("tool") != "retrieve_faq" and "retrieve_faq" in self._registry.names():
+                plan["tool"] = "retrieve_faq"
+                args = dict(plan.get("args") or {})
+                if args.get("query") is None:
+                    args["query"] = params.get("query") or ""
+                plan["args"] = args
+                plan["intent"] = "faq"
+                plan["next_action"] = "plan"
+                state.metrics["planned_tool"] = "retrieve_faq"
+                state.trace_step(
+                    S.TRACE_KIND_DECISION,
+                    "faq-topic router matched; rerouting plan to retrieve_faq",
+                    reason_code="faq_topic_override",
+                    detail=params.get("query", "")[:200])
 
         # direct-action plan types that need no tool run
         if plan.get("next_action") in ("respond_one", "respond_trace", "respond_empty"):
@@ -355,9 +389,14 @@ class AgentEngine:
             args, grounding = self._ground_search_args(args, params, state)
             state.grounding = grounding.get("grounded") or {}
             state.metrics["grounding_dropped"] = grounding.get("dropped") or []
+            state.metrics["grounding_merged"] = grounding.get("merged") or []
             for note in grounding.get("dropped") or []:
                 state.trace_step(S.TRACE_KIND_TOOL, note,
                                  reason_code="unconfirmed_entity_dropped",
+                                 detail=note)
+            for note in grounding.get("merged") or []:
+                state.trace_step(S.TRACE_KIND_TOOL, note,
+                                 reason_code="corroborated_entity_merged",
                                  detail=note)
             if grounding.get("dropped"):
                 state.trace_step(S.TRACE_KIND_DECISION, "grounding pass applied",
@@ -384,6 +423,17 @@ class AgentEngine:
         state.metrics["planned_price"] = args.get("price_range")
         state.metrics["planned_exclude"] = list(args.get("exclude") or [])
         state.metrics["planned_limit"] = int(args.get("limit") or 6)
+
+        # RETRIEVAL GATE (deterministic, decided once per turn): a non-retrieval
+        # turn (greeting/thanks/smalltalk/general-knowledge) must NOT invoke the
+        # catalog -- zero offer cards. The gate is at the single chokepoint all
+        # catalog calls run through, so the fallback paths in
+        # _handle_no_matches / _handle_gate_failure / _finish_fallback cannot
+        # leak offers either.
+        allowed, reason = params.get("retrieval_allowed") or (True, None)
+        if not allowed and tool in _CATALOG_RETRIEVAL_TOOLS:
+            return self._no_retrieval_reply(params, state, reason)
+
         result = self._registry.call(tool, tool_ctx, args)
         state.observations.append(result.summary)
         state.plan.append({"tool": tool, "args": args,
@@ -433,13 +483,48 @@ class AgentEngine:
         FacetedCatalog.resolve_* on the normalized user text, and keeps a
         price bound only when it equals a number literally present in the
         message. Unconfirmed filters never reach the tool; they are reported
-        in the trace as "unconfirmed entity dropped: <value>".
+        in the trace as "unconfirmed entity dropped: <value>". Corroborated
+        entities the planner omitted are merged back into the args (traced as
+        "corroborated entity merged: <key>=<value>").
         """
         faceted = getattr(self._facade, "faceted", None)
         if faceted is None:
             return args, {"dropped": [], "grounded": {}}
         q = params.get("query") or ""
         return ground_search_args(args, q, faceted)
+
+    def _facade_faq_topic(self, query: str):
+        """Answer from the existing deterministic FAQ router: True-ish when the
+        user's own words match a FAQ/policy topic (refund policy, payment
+        method, order status, about-the-company). Uses the SAME `_route_faq_topic`
+        router the RetrieveFaqTool consults, so the routing decision is made by
+        the existing FAQ router -- never a new one and never an LLM."""
+        facade = self._facade
+        route_fn = getattr(facade, "_route_faq_topic", None)
+        if route_fn is None:
+            return None
+        norm = getattr(facade, "normalize_arabizi_and_arabic", None)
+        nq = norm(query) if callable(norm) else query
+        try:
+            return route_fn(query, nq) or None
+        except Exception:  # noqa: BLE001 -- a router miss must not crash a turn
+            return None
+
+    def _message_corroborates_facet(self, params) -> bool:
+        """True when the user's own words name a category or product that the
+        catalog resolver corroborates. Same resolvers grounding uses, so a
+        corroborated-but-planner-omitted entity is enough to proceed to the
+        tool call instead of firing a needless clarification."""
+        faceted = getattr(self._facade, "faceted", None)
+        if faceted is None:
+            return False
+        q = params.get("query") or ""
+        if not q.strip():
+            return False
+        try:
+            return bool(grounded_category(q, faceted) or grounded_product(q, faceted))
+        except Exception:  # noqa: BLE001 -- a resolver miss must not crash a turn
+            return False
 
     # ------------------------------------------------------------------ #
     # Reference resolution (Stage 3, deterministic, stored state only)
@@ -717,6 +802,8 @@ class AgentEngine:
 
         Does NOT fire when:
           - entities already cover a path (merchant, category, product), OR
+          - the user's own words corroborate a category/product the planner
+            omitted (grounding will merge it into the tool args), OR
           - a reference pass already resolved targets, OR
           - known_information from session context fills the gap, OR
           - recent session offers exist (the reference layer hasn't run yet
@@ -740,12 +827,31 @@ class AgentEngine:
         has_known = bool(plan.get("known_information") or state.known_information)
         if has_entity or has_reference or has_known:
             return False
+        # The planner may omit a facet the user's words clearly name (e.g.
+        # "pizza between 100-150" -> args carry only the price). Grounding
+        # merges that corroborated product in _execute, so it is a real path:
+        # do not ask the user for information their own message supplied.
+        if self._message_corroborates_facet(params):
+            return False
         recent = params.get("recent_offers_full") or []
         if recent:
             return False
         if missing:
             return True
         intent = str(plan.get("intent") or "")
+        # NEW: a genuine "unclear" verdict (low-signal input: single char,
+        # keyboard noise, unrecognized greeting, no act-on-able target). Never
+        # proceeds to a catalog dump -- same clarification path as an
+        # ungrounded specific search.
+        if intent == "unclear":
+            return True
+        # NEW: planner fell back to a bare catalog/other default on input with
+        # NO corroborated entity AND NO offer topic signal. "w"/"asdf"/"إيه
+        # ده" are not browse requests; dump-of-everything is only legitimate
+        # for explicit browse phrasing or a named offer topic.
+        if intent in ("catalog", "other", "") and not _has_offer_topic_signal(
+                str(params.get("query") or "")):
+            return True
         # "offer_lookup"/"comparison" are specific, ungrounded searches that
         # need a merchant/category; "personal" and "catalog" have their own
         # default paths (session user's coupons / broad browse) and must not
@@ -782,6 +888,9 @@ class AgentEngine:
         answer = _NO_ANSWER_FOUND.get(params["reply_lang"], _NO_ANSWER_FOUND["en"])
         fallback_items = []
         tool_ctx = self._tool_context(params, state)
+        allowed, reason = params.get("retrieval_allowed") or (True, None)
+        if not allowed:
+            return self._no_retrieval_reply(params, state, reason)
         if state.tool_calls >= MAX_AGENT_TOOL_CALLS:
             state.trace_step(S.TRACE_KIND_DECISION, "tool budget exhausted; no fallback",
                              reason_code="tool_budget")
@@ -876,6 +985,28 @@ class AgentEngine:
         state.completion = True
         return {"answer": answer, "report": state.snapshot()}
 
+    def _no_retrieval_reply(self, params, state, reason) -> dict:
+        """Zero-card deterministic reply for a turn the retrieval gate blocks.
+
+        Greetings/smalltalk/thanks get the greeting affordance; anything else
+        (general-knowledge, out-of-scope) gets the out-of-scope notice. Never
+        touches the catalog, so the answer can never contain offer cards."""
+        key = "greeting" if reason == "greeting" else "out_of_scope"
+        table = _GREETING_REPLY if key == "greeting" else _OUT_OF_SCOPE_REPLY
+        answer = table.get(params["reply_lang"], table["en"])
+        state.trace_step(
+            S.TRACE_KIND_DECISION,
+            f"retrieval gate blocked catalog tool "
+            f"(retrieval_allowed={params.get('retrieval_allowed')!r})",
+            reason_code=f"retrieval_blocked:{reason or 'not_allowed'}")
+        state.trace_step(S.TRACE_KIND_RESPONSE, "deterministic reply, zero cards",
+                         reason_code=f"retrieval_blocked:{reason or 'not_allowed'}")
+        state.decision_note = f"retrieval gate: {reason or 'blocked'} (no catalog call)"
+        state.final_response = answer
+        state.next_action = S.DONE
+        state.completion = True
+        return {"answer": answer, "report": state.snapshot(), "evidence": []}
+
     # ------------------------------------------------------------------ #
     # Safety gate & context
     # ------------------------------------------------------------------ #
@@ -938,6 +1069,50 @@ def _json_dump(obj) -> str:
 
 def _any_substring(text: str, words) -> bool:
     return any(w in text for w in words)
+
+
+# NEW: explicit-browse phrasing that makes a bare "catalog" default plan
+# legitimate. A plan with intent "catalog"/"other" but NO corroborated
+# entity and NO browse phrasing is low-signal input ("w", "asdf", ambiguous
+# small talk) that must be clarified -- never silently answered with a full
+# offer listing. Phrasing is matched on lower-cased text; Arabic needs no
+# case folding.
+_EXPLICIT_BROWSE_MARKERS = (
+    "show me", "show all", "show offers", "what do you have",
+    "what you have", "all offers", "all the offers", "list offers",
+    "list of offers", "browse", "what's available", "what is available",
+    "any offers", "do you have", "have any offers", "show me offers",
+    "what offers", "see offers", "view offers", "show everything",
+    # Arabic
+    "وريني", "عرضولي", "بينولي", "عايز اشوف", "دلوقتي العروض",
+    "كل العروض", "العروض كلها", "اشوف العروض", "شوف العروض",
+    "عندك ايه", "عندك اي", "عندكم ايه", "مفيش حاجة", "أنت ليك عروض",
+    "ما عندك", "ديني", "أريني",
+    # Franco
+    "waryni", "bynoly", "kol el 3orood", "3orood", "shouf",
+)
+
+
+def _looks_like_explicit_browse(query: str) -> bool:
+    """True if the user explicitly asked to SEE the offers (broad browse),
+    as opposed to an ambiguous/underspecified message."""
+    q = (query or "").strip().lower()
+    if not q:
+        return False
+    return _any_substring(q, _EXPLICIT_BROWSE_MARKERS)
+
+
+# NEW: minimal topical signal. When the planner defaults an unspecific input
+# to "catalog" but the user never even said the word offers ("w", "asdf",
+# "إيه ده"), it is insufficient-signal input, not a browse. Explicit browse
+# phrasing OR a bare offer topic word ("عروض", "offers", "deals") keeps the
+# catalog default.
+_OFFER_TOPIC_MARKERS = ("عروض", "العروض", "offers", "deals", "عروضا")
+
+
+def _has_offer_topic_signal(query: str) -> bool:
+    q = (query or "").strip().lower()
+    return _any_substring(q, _OFFER_TOPIC_MARKERS) or _looks_like_explicit_browse(q)
 
 
 def _coerce_span(value) -> list | None:
@@ -1118,3 +1293,128 @@ _NO_ANSWER_FOUND = {
           "or category.",
     "ar": "لم أجد عروضاً مطابقة الآن. جرب تاجراً أو فئة مختلفة.",
 }
+# Deterministic non-retrieval reply used when the retrieval gate blocks a
+# catalog turn. Words here are generic enough that the same phrasing is safe
+# for smalltalk, thanks, or an out-of-scope general-knowledge question.
+_OUT_OF_SCOPE_REPLY = {
+    "en": "I'm the Waffarha assistant, so I can help with Waffarha offers, "
+          "orders, cashback, and account questions -- but that's outside what "
+          "I can answer here.",
+    "ar": "أنا مساعد وفرها، فبستطيع مساعدتك في عروض وفرها وطلباتك والكاش باك "
+          "وأسئلة الحساب — لكن هذا خارج ما أستطيع الإجابة عنه هنا.",
+}
+
+
+# ------------------------------------------------------------------ #
+# Retrieval gate (deterministic, decided once per turn).
+#
+# Greetings / thanks / smalltalk / general-knowledge turns must return ZERO
+# offer cards. The router verdict (classify_intent_robust via the facade) is
+# the primary signal; the phrase list below is a cheap local complement so the
+# engine package stays import-light (core.rag_engine is heavy and must not be
+# imported by agent.engine). Same purpose as core's _GREETING_PHRASES, kept in
+# sync here deliberately -- a normalized exact-match, never a second router.
+# ------------------------------------------------------------------ #
+_GREETING_OR_THANKS_PHRASES = (
+    # English
+    "hi", "hello", "hey", "hey there", "hello there", "hi there", "yo",
+    "good morning", "good afternoon", "good evening", "good night",
+    "thanks", "thank you", "thanks a lot", "thank you very much", "thanks so much",
+    "cheers", "appreciated", "ok thanks", "okay thanks", "thank u",
+    # Arabic (normalized: no diacritics, no hamza variants)
+    "مرحبا", "اهلا", "اهلا بك", "اهلا بيك", "هاي", "هلا",
+    "صباح الخير", "مساء الخير", "السلام عليكم",
+    "شكرا", "شكرا لك", "شكرا ليك", "شكرا ليكم", "شكرا لكم",
+    "تسلم", "تسلملي", "متشكر", "متشكرين",
+    "اهلا وسهلا", "اهلا وسهلا بيك", "مرحبا بك", "مرحبا بيك",
+    "بونا صباح الخير", "بوني صباح الخير", "بوني صباحو", "مرحبا شلونك",
+    "شلونك", "ازيك", "كيفك", "كيف حالك",
+    # Franco / Arabizi
+    "salam", "salam 3aleikom", "ahlan", "ahlan wa sahlan", "ahlan bik",
+    "marhaba", "mar7aba", "sabah el kheir", "sabah el 5er", "ezayak",
+    "kefak", "kifak", "shlonak", "shukran", "thanks", "thx",
+)
+
+
+def _strip_diacritics_and_noise(text: str) -> str:
+    """Collapse Arabic diacritics, Hamza variants and boundary punctuation so
+    the greeting list can be matched on normalized tokens (same intent as
+    core.rag_engine._looks_like_greeting, implemented locally to keep agent.engine
+    import-light)."""
+    s = (text or "").strip().lower()
+    s = re.sub(r"[\u064B-\u0652\u06D6-\u06ED]", "", s)      # Arabic diacritics
+    s = s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ى", "ي")
+    return re.sub(r"[^\w\s]", " ", s).strip().lower()
+
+
+def _greeting_or_thanks(query: str) -> bool:
+    """True when the message is a PURE greeting/thanks/smalltalk line -- no
+    offer topic signal -- so the catalog must not be touched. Explicit-browse
+    or offer-word phrasing is checked separately by the caller."""
+    cleaned = _strip_diacritics_and_noise(query)
+    if not cleaned:
+        return False
+    if cleaned in _GREETING_OR_THANKS_PHRASES:
+        return True
+    # A greeting core (two-word greeting like "صباح الخير") can follow a
+    # dialectal prefix ("بونا صباح الخير"). Match the greeting core at either
+    # the start or the end of the message, but never mid-question.
+    if any(g in cleaned for g in ("صباح الخير", "مساء الخير", "اهلا وسهلا",
+                                  "شلونك", "كيفك", "ازيك", "thank you",
+                                  "thanks a lot", "سلام عليكم")):
+        return True
+    return False
+
+
+# Deterministic identity / general-knowledge question detector. These are
+# NEVER offer lookups -- no catalog answer exists for them -- so retrieval must
+# be skipped even though the router's keyword fallback would say OFFER_LOOKUP.
+_OUT_OF_SCOPE_QUESTION_RE = re.compile(
+    r"(who is|who are|tell me about|what is the capital of|"
+    r"من هو|من هي|من هم|مين هو|مين هي|مين هم|ما هي عاصمة|"
+    r"من هو رئيس|مين هو رئيس|من هو صاحب|مين هو صاحب)",
+    re.IGNORECASE,
+)
+
+
+def _out_of_scope_question(query: str) -> bool:
+    """True for general-knowledge / identity questions with no offer content."""
+    if not (query or "").strip():
+        return False
+    return bool(_OUT_OF_SCOPE_QUESTION_RE.search(query))
+
+
+# Router verdicts from classify_intent_robust that by themselves mean the
+# turn must never touch the offer catalog.
+_RETRIEVAL_BLOCKED_INTENTS = ("greeting", "out_of_scope", "prompt_injection",
+                              "closing")
+
+
+def _retrieval_allowed(query: str, detected_intent: str,
+                       explicit_browse: bool = False) -> tuple[bool, str | None]:
+    """Decide ONCE per turn, before any catalog tool may run, whether this
+    turn may retrieve offers. Returns (allowed, reason) where reason is the
+    deterministic gate code when blocked (None when allowed). Pure function of
+    the router verdict + the message text -- no LLM, no second router.
+
+    Order matters: a real offer ask (explicit-browse phrasing OR an offer
+    topic word like "عروض"/"offers") wins over a greeting opener, so "hello,
+    show me offers" still retrieves. Pure greetings/thanks/smalltalk and
+    identity/general-knowledge questions are blocked."""
+    intent = str(detected_intent or "").strip().lower()
+    if _has_offer_topic_signal(query):
+        return True, None
+    if intent in _RETRIEVAL_BLOCKED_INTENTS:
+        return False, intent
+    if _out_of_scope_question(query):
+        return False, "out_of_scope"
+    if _greeting_or_thanks(query):
+        return False, "greeting"
+    return True, None
+
+
+# Catalog tools that surface offer cards; a non-retrieval turn must never
+# invoke any of them. CatalogTool(scope=personal) is intentionally NOT here --
+# it is the account/coupon service, not offer retrieval.
+_CATALOG_RETRIEVAL_TOOLS = ("search_offers", "catalog", "superlative_offer",
+                            "compare_offers")

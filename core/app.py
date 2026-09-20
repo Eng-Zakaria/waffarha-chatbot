@@ -798,12 +798,16 @@ def _agent_status_text(engine, reply_lang: str, code: str) -> str:
 def _chunk_text(text: str, size: int = 24):
     """Split one finished answer into small token-sized chunks so the
     frontend's per-token textContent painting still produces a typing feel.
-    word-boundary aware on spaces when possible."""
+    word-boundary aware on spaces when possible.
+
+    Every non-final chunk keeps the space that word-splitting removed at the
+    boundary, so `full_text += chunk` reassembly in the SSE loops restores the
+    original inter-word spacing and answers are never glued together (bug 1)."""
     words = text.split(" ")
     chunks, cur = [], ""
     for w in words:
         if cur and len(cur + " " + w) > size:
-            chunks.append(cur)
+            chunks.append(cur + " ")
             cur = w
         else:
             cur = (cur + " " + w) if cur else w
