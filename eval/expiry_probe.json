@@ -1,0 +1,28 @@
+{
+  "now": "2026-09-21",
+  "paths": {
+    "retrieve": {
+      "freshness_helper_executed": "n/a (no helper; see source)",
+      "n_candidates": 8,
+      "n_expired": 7
+    },
+    "in_price_range": {
+      "rec_is_expired_calls": 1792,
+      "n_items": 6,
+      "n_expired": 0
+    },
+    "cheapest": {
+      "rec_is_expired_calls": 4495,
+      "n_items": 1
+    },
+    "tool_price_branch": {
+      "fresh_only_calls": 1,
+      "n_items": 4,
+      "ok": true
+    }
+  },
+  "calls": {
+    "fresh_only": 1,
+    "rec_is_expired": 6287
+  }
+}

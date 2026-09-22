@@ -1,0 +1,223 @@
+### greet_hala_long t0 cascade exit=refusal-relevance
+answer_prefix: للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.
+ev: gate followup-resolve dec=True ([], 'NEW_TOPIC')
+llm: [{'n': 2, 'phases': ['intent-judge', 'relevance-check']}, {'phase': 'intent-judge', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'relevance-check', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
+
+### offer_pizza t0 cascade exit=catalog-handle
+answer_prefix: دي العروض الحالية من Pizza Inn:
+- بيتزا إن
+من 99 حتى 410 جنيه (5 خيارات)
+- كوبون وجبة ساندوتش برجر: 99 جنيه (كانت 160 جنيه، خصم 38%)
+- كوبون وجبة بيتزا صغير: 115 جنيه (كانت 200 جنيه، خصم 43%)
+- كوبون وجبة بيتزا وسط: 135 جنيه (كانت 260 جنيه، خصم 48%)
+- كوبون وجبة بيتزا كبير: 219 جنيه (كانت 355 جنيه، 
+ev: gate catalog dec=True True
+ev: gate catalog-handle dec=True {'answer': 'دي العروض الحالية من Pizza Inn:\n- بيتزا إن\nمن 99 حتى 410 جنيه (5 خيارات)\n- كوبون وجبة ساندوتش برجر: 99 جن
+llm: [{'n': 0, 'phases': []}]
+intents: {}
+
+### followup_compare t0 cascade exit=catalog-handle
+answer_prefix: دي العروض الحالية من Pizza Inn:
+- بيتزا إن
+من 99 حتى 410 جنيه (5 خيارات)
+- كوبون وجبة ساندوتش برجر: 99 جنيه (كانت 160 جنيه، خصم 38%)
+- كوبون وجبة بيتزا صغير: 115 جنيه (كانت 200 جنيه، خصم 43%)
+- كوبون وجبة بيتزا وسط: 135 جنيه (كانت 260 جنيه، خصم 48%)
+- كوبون وجبة بيتزا كبير: 219 جنيه (كانت 355 جنيه، 
+ev: gate catalog dec=True True
+ev: gate catalog-handle dec=True {'answer': 'دي العروض الحالية من Pizza Inn:\n- بيتزا إن\nمن 99 حتى 410 جنيه (5 خيارات)\n- كوبون وجبة ساندوتش برجر: 99 جن
+llm: [{'n': 0, 'phases': []}]
+intents: {}
+
+### followup_compare t1 cascade exit=comparison
+answer_prefix: هنا مقارنة بين العروض:
+
+🏷️ ادفع 690 جنيه لقضاء ليلة وداي يوز لفردين بالغرفة المزدوجة المطلة على حمام السباحة شاملة وجبتي الافطار والعشاء (بوفيه مفتوح) واستمتع باطلالة حمام السباحة المريحة مع الجو الدفي وشمس السخنة وقضي أجمد اجازة في كانكون ريزورت اند سبا احد مشاريع بورتو العالمية في العين السخنة - ي
+card: id=1041 price=690.0 expiry=2015-04-08 expired=True title=ادفع 690 جنيه لقضاء ليلة وداي يوز لفردين بالغرفة المزدوجة ال
+card: id=368 price=60.0 expiry=2013-08-20 expired=True title=ادفع 60 جنيه بدل من 120 جنيه واختار الكنافة اللي بتحبها من ب
+card: id=467 price=75.0 expiry=2014-03-30 expired=True title=ادفع 75 جنيه بدلا من 150 واحصل على تيشرت واحد عليه التصميم ا
+card: id=1545 price=130.0 expiry=2016-04-15 expired=True title=ادفع 130 جنيه بدلا من 260 جنيه وعيش مغامرتين ولا في الأحلام 
+card: id=1311 price=499.0 expiry=2015-08-30 expired=True title=ادفع 499 جنيه بدلا من 750جنيه لقضاء ليلة للفرد في الغرفة الم
+ev: gate followup-resolve dec=True ([], 'NEW_TOPIC')
+ev: gate comparison dec=True هنا مقارنة بين العروض:
+
+🏷️ ادفع 690 جنيه لقضاء ليلة وداي يوز لفردين بالغرفة المزدوجة المطلة على حمام السباحة شاملة وجبتي
+llm: [{'n': 0, 'phases': []}]
+intents: {'_classify_intent': 'offer', '_smart_source_intent': 'offer'}
+
+### followup_compare t1 agent exit=agent-fallback:relax_failed
+answer_prefix: عثرت على عروض مناسبة:
+🏷️ ادفع 690 جنيه لقضاء ليلة وداي يوز لفردين بالغرفة المزدوجة المطلة على حمام السباحة شاملة وجبتي الافطار والعشاء (بوفيه مفتوح) واستمتع باطلالة حمام السباحة المريحة مع الجو الدفي وشمس السخنة وقضي أجمد اجازة في كانكون ريزورت اند سبا احد مشاريع بورتو العالمية في العين السخنة - يمك
+card: id=1041 price=690.0 expiry=2015-04-08 expired=True title=ادفع 690 جنيه لقضاء ليلة وداي يوز لفردين بالغرفة المزدوجة ال
+card: id=368 price=60.0 expiry=2013-08-20 expired=True title=ادفع 60 جنيه بدل من 120 جنيه واختار الكنافة اللي بتحبها من ب
+card: id=467 price=75.0 expiry=2014-03-30 expired=True title=ادفع 75 جنيه بدلا من 150 واحصل على تيشرت واحد عليه التصميم ا
+card: id=1545 price=130.0 expiry=2016-04-15 expired=True title=ادفع 130 جنيه بدلا من 260 جنيه وعيش مغامرتين ولا في الأحلام 
+card: id=1311 price=499.0 expiry=2015-08-30 expired=True title=ادفع 499 جنيه بدلا من 750جنيه لقضاء ليلة للفرد في الغرفة الم
+ev: gate agent-turn-params dec=True {'query': 'قارن بين أول عرض والتاني', 'reply_lang': 'ar', 'detected_intent': 'MULTI_MERCHANT', 'retrieval_allowed': (Tru
+ev: agent-plan planner dec=True {'tool': 'compare_offers', 'intent': 'comparison', 'next_action': 'plan', 'goal': 'Compare the first offer with the second offer', 'entities': "{'merchant': ['Waffarha']}", 'constraints': '{}', 'missing_information': '', 'references': "['that_offer']"}
+ev: agent-tool tool:compare_offers dec=True {'args': "{'offer_ids': ['that_offer'], 'merchants': ['Waffarha'], 'limit': 6, 'query': 'قارن بين أول عرض والت", 'ok': 'True', 'n_items': '0', 'ms': '13.5'}
+ev: gate agent-evidence-gate dec=True (False, 'empty_result')
+ev: agent-plan planner dec=True {'tool': 'compare_offers', 'intent': 'comparison', 'next_action': 'plan', 'goal': 'Compare the first offer with the second offer', 'entities': "{'merchant': ['that_merchant_1', 'that_merchant_2']}", 'constraints': '{}', 'missing_information': '', 'references': "['that_offer_1', 'that_offer_2']"}
+ev: gate agent-replan dec=True {'tool': 'compare_offers', 'args': {'offer_ids': ['that_offer_1', 'that_offer_2'], 'merchants': ['that_merchant_1', 'tha
+ev: agent-tool tool:compare_offers dec=True {'args': "{'offer_ids': ['that_offer_1', 'that_offer_2'], 'merchants': ['that_merchant_1', 'that_merchant_2'],", 'ok': 'True', 'n_items': '0', 'ms': '23.4'}
+ev: gate agent-evidence-gate dec=True (False, 'empty_result')
+ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'قارن بين أول عرض والتاني', 'limit': 6}", 'ok': 'True', 'n_items': '6', 'ms': '1186.6'}
+ev: gate agent-fallback dec=True fallback_reason=relax_failed
+llm: [{'n': 2, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'planner_intent': 'comparison', 'planner_tool': 'compare_offers', 'detected_hint': 'MULTI_MERCHANT'}
+
+### meal_pizza_breakfast t0 cascade exit=catalog-handle
+answer_prefix: مفيش عروض نشطة مطابقة للطلب. (checked: بيتزا للفطار)
+ev: gate catalog dec=True True
+ev: gate catalog-handle dec=True {'answer': 'مفيش عروض نشطة مطابقة للطلب. (checked: بيتزا للفطار)', 'sources': []}
+llm: [{'n': 0, 'phases': []}]
+intents: {}
+
+### meal_tamara_iftar t0 cascade exit=faceted
+answer_prefix: إليك بعض العروض:
+
+🏷️ استمتع بباقات القهوة التركي مع المعمول والتمور وكوكيز الشيكولاته والمكسرات والعسل بخصم حتى 26% من فروع زادنا!
+المتجر: زادنا
+الفئة: الطعام والمشروبات
+السعر: من 49 حتى 550 جنيه (16 خيارات)
+🔥 خصم 26%
+- كوبون برطمان دبس التمر السعودي (330 جم): 49 جنيه (كانت 66 جنيه، خصم 26%)
+- كوبون
+card: id=7944 price=49.0 expiry=2026-11-01 expired=False title=استمتع بباقات القهوة التركي مع المعمول والتمور وكوكيز الشيكو
+card: id=8894 price=45.0 expiry=2026-03-20 expired=True title=خصم حتى 39% على عصائر رمضانية في فروع سموزي باراديس
+card: id=7080 price=250.0 expiry=2025-02-28 expired=True title=وجبة إفطار شرقي لفردين بخصم 32% في فروع أرابياتا! فقط 250 جن
+card: id=7883 price=207.0 expiry=2025-03-30 expired=True title=الحلو من الفطار للسحور مع بون بايتس بأطعم متنوعة وخصم 25% من
+card: id=7038 price=110.0 expiry=2025-03-01 expired=True title=إفطار عالنيل من الاختيارت اللي تحبها بخصم 59% في مطعم حلاوة 
+ev: gate faceted dec=True إليك بعض العروض:
+
+🏷️ استمتع بباقات القهوة التركي مع المعمول والتمور وكوكيز الشيكولاته والمكسرات والعسل بخصم حتى 26% من ف
+llm: [{'n': 1, 'phases': ['offer-intro']}, {'phase': 'offer-intro', 'model': 'qwen2.5:3b-instruct'}]
+intents: {}
+
+### meal_sohour t0 cascade exit=llm-cards-intro
+answer_prefix: مرحبا، لقد وفرنا لك عروضاً مميزة على وجبات السحور في مختلف المتاجر والمطاعم. يرجى رؤية العروض المقدمة أدناه.
+
+🏷️ سحور بطعم تركي وبخصم حتى 48% في فروع مطعم مادو
+المتجر: Mado Egypt
+الفئة: الطعام والمشروبات
+السعر: من 159 حتى 295 جنيه (3 خيارات)
+🔥 خصم 48%
+- كوبون وجبة سحور (رقم 1): 159 جنيه (كانت 304 جن
+card: id=8945 price=159.0 expiry=2026-03-20 expired=True title=سحور بطعم تركي وبخصم حتى 48% في فروع مطعم مادو
+card: id=696 price=32.0 expiry=2014-07-27 expired=True title=ادفع 32جنيه بدل من 65جنيه لوجبة سحور  تشمل (طبق فول + 2 قطعة
+card: id=8830 price=245.0 expiry=2026-03-20 expired=True title=سحور بطعم أصيل بخصم 30% في مطعم أبو الزوز!
+card: id=727 price=30.0 expiry=2014-07-26 expired=True title=ادفع 30 جنيه بدلا من 60 جنيه لوجبة سحور جامدة جدا مكونة من ط
+card: id=2716 price=60.0 expiry=2018-06-16 expired=True title=السحور بيحلى باللمة واللمة تحلى في لاكونكا! ادفع 60 جنيه بدل
+ev: gate followup-resolve dec=True ([], 'NEW_TOPIC')
+ev: gate card-blocks dec=True ['🏷️ سحور بطعم تركي وبخصم حتى 48% في فروع مطعم مادو\nالمتجر: Mado Egypt\nالفئة: الطعام والمشروبات\nالسعر: من 159 حتى 295
+ev: gate card-blocks dec=True ['🏷️ سحور بطعم تركي وبخصم حتى 48% في فروع مطعم مادو\nالمتجر: Mado Egypt\nالفئة: الطعام والمشروبات\nالسعر: من 159 حتى 295
+ev: gate offer-intro dec=True مرحبا، لقد وفرنا لك عروضاً مميزة على وجبات السحور في مختلف المتاجر والمطاعم. يرجى رؤية العروض المقدمة أدناه.
+llm: [{'n': 2, 'phases': ['intent-judge', 'offer-intro']}, {'phase': 'intent-judge', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'offer-intro', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
+
+### meal_ramadan_breakfast t0 cascade exit=catalog-handle
+answer_prefix: دي عروض رمضان الحالية:
+- أندريا الهرم — 69 جنيه (was 250 جنيه), 72% off — صالح حتى 2019-06-02
+- أوازي — 59 جنيه (was 204 جنيه), 71% off — صالح حتى 2019-06-04
+- عصائر أولاد هاشم — 50 جنيه (was 150 جنيه), 67% off — صالح حتى 2020-08-01
+- هابي دولفين & نايل لي لي — 100 جنيه (was 295 جنيه), 66% off — صال
+ev: gate catalog dec=True True
+ev: gate catalog-handle dec=True {'answer': 'دي عروض رمضان الحالية:\n- أندريا الهرم — 69 جنيه (was 250 جنيه), 72% off — صالح حتى 2019-06-02\n- أوازي — 59
+llm: [{'n': 0, 'phases': []}]
+intents: {}
+
+### loc_kfc_nasr t0 cascade exit=catalog-handle
+answer_prefix: Couldn't find location info for كنتاكي في مدينة نصر؟.
+ev: gate catalog dec=True True
+ev: gate catalog-handle dec=True {'answer': "Couldn't find location info for كنتاكي في مدينة نصر؟.", 'sources': []}
+llm: [{'n': 0, 'phases': []}]
+intents: {}
+
+### loc_kfc_nasr t0 agent exit=tool:search_offers
+answer_prefix: عثرت على عروض مناسبة:
+🏷️ حصريا: وجبة ساندوتش زنجر وقطع ستربس كومبو بخصم 39% من فروع كنتاكي فرايد تشيكن!
+المتجر: دجاج كنتاكي
+الفئة: الطعام والمشروبات
+السعر: 189 جنيه
+بدل ما كان 310 جنيه
+🔥 خصم 39%
+ساري حتى 2026-11-01
+📍 🔗 رابط العرض: https://waffarha.com/ar/o-8119
+
+_جميع العروض أعلاه حقيقية ومرتبة حسب 
+card: id=8119 price=189.0 expiry=2026-11-01 expired=False title=حصريا: وجبة ساندوتش زنجر وقطع ستربس كومبو بخصم 39% من فروع ك
+ev: gate agent-turn-params dec=True {'query': 'فين فرع كنتاكي في مدينة نصر؟', 'reply_lang': 'ar', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (T
+ev: agent-plan planner dec=True {'tool': 'search_offers', 'intent': 'catalog', 'next_action': 'plan', 'goal': 'Find the closest KFC restaurant in Cairo', 'entities': "{'merchant': ['KFC']}", 'constraints': "{'price_range': [0, 1000]}", 'missing_information': '', 'references': '[]'}
+ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'فين فرع كنتاكي في مدينة نصر', 'merchant': 'KFC', 'exclude': [], 'limit': 1}", 'ok': 'True', 'n_items': '1', 'ms': '11.2'}
+ev: gate agent-evidence-gate dec=True (True, 'ok')
+llm: [{'n': 1, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+
+### personal_order t0 cascade exit=llm-full
+answer_prefix: للإجابة على سؤالك، يجب أن تذكر أنني لم أتلق أي طلب في هذا السياق. لا يمكنني معرفة حالة طلبك بدون بيانات إضافية أو رقم pedido. يرجى تقديم المزيد من المعلومات للحصول على الإجابة المطلوبة.
+ev: gate followup-resolve dec=True ([], 'NEW_TOPIC')
+llm: [{'n': 2, 'phases': ['generation', 'intent-judge']}, {'phase': 'intent-judge', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'generation', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'_classify_intent': 'mixed', '_smart_source_intent': 'faq', '_judge_is_faq': 'True'}
+
+### personal_order t0 agent exit=agent-fallback:relax_failed
+answer_prefix: لم أجد عروضاً مطابقة الآن. جرب تاجراً أو فئة مختلفة.
+ev: gate agent-turn-params dec=True {'query': 'الطلب بتاعي وصل ولا لسه؟', 'reply_lang': 'ar', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (True,
+ev: agent-plan planner dec=True {'tool': 'search_offers', 'intent': 'out_of_scope', 'next_action': 'plan', 'goal': "Check the status of the user's order", 'entities': "{'merchant': ['unknown'], 'category': ['unknown'], 'product': ['unknown']}", 'constraints': "{'price_range': [0, 10000], 'exclude': [], 'limit': 1}", 'missing_information': 'the merchant and category of the order', 'references': '[]'}
+ev: agent-tool tool:search_offers dec=True {'args': "{'exclude': [], 'limit': 1, 'query': 'الطلب بتاعي وصل ولا لسه؟'}", 'ok': 'True', 'n_items': '0', 'ms': '921.3'}
+ev: agent-plan planner dec=True {'tool': 'search_offers', 'intent': 'out_of_scope', 'next_action': 'respond_one', 'goal': "check the status of the user's order", 'entities': "{'merchant': None, 'product': None}", 'constraints': "{'price_range': None}", 'missing_information': '', 'references': '[]'}
+ev: gate agent-replan dec=True {'tool': 'search_offers', 'args': {'merchant': None, 'category': None, 'product': None, 'price_range': None, 'exclude': 
+ev: agent-tool tool:search_offers dec=True {'args': "{'merchant': None, 'category': None, 'product': None, 'price_range': None, 'exclude': None, 'limit':", 'ok': 'True', 'n_items': '0', 'ms': '983.1'}
+ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'الطلب بتاعي وصل ولا لسه؟', 'limit': 6}", 'ok': 'True', 'n_items': '0', 'ms': '958.5'}
+ev: gate agent-fallback dec=True fallback_reason=relax_failed
+llm: [{'n': 2, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'planner_intent': 'out_of_scope', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+
+### fp_gym t0 agent exit=agent-fallback:plan_parse_error
+answer_prefix: عثرت على عروض مناسبة:
+🏷️ ادفع 250 جنيه بدل من 500 جنيه لاشتراك شهر كامل في الجيم يشمل استخدام الآلات الرياضية وحصص الآيروبكس واستخدام منطقة الـ "سبا" في واحد من أشهر صالات الجيم وهو ماكسيمم جيم
+المتجر: Maximum Gym
+الفئة: الجمال والعناية
+السعر: 250 جنيه
+بدل ما كان 500 جنيه
+🔥 خصم 50%
+ساري حتى 2014-04-
+card: id=8401 price=280.0 expiry=2026-11-01 expired=False title=باقات متنوعة لجلسات استشفاء وحجامة وعلاج طبيعي بخصم حتى 46% 
+card: id=8529 price=650.0 expiry=2026-11-01 expired=False title=جلسات استشفاء، حجامة، تغذية وعلاج طبيعي بخصم حتى 40% في عياد
+card: id=9529 price=315.0 expiry=2026-11-01 expired=False title=صحتك أولوية! كشف تغذية، جلسات علاج طبيعي، حجامة وغيرهم بخصم 
+card: id=8968 price=75.0 expiry=2026-11-01 expired=False title=تشكيلة متكاملة من المنتجات الطبيعية والمشروبات المتنوعة بخصم
+ev: gate agent-turn-params dec=True {'query': 'ايه احسن عرض من عروض الجيم', 'reply_lang': 'ar', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (Tru
+ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'ايه احسن عرض من عروض الجيم', 'limit': 6}", 'ok': 'True', 'n_items': '6', 'ms': '1013.5'}
+ev: gate agent-fallback dec=True fallback_reason=plan_parse_error
+llm: [{'n': 1, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'detected_hint': 'OFFER_LOOKUP'}
+
+### fp_valid t0 agent exit=agent-fallback:plan_parse_error
+answer_prefix: Found matching offers:
+🏷️ تجربة حقيقة لأطفالك للاستمتاع والتعلم وتنمية المهارات بخصم حتى 33% في Play Hub، ساوث بارك - مدينتي!
+Merchant: Play Hub
+Category: Entertainment & Family
+Price: 390 EGP
+Was 580 EGP
+🔥 Save 33%
+Valid until 2026-11-01
+📍 🔗 Offer link: https://waffarha.com/en/o-8533
+🏷️ An Exciting
+card: id=6756 price=160.0 expiry=2026-11-01 expired=False title=Get 20% off Stationery supplies @Bernasos Stationary! EGP 16
+card: id=7807 price=110.0 expiry=2026-11-01 expired=False title=Reach the maximum productivity with up to 47% off @Shaghaf C
+card: id=7282 price=1125.0 expiry=2026-11-01 expired=False title=Different-shaped fish aquariums for a modern touch to your h
+ev: gate agent-turn-params dec=True {'query': 'is the offer actually valid?', 'reply_lang': 'en', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (T
+ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'is the offer actually valid?', 'limit': 6}", 'ok': 'True', 'n_items': '2', 'ms': '1010.9'}
+ev: gate agent-fallback dec=True fallback_reason=plan_parse_error
+llm: [{'n': 1, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
+intents: {'detected_hint': 'OFFER_LOOKUP'}
+
+### fp_cart t0 cascade exit=closing
+answer_prefix: You're welcome! Let me know if there's anything else.
+llm: [{'n': 0, 'phases': []}]
+intents: {}
+
+### offer_under100 t0 cascade exit=closing
+answer_prefix: You're welcome! Let me know if there's anything else.
+llm: [{'n': 0, 'phases': []}]
+intents: {}
