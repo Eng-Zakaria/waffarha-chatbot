@@ -94,6 +94,13 @@ OFFER_ACTIVE_VALUES = ["active"]
 # against otherwise-expired data without touching the status gate above.
 INCLUDE_EXPIRED_OFFERS = os.getenv("INCLUDE_EXPIRED_OFFERS", "false").lower() == "true"
 
+# Phase 1 (fix/routing-and-freshness): organic (non-anchored, non-explicit-
+# validity) search surfaces live offers only. Expired offers stay IN the index
+# (retrievable for anchored follow-ups and explicit validity questions) but are
+# filtered from the candidate pools that feed scoring/ranking. Set
+# LIVE_ONLY_ORGANIC=false to restore the legacy show-everything behavior.
+LIVE_ONLY_ORGANIC = os.getenv("LIVE_ONLY_ORGANIC", "true").lower() == "true"
+
 OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 
 # CHANGED: default embedding model upgraded to BGE-M3 for better Arabic retrieval.
@@ -332,6 +339,15 @@ MAX_AGENT_LLM_CALLS = int(os.getenv("MAX_AGENT_LLM_CALLS", "3"))
 MAX_AGENT_TOOL_CALLS = int(os.getenv("MAX_AGENT_TOOL_CALLS", "3"))
 # Cap on tokens the planner is allowed to emit for its JSON decision.
 AGENT_PLAN_NUM_PREDICT = int(os.getenv("AGENT_PLAN_NUM_PREDICT", "600"))
+
+# NEW: meaning-based FAQ-vs-OFFER judge for keyword-ambiguous queries (see
+# core/rag_perfection.judge_faq_vs_offer). Clear keyword cases never reach
+# the LLM; mixed/signal-less ones get one small cached call with a timeout,
+# falling back to the keyword verdict on any failure. Disable entirely with
+# INTENT_LLM_JUDGE_ENABLED=false to rely only on the keyword lists.
+INTENT_LLM_JUDGE_ENABLED = os.getenv("INTENT_LLM_JUDGE_ENABLED", "true").lower() == "true"
+INTENT_LLM_JUDGE_MODEL = os.getenv("INTENT_LLM_JUDGE_MODEL", OLLAMA_MODEL)
+INTENT_LLM_JUDGE_TIMEOUT = int(os.getenv("INTENT_LLM_JUDGE_TIMEOUT", "12") or "12")
 
 # NEW: Jina AI hosted embeddings API settings (used by the ``jina:`` model
 # prefix in build_index.py / build_index_incremental.py / rag_engine.py).

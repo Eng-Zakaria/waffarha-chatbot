@@ -48,3 +48,20 @@ venv/Scripts/python -m pytest tests/acceptance/ -q
   only reproducible while that instance is reachable.
 - The remote serves expired rows too (`offer_status='active'` does not imply
   unexpired) — Phase 1 filters these at query time.
+- The harness pins `REFERENCE_DATE` from its `--now` argument (setdefault, an
+  exported `REFERENCE_DATE` still wins), so app-side freshness clocks agree
+  with trace-side expiry math. Always pass `--now` for comparable runs.
+- Redis session ids are stable across runs (`<session>-<case-idx>`): flush
+  (`FLUSHDB`) before a definitive multi-turn run, or a follow-up turn will
+  anchor to a previous run's remembered offers.
+
+## Freshness two-run procedure (Phase 1 anchored-exemption proof)
+
+```powershell
+$env:MEMORY_BACKEND='redis'; $env:PYTHONIOENCODING='utf-8'
+venv/Scripts/python eval/turn_trace.py --cases eval/freshness_show.json --out eval/freshness_show.jsonl --now 2026-09-21
+venv/Scripts/python eval/turn_trace.py --cases eval/freshness_followup.json --out eval/freshness_followup.jsonl --now 2027-06-01
+venv/Scripts/python -m pytest tests/acceptance/test_freshness.py -q
+```
+Show turn serves Pizza Hut id 7270 live; follow-up past its 2026-11-01 expiry
+resolves it via `followup-anchored` with zero retrieval.

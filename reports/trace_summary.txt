@@ -1,12 +1,12 @@
 === TRACE SUMMARY ===
-greet_ya_hala          t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=5 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
-greet_ya_hala          t0 cascade exit=llm-cards-intro        retr=True  cards=5 exp=5 null=0 lang=ar/ar llm=2(intent-judge,offer-intro) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
+greet_ya_hala          t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+greet_ya_hala          t0 cascade exit=llm-cards-intro        retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=2(intent-judge,offer-intro) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
 greet_hala             t0 agent   exit=agent-safety           retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={'detected_hint': 'OFFER_LOOKUP'}
 greet_hala             t0 cascade exit=greeting               retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
-greet_hala_long        t0 agent   exit=tool:search_offers     retr=True  cards=2 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+greet_hala_long        t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 greet_hala_long        t0 cascade exit=refusal-relevance      retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=2(intent-judge,relevance-check) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
-greet_basha            t0 agent   exit=tool:search_offers     retr=True  cards=2 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
-greet_basha            t0 cascade exit=llm-cards-intro        retr=True  cards=5 exp=3 null=0 lang=ar/ar llm=2(intent-judge,offer-intro) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
+greet_basha            t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+greet_basha            t0 cascade exit=llm-cards-intro        retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=2(intent-judge,offer-intro) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
 greet_ezayak           t0 agent   exit=agent-safety           retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={'detected_hint': 'OFFER_LOOKUP'}
 greet_ezayak           t0 cascade exit=greeting               retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 greet_hello            t0 agent   exit=agent-safety           retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={'detected_hint': 'GREETING'}
@@ -21,32 +21,36 @@ offer_under100         t0 agent   exit=tool:search_offers     retr=True  cards=5
 offer_under100         t0 cascade exit=closing                retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
 meal_pizza_breakfast   t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 meal_pizza_breakfast   t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
-meal_ramadan_breakfast t0 agent   exit=tool:search_offers     retr=True  cards=1 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+meal_ramadan_breakfast t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 meal_ramadan_breakfast t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 meal_sohour            t0 agent   exit=agent-clarify          retr=False cards=0 exp=0 null=0 lang=ar/ar llm=1(planner) tools=- intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
-meal_sohour            t0 cascade exit=llm-cards-intro        retr=True  cards=5 exp=5 null=0 lang=ar/ar llm=2(intent-judge,offer-intro) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
-meal_tamara_iftar      t0 agent   exit=tool:search_offers     retr=True  cards=1 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
-meal_tamara_iftar      t0 cascade exit=faceted                retr=False cards=5 exp=4 null=0 lang=ar/ar llm=1(offer-intro) tools=- intents={}
+meal_sohour            t0 cascade exit=refusal-strict-floor   retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=1(intent-judge) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
+meal_tamara_iftar      t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+meal_tamara_iftar      t0 cascade exit=faceted                retr=False cards=5 exp=0 null=0 lang=ar/ar llm=1(offer-intro) tools=- intents={}
 fp_delete_account      t0 agent   exit=tool:retrieve_faq      retr=True  cards=0 exp=0 null=0 lang=en/en llm=1(planner) tools=retrieve_faq intents={'planner_intent': 'faq', 'planner_tool': 'retrieve_faq', 'detected_hint': 'FAQ_INQUIRY'}
 fp_delete_account      t0 cascade exit=out-of-scope           retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
-fp_hair                t0 agent   exit=tool:search_offers     retr=True  cards=3 exp=0 null=0 lang=en/en llm=2(planner,tool:search_offers) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OUT_OF_SCOPE'}
+fp_hair                t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=en/en llm=2(planner,tool:search_offers) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OUT_OF_SCOPE'}
 fp_hair                t0 cascade exit=out-of-scope           retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
-fp_physio              t0 agent   exit=tool:search_offers     retr=True  cards=4 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OUT_OF_SCOPE'}
+fp_physio              t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OUT_OF_SCOPE'}
 fp_physio              t0 cascade exit=out-of-scope           retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
-fp_gym                 t0 agent   exit=agent-fallback         retr=True  cards=4 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'detected_hint': 'OFFER_LOOKUP'}
+fp_gym                 t0 agent   exit=agent-fallback         retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'detected_hint': 'OFFER_LOOKUP'}
 fp_gym                 t0 cascade exit=out-of-scope           retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
-fp_cart                t0 agent   exit=tool:search_offers     retr=True  cards=3 exp=0 null=0 lang=en/en llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+fp_cart                t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=en/en llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 fp_cart                t0 cascade exit=closing                retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
-fp_valid               t0 agent   exit=agent-fallback         retr=True  cards=3 exp=0 null=0 lang=en/ar llm=1(planner) tools=search_offers intents={'detected_hint': 'OFFER_LOOKUP'}
+fp_valid               t0 agent   exit=agent-fallback         retr=True  cards=5 exp=0 null=0 lang=en/ar llm=1(planner) tools=search_offers intents={'detected_hint': 'OFFER_LOOKUP'}
 fp_valid               t0 cascade exit=closing                retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
 followup_compare       t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 followup_compare       t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
-followup_compare       t1 agent   exit=agent-fallback         retr=True  cards=5 exp=5 null=0 lang=ar/ar llm=2(planner) tools=compare_offers,compare_offers,search_offers intents={'planner_intent': 'comparison', 'planner_tool': 'compare_offers', 'detected_hint': 'MULTI_MERCHANT'}
-followup_compare       t1 cascade exit=comparison             retr=True  cards=5 exp=5 null=0 lang=ar/ar llm=0() tools=- intents={'_classify_intent': 'offer', '_smart_source_intent': 'offer'}
+followup_compare       t1 agent   exit=agent-fallback         retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=2(planner) tools=compare_offers,compare_offers,search_offers intents={'planner_intent': 'comparison', 'planner_tool': 'compare_offers', 'detected_hint': 'MULTI_MERCHANT'}
+followup_compare       t1 cascade exit=comparison             retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={'_classify_intent': 'offer', '_smart_source_intent': 'offer'}
 loc_kfc_nasr           t0 agent   exit=tool:search_offers     retr=True  cards=1 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 loc_kfc_nasr           t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 personal_order         t0 agent   exit=agent-fallback         retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=2(planner) tools=search_offers,search_offers,search_offers intents={'planner_intent': 'out_of_scope', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 personal_order         t0 cascade exit=llm-full               retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=2(generation,intent-judge) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'faq', '_judge_is_faq': 'True'}
+valid_mado_en          t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=en/ar llm=2(planner) tools=search_offers,search_offers,search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+valid_mado_en          t0 cascade exit=validity               retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
+valid_arabiata_ar      t0 agent   exit=tool:search_offers     retr=True  cards=3 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+valid_arabiata_ar      t0 cascade exit=validity               retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 
 === HARD VERDICTS ===
 greet_ya_hala              agent   FAIL  cards=5 retr=True exit=tool:search_offers
@@ -57,11 +61,11 @@ greet_hala                 agent   PASS  cards=0 retr=False exit=agent-safety
 greet_hala:lang            agent   PASS  want=ar got=ar
 greet_hala                 cascade PASS  cards=0 retr=False exit=greeting
 greet_hala:lang            cascade PASS  want=ar got=ar
-greet_hala_long            agent   FAIL  cards=2 retr=True exit=tool:search_offers
+greet_hala_long            agent   FAIL  cards=5 retr=True exit=tool:search_offers
 greet_hala_long:lang       agent   PASS  want=ar got=ar
 greet_hala_long            cascade FAIL  cards=0 retr=True exit=refusal-relevance
 greet_hala_long:lang       cascade PASS  want=ar got=ar
-greet_basha                agent   FAIL  cards=2 retr=True exit=tool:search_offers
+greet_basha                agent   FAIL  cards=5 retr=True exit=tool:search_offers
 greet_basha:lang           agent   PASS  want=ar got=ar
 greet_basha                cascade FAIL  cards=5 retr=True exit=llm-cards-intro
 greet_basha:lang           cascade PASS  want=ar got=ar
@@ -101,23 +105,23 @@ fp_delete_account          agent   PASS  oos=False cards=0 closing_like=False ex
 fp_delete_account:lang     agent   PASS  want=en got=en
 fp_delete_account          cascade FAIL  oos=True cards=0 closing_like=False exit=out-of-scope
 fp_delete_account:lang     cascade PASS  want=en got=en
-fp_hair                    agent   FAIL  oos=False cards=3 closing_like=False exit=tool:search_offers
+fp_hair                    agent   FAIL  oos=False cards=5 closing_like=False exit=tool:search_offers
 fp_hair:lang               agent   PASS  want=en got=en
 fp_hair                    cascade FAIL  oos=True cards=0 closing_like=False exit=out-of-scope
 fp_hair:lang               cascade PASS  want=en got=en
-fp_physio                  agent   FAIL  oos=False cards=4 closing_like=False exit=tool:search_offers
+fp_physio                  agent   FAIL  oos=False cards=5 closing_like=False exit=tool:search_offers
 fp_physio:lang             agent   PASS  want=ar got=ar
 fp_physio                  cascade FAIL  oos=True cards=0 closing_like=False exit=out-of-scope
 fp_physio:lang             cascade PASS  want=ar got=ar
-fp_gym                     agent   FAIL  oos=False cards=4 closing_like=False exit=agent-fallback
+fp_gym                     agent   FAIL  oos=False cards=5 closing_like=False exit=agent-fallback
 fp_gym:lang                agent   PASS  want=ar got=ar
 fp_gym                     cascade FAIL  oos=True cards=0 closing_like=False exit=out-of-scope
 fp_gym:lang                cascade PASS  want=ar got=ar
-fp_cart                    agent   FAIL  oos=False cards=3 closing_like=False exit=tool:search_offers
+fp_cart                    agent   FAIL  oos=False cards=5 closing_like=False exit=tool:search_offers
 fp_cart:lang               agent   PASS  want=en got=en
 fp_cart                    cascade FAIL  oos=False cards=0 closing_like=True exit=closing
 fp_cart:lang               cascade PASS  want=en got=en
-fp_valid                   agent   FAIL  oos=False cards=3 closing_like=False exit=agent-fallback
+fp_valid                   agent   FAIL  oos=False cards=5 closing_like=False exit=agent-fallback
 fp_valid:lang              agent   FAIL  want=en got=ar
 fp_valid                   cascade FAIL  oos=False cards=0 closing_like=True exit=closing
 fp_valid:lang              cascade PASS  want=en got=en
@@ -133,3 +137,11 @@ personal_order             agent   PASS  cards=0 exit=agent-fallback
 personal_order:lang        agent   PASS  want=ar got=ar
 personal_order             cascade PASS  cards=0 exit=llm-full
 personal_order:lang        cascade PASS  want=ar got=ar
+valid_mado_en              agent   FAIL  cards=5 honest_expired=False exit=tool:search_offers
+valid_mado_en:lang         agent   FAIL  want=en got=ar
+valid_mado_en              cascade PASS  cards=0 honest_expired=True exit=validity
+valid_mado_en:lang         cascade PASS  want=en got=en
+valid_arabiata_ar          agent   FAIL  cards=3 honest_expired=False exit=tool:search_offers
+valid_arabiata_ar:lang     agent   PASS  want=ar got=ar
+valid_arabiata_ar          cascade PASS  cards=0 honest_expired=True exit=validity
+valid_arabiata_ar:lang     cascade PASS  want=ar got=ar

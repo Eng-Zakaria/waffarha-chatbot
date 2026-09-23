@@ -429,6 +429,37 @@ def _build_superlative_query(direction: str, limit: int = 1) -> tuple[str, dict]
 
 # --- Service ---------------------------------------------------------------
 
+# --- Phase 1 live-only filtering (fix/routing-and-freshness) -----------------
+# Organic catalog answers surface live offers only. Effective expiry mirrors
+# _format_offer below (later of summary / tier / coupon date); rows without a
+# parseable date are kept (unprovable). Anchored/explicit-validity flows never
+# pass through here. Gated by config.LIVE_ONLY_ORGANIC (default true).
+
+def _row_effective_expiry(row: dict):
+    expiry = row.get("offer_expire_date")
+    for date_candidate in (row.get("tier_expiry"), row.get("coupon_expire_date")):
+        s = str(date_candidate)[:10] if date_candidate else ""
+        if s and (not expiry or s > str(expiry)[:10]):
+            expiry = s
+    return expiry
+
+
+def _row_is_live(row: dict, now=None) -> bool:
+    from core.freshness import parse_expiry, today as _today
+    if not isinstance(row, dict):
+        return True
+    exp = parse_expiry(_row_effective_expiry(row))
+    if exp is None:
+        return True
+    return exp >= (now or _today())
+
+
+def _live_rows(rows: list, now=None) -> list:
+    if not bool(getattr(config, "LIVE_ONLY_ORGANIC", True)):
+        return list(rows or [])
+    return [r for r in (rows or []) if _row_is_live(r, now)]
+
+
 class CatalogQueryService:
     """Runs scoped, parameterized ClickHouse queries against dim_offers/dim_partners
     and formats results into customer-facing answers."""
@@ -577,7 +608,7 @@ class CatalogQueryService:
         rows = self._rows(sql, params)
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
-        return rows
+        return _live_rows(rows)
 
     def list_by_price_range(self, price_min: Optional[float], price_max: Optional[float], lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
         where, params = _build_price_filter(price_min, price_max)
@@ -586,14 +617,14 @@ class CatalogQueryService:
         rows = self._rows(sql, params)
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
-        return rows
+        return _live_rows(rows)
 
     def get_superlative(self, direction: str, lang: str, session_id: Optional[str] = None) -> list[dict]:
         sql, params = _build_superlative_query(direction, limit=1)
         rows = self._rows(sql, params)
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
-        return rows
+        return _live_rows(rows)
 
     def get_merchant_location(self, merchant: str, lang: str, session_id: Optional[str] = None) -> list[dict]:
         merchant = self._resolve_merchant(merchant)
@@ -602,7 +633,7 @@ class CatalogQueryService:
         rows = self._rows(sql, params)
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
-        return rows
+        return _live_rows(rows)
 
     def list_by_tag(self, tag: str, lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
         where, params = _build_tag_filter(tag)
@@ -611,7 +642,7 @@ class CatalogQueryService:
         rows = self._rows(sql, params)
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
-        return rows
+        return _live_rows(rows)
 
     def list_multi_merchant(self, merchants: list[str], lang: str, limit_per_merchant: int = 3, session_id: Optional[str] = None) -> list[dict]:
         """Fetch offers for multiple merchants (e.g., 'KFC and Pizza Hut')."""
@@ -627,7 +658,7 @@ class CatalogQueryService:
             all_results.extend(rows)
         if session_id:
             self.session_manager.add_offers_to_session(session_id, all_results)
-        return all_results
+        return _live_rows(all_results)
 
     # -- Formatting Helpers --------------------------------------------------
 
@@ -1039,7 +1070,7 @@ class CatalogQueryService:
     def _answer_generic(self, lang: str, session_id: Optional[str] = None) -> dict:
         """Fallback: show a few top active offers."""
         sql = _BASE_SELECT + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT 5"
-        rows = self._rows(sql, {})
+        rows = _live_rows(self._rows(sql, {}))
         if not rows:
             msgs = self._messages(lang)
             return {"answer": msgs["no_offers"], "sources": []}

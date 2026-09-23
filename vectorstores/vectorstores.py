@@ -48,7 +48,13 @@ class VectorStore(ABC):
         """embeddings: (N, dim) float32, L2-normalized, same order as docs."""
 
     @abstractmethod
-    def search(self, query_embeddings: np.ndarray, k: int) -> list:
+    def search(self, query_embeddings: np.ndarray, k: int,
+               live_only: bool = False, now=None) -> list:
+        """Return [(score, doc_idx)] per query. live_only/now are accepted for
+        interface uniformity and ignored: live filtering happens at the
+        retrieve() pool level for every backend (see _live_filter: a native
+        Qdrant date-range filter is impossible without a reindex on this
+        client version)."""
         """Returns, per query row, a list of (cosine_similarity, doc_index) tuples."""
 
     def save(self, path: str) -> None:
@@ -73,7 +79,7 @@ class FaissStore(VectorStore):
         self.index = faiss.IndexFlatIP(dim)
         self.index.add(embeddings.astype("float32"))
 
-    def search(self, query_embeddings, k):
+    def search(self, query_embeddings, k, live_only=False, now=None):
         scores, indices = self.index.search(query_embeddings.astype("float32"), k)
         return [
             [(float(s), int(i)) for s, i in zip(row_s, row_i) if i != -1]
@@ -130,7 +136,7 @@ class ChromaStore(VectorStore):
                 metadatas=metadatas[start:end],
             )
 
-    def search(self, query_embeddings, k):
+    def search(self, query_embeddings, k, live_only=False, now=None):
         res = self.collection.query(
             query_embeddings=query_embeddings.astype("float32").tolist(), n_results=k
         )
@@ -190,6 +196,18 @@ class QdrantStore(VectorStore):
         dim = embeddings.shape[1]
         if self.client.collection_exists(self.collection_name):
             self.client.delete_collection(self.collection_name)
+        # Belt-and-braces: embedded-mode delete_collection has silently kept
+        # stale points on disk before (old ids beyond len(docs) survived the
+        # rebuild and crashed retrieve() with IndexError). Wipe the embedded
+        # collection folder itself when this store owns the filesystem path
+        # (server mode keeps no local segments, so this is a harmless no-op
+        # there -- the API delete above is authoritative for servers).
+        if not self.qdrant_url and self.persist_path:
+            import shutil
+            embedded_dir = os.path.join(
+                self.persist_path, "collection", self.collection_name)
+            if os.path.isdir(embedded_dir):
+                shutil.rmtree(embedded_dir, ignore_errors=True)
         self.client.create_collection(
             collection_name=self.collection_name,
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
@@ -208,7 +226,7 @@ class QdrantStore(VectorStore):
             ]
             self.client.upsert(collection_name=self.collection_name, points=points)
 
-    def search(self, query_embeddings, k):
+    def search(self, query_embeddings, k, live_only=False, now=None):
         # qdrant-client 1.10+ deprecated .search() in favor of .query_points(),
         # and recent releases (1.12+) removed .search() entirely -- hence the
         # AttributeError. .query_points() returns a QueryResponse wrapping a
@@ -216,14 +234,21 @@ class QdrantStore(VectorStore):
         # old .search() hits), not the bare hit list .search() used to return.
         results = []
         use_query_points = hasattr(self.client, "query_points")
+        qfilter = _live_filter(live_only, now)
         for q in query_embeddings:
             vec = q.astype("float32").tolist()
             if use_query_points:
-                response = self.client.query_points(
-                    collection_name=self.collection_name,
-                    query=vec,
-                    limit=k,
-                )
+                kwargs = dict(collection_name=self.collection_name,
+                              query=vec, limit=k)
+                if qfilter is not None:
+                    kwargs["query_filter"] = qfilter
+                try:
+                    response = self.client.query_points(**kwargs)
+                except Exception:
+                    # Native filter unsupported/failed: fall back to unfiltered
+                    # search; retrieve() pool-level filtering still applies.
+                    kwargs.pop("query_filter", None)
+                    response = self.client.query_points(**kwargs)
                 hits = response.points
             else:
                 hits = self.client.search(
@@ -278,7 +303,7 @@ class LanceDBStore(VectorStore):
             self.db.drop_table(self.table_name)
         self.table = self.db.create_table(self.table_name, data=data)
 
-    def search(self, query_embeddings, k):
+    def search(self, query_embeddings, k, live_only=False, now=None):
         results = []
         for q in query_embeddings:
             hits = (
@@ -346,7 +371,7 @@ class PgVectorStore(VectorStore):
                 f"CREATE INDEX ON {self.table_name} USING hnsw (embedding vector_cosine_ops);"
             )
 
-    def search(self, query_embeddings, k):
+    def search(self, query_embeddings, k, live_only=False, now=None):
         results = []
         with self.conn.cursor() as cur:
             for q in query_embeddings:
@@ -383,6 +408,20 @@ def _flatten_metadata(meta: dict) -> dict:
             continue
         out[k] = v if isinstance(v, (str, int, float, bool)) else str(v)
     return out
+
+
+def _live_filter(live_only: bool, now=None):
+    """Qdrant-native live filter: NOT implemented (returns None always).
+
+    Attempted: payload "expiry" is a plain string and this qdrant-client
+    version's Range accepts float only (both ISO strings and datetimes raise
+    ValidationError), with no datetime payload index in the built collection.
+    A native date-range filter would need a reindex, which is out of scope.
+    retrieve() pool-level filtering (over-fetch + pre-scoring drop) therefore
+    covers Qdrant identically to every other backend; the live_only/now
+    search params are accepted-and-ignored here for interface uniformity.
+    """
+    return None
 
 
 def get_store(name: str, persist_path: str = None) -> VectorStore:

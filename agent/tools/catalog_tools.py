@@ -92,7 +92,20 @@ def _fresh_only(items: list, reference_date: datetime.date | None = None) -> tup
     strictly before the reference date (deterministic, same expiry parser the
     audit cites), keep offers with no/unknown expiry. reference_date defaults
     to `_reference_date()` (REFERENCE_DATE env or real "today"); tests pass
-    their dataset's authored "today" explicitly. Returns (kept, dropped_count)."""
+    their dataset's authored "today" explicitly. Returns (kept, dropped_count).
+
+    LENIENCY: when the gate would drop EVERYTHING (stale snapshot whose
+    printed dates are all past today -- e.g. an old local index), the caller
+    keeps the full list instead of refusing: answering from slightly-stale
+    catalog data matches the legacy cascade behavior and is strictly more
+    useful than a blanket "no offers". See SearchOffersTool.run.
+
+    Phase 1 (fix/routing-and-freshness): the leniency applies only when
+    config.LIVE_ONLY_ORGANIC is off. With the default on, an all-expired pool
+    stays empty so callers answer honestly instead of rendering dead offers
+    as live.
+    """
+    from core import config as _config
     reference_date = reference_date or _reference_date()
     kept, dropped = [], 0
     for it in items:
@@ -101,6 +114,8 @@ def _fresh_only(items: list, reference_date: datetime.date | None = None) -> tup
             dropped += 1
             continue
         kept.append(it)
+    if not kept and dropped and not bool(getattr(_config, "LIVE_ONLY_ORGANIC", True)):
+        return list(items), 0
     return kept, dropped
 
 
@@ -180,8 +195,35 @@ class SearchOffersTool(Tool):
                     note={"kind": "no_matches", "category": category},
                 )
         elif price:
-            items = faceted.in_price_range(price[0], price[1], lang, limit)
-            provenance = f"faceted:price={price}"
+            # A price span alone is a weak signal: when the free-text query
+            # ALSO names a product/category ("pizza 100-150" with the product
+            # only in prose), a blind price scan returns confident-wrong
+            # non-matching offers (gyms, language courses...). Ground the
+            # query text itself first -- this also covers any path where the
+            # engine grounding pass was skipped (replans, future callers).
+            q_product = faceted.resolve_product(query or "")
+            q_category = faceted.resolve_category(query or "") if not q_product else None
+            if q_product:
+                key = _known_key(faceted, "product", q_product)
+                if key:
+                    items = faceted.offers_for_product(
+                        key, lang, limit, exclude_ids=exclude or None,
+                        price_filter=price)
+                    provenance = f"faceted:product={key}+price={price}"
+                else:
+                    items = []
+                    provenance = f"faceted:price={price}"
+            elif q_category:
+                key = _known_key(faceted, "category", q_category)
+                if key:
+                    items = faceted.offers_for_category(key, lang, limit, price_filter=price)
+                    provenance = f"faceted:category={key}+price={price}"
+                else:
+                    items = []
+                    provenance = f"faceted:price={price}"
+            else:
+                items = faceted.in_price_range(price[0], price[1], lang, limit)
+                provenance = f"faceted:price={price}"
         else:
             # --- hybrid semantic fallback --------------------------------
             raw = facade.retrieve(

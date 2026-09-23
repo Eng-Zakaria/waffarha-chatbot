@@ -545,13 +545,24 @@ class FacetedCatalog:
                 continue
             if kn in _DECORATION_NORM:
                 continue
-            if kn in norm_q:
-                canonical = self._canonical(self._name_to_canonical.get(kn) or kn)
-                if canonical in self.merchants and canonical not in seen:
-                    seen.add(canonical)
-                    p = norm_q.index(kn)
-                    matched_spans.append((canonical, (p, p + len(kn))))
-                    found.append(canonical)
+            if kn not in norm_q:
+                continue
+            # Short Latin-only brands need token boundaries: a raw substring
+            # lets "zing" match inside "zinger" and answers a KFC Zinger
+            # question with a ZING kids-area offer. Arabic names keep plain
+            # substring matching (attached prepositions/conjunctions are
+            # normal in Arabic script, and \b-style boundaries misbehave
+            # there); long Latin names keep it too (a 10+ char brand string
+            # is specific enough that a substring hit is the brand).
+            if ln <= 5 and re.fullmatch(r"[a-z0-9][a-z0-9 &'’.-]*", kn):
+                if not re.search(r"(?:^|[^\w])" + re.escape(kn) + r"(?:[^\w]|$)", norm_q):
+                    continue
+            canonical = self._canonical(self._name_to_canonical.get(kn) or kn)
+            if canonical in self.merchants and canonical not in seen:
+                seen.add(canonical)
+                p = norm_q.index(kn)
+                matched_spans.append((canonical, (p, p + len(kn))))
+                found.append(canonical)
 
         # 3) prune: a merchant matched inside the text span of a LONGER
         # matching merchant ("عايز عروض بابا جونز" also matches plain merchant
@@ -652,20 +663,29 @@ class FacetedCatalog:
         return out
 
     def offers_for_merchant(self, canonical: str, reply_lang: str = "en",
-                            limit: int = 6, exclude_ids=None, price_filter=None) -> list:
+                            limit: int = 6, exclude_ids=None, price_filter=None,
+                            live_only=None) -> list:
         canonical = self._canonical(canonical)
         recs = self._merchant_offers.get(canonical, [])
+        if _live_on(live_only):
+            recs = [(oid, r) for oid, r in recs
+                    if not _rec_is_expired(self.offers.get(oid) or r)]
         return self._recs_to_entries(recs, reply_lang, limit, exclude_ids, price_filter)
 
     def offers_for_category(self, category: str, reply_lang: str = "en",
-                            limit: int = 6, price_filter=None) -> list:
+                            limit: int = 6, price_filter=None,
+                            live_only=None) -> list:
         label = CATEGORY_LABEL.get(category, category)
         recs = self._category_offers.get(label, [])
+        if _live_on(live_only):
+            recs = [(oid, r) for oid, r in recs
+                    if not _rec_is_expired(self.offers.get(oid) or r)]
         return self._recs_to_entries(recs, reply_lang, limit, None, price_filter)
 
     def offers_for_product(self, product: str, reply_lang: str = "en",
                            limit: int = 6, top_per_merchant: int = 2,
-                           exclude_ids=None, price_filter=None) -> list:
+                           exclude_ids=None, price_filter=None,
+                           live_only=None) -> list:
         """Product offers with a per-merchant diversity cap: each merchant
         contributes at most `top_per_merchant` recs, then the merged pool is
         re-ranked by sold_count/discount so the reply shows several DIFFERENT
@@ -684,6 +704,9 @@ class FacetedCatalog:
         for m in order:
             merged.extend(per_merchant[m])
         merged.sort(key=lambda t: (t[1]["sold"], t[1]["discount"] or 0), reverse=True)
+        if _live_on(live_only):
+            merged = [(oid, r) for oid, r in merged
+                      if not _rec_is_expired(self.offers.get(oid) or r)]
         return self._recs_to_entries(merged, reply_lang, limit, exclude_ids, price_filter)
 
     # -- deterministic aggregation (slice 3) --------------------------------
@@ -707,41 +730,77 @@ class FacetedCatalog:
                 out.append((v, oid, rec))
         return out
 
-    def cheapest(self, reply_lang: str = "en", merchant: str = None, category: str = None):
+    def cheapest(self, reply_lang: str = "en", merchant: str = None, category: str = None,
+                 live_only=None):
         # NOTE: expired/0-price offers are intentionally NOT filtered out --
         # catalog offers are shown as-is, whatever their expiry says. Only
         # the optional merchant scope limits the pool.
         pool = self._superlative_pool(lambda r: self._lowest_price(r), merchant, category)
         if not pool:
             return None
+        # A 0-price row (e.g. a "free examination" placeholder) is only the
+        # honest "cheapest" when nothing purchasable exists; prefer real
+        # prices, and among those prefer non-expired rows -- with fallback to
+        # the full pool so a stale snapshot still answers instead of refusing.
+        nonzero = [t for t in pool if (t[0] or 0) > 0]
+        pool = nonzero or pool
+        # Phase 1: organic pools are live-only (no stale fallback); anchored
+        # callers pass live_only=False to keep the legacy prefer-fresh shape.
+        if _live_on(live_only):
+            pool = [t for t in pool
+                    if not _rec_is_expired(self.offers.get(t[1]) or {})]
+        else:
+            fresh = [t for t in pool if not _rec_is_expired(self.offers.get(t[1]) or {})]
+            pool = fresh or pool
+        if not pool:
+            return None
         _, oid, rec = min(pool, key=lambda t: t[0])
         return self._recs_to_entries([(oid, rec)], reply_lang, 1)
 
-    def most_expensive(self, reply_lang: str = "en", merchant: str = None, category: str = None):
+    def most_expensive(self, reply_lang: str = "en", merchant: str = None, category: str = None,
+                       live_only=None):
         pool = self._superlative_pool(lambda r: self._highest_price(r), merchant, category)
         if not pool:
             return None
+        if _live_on(live_only):
+            pool = [t for t in pool
+                    if not _rec_is_expired(self.offers.get(t[1]) or {})]
+            if not pool:
+                return None
+        else:
+            fresh = [t for t in pool if not _rec_is_expired(self.offers.get(t[1]) or {})]
+            pool = fresh or pool
         _, oid, rec = max(pool, key=lambda t: t[0])
         return self._recs_to_entries([(oid, rec)], reply_lang, 1)
 
-    def highest_discount(self, reply_lang: str = "en", merchant: str = None, category: str = None):
+    def highest_discount(self, reply_lang: str = "en", merchant: str = None, category: str = None,
+                         live_only=None):
         # Impossible >100% rows (old_price >=2x list price) are data bugs and
         # are excluded from the "highest discount" ranking -- everything else,
         # expired or not, is eligible.
         pool = self._superlative_pool(
             lambda r: r["discount"] if (r["discount"] is not None and r["discount"] <= 100) else None,
             merchant, category)
-        pool = [t for t in pool if not _rec_is_expired(t[2])] or pool
+        if _live_on(live_only):
+            pool = [t for t in pool if not _rec_is_expired(t[2])]
+        else:
+            pool = [t for t in pool if not _rec_is_expired(t[2])] or pool
         if not pool:
             return None
         _, oid, rec = max(pool, key=lambda t: t[0])
         return self._recs_to_entries([(oid, rec)], reply_lang, 1)
 
     def in_price_range(self, lo: float, hi: float, reply_lang: str = "en",
-                       limit: int = 6) -> list:
+                       limit: int = 6, live_only=None) -> list:
         """All offers whose purchasable price span overlaps [lo, hi] (a multi-
         tier offer qualifies when ANY of its options is in range), cheapest-
-        option-first."""
+        option-first.
+
+        Ranking preferences (each with fallback to the full pool so a stale
+        snapshot still answers instead of refusing, same contract as
+        cheapest()): real prices over 0-price placeholder rows (a "free
+        examination" row must not top "offers under 150 EGP" when purchasable
+        offers exist), and non-expired rows over expired ones."""
         recs = []
         for oid, rec in self.offers.items():
             span = self._price_span(rec)
@@ -750,6 +809,16 @@ class FacetedCatalog:
             if span[1] < lo or span[0] > hi:
                 continue
             recs.append((span[0], oid, rec))
+        nonzero = [t for t in recs if (t[0] or 0) > 0]
+        recs = nonzero or recs
+        # Phase 1: organic pools are live-only (no stale fallback); anchored
+        # callers pass live_only=False to keep the legacy prefer-fresh shape.
+        if _live_on(live_only):
+            recs = [t for t in recs
+                    if not _rec_is_expired(self.offers.get(t[1]) or {})]
+        else:
+            fresh = [t for t in recs if not _rec_is_expired(self.offers.get(t[1]) or {})]
+            recs = fresh or recs
         recs.sort(key=lambda t: t[0])
         return self._recs_to_entries([(o, r) for _, o, r in recs[:limit * 4]],
                                      reply_lang, limit)
@@ -892,9 +961,23 @@ def _expiry_date(value):
     return None
 
 
-def _rec_is_expired(rec):
+def _rec_is_expired(rec, now=None):
     e = rec.get("expiry")
     if not e:
         return False
     d = _expiry_date(e)
-    return d is not None and d < datetime.date.today()
+    if d is None:
+        return False
+    if now is None:
+        from core.freshness import today as _today
+        now = _today()
+    return d < now
+
+
+def _live_on(live_only):
+    """Resolve the live_only flag: None follows config.LIVE_ONLY_ORGANIC
+    (Phase 1 default: organic pools are live-only). Anchored follow-ups pass
+    False explicitly and bypass the filter entirely."""
+    if live_only is None:
+        return bool(getattr(config, "LIVE_ONLY_ORGANIC", True))
+    return bool(live_only)

@@ -170,6 +170,7 @@ def install_cascade_wrappers(rec, R, RagEngine, ollama_mod):
         ("_get_superlative_offer_answer", "superlative"),
         ("_faceted_answer", "faceted"),
         ("_faq_topic_answer", "faq-topic"),
+        ("_explicit_validity_answer", "validity"),
         ("_get_faq_direct_answer", "direct-faq"),
         ("_get_stock_direct_answer", "direct-stock"),
         ("_get_comparison_answer", "comparison"),
@@ -513,6 +514,11 @@ def main():
     args = ap.parse_args()
 
     now_date = _dt.date.fromisoformat(args.now) if args.now else _dt.date.today()
+    # Phase 1: pin the app's injectable freshness clock (REFERENCE_DATE, the
+    # single source of truth read by core/freshness, faceted and the tools)
+    # to the same date the harness uses for its own expiry math. setdefault:
+    # an explicitly exported REFERENCE_DATE still wins.
+    os.environ.setdefault("REFERENCE_DATE", now_date.isoformat())
     engines = ["cascade", "agent"] if args.engines == "both" else [args.engines]
 
     cases = []

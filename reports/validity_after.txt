@@ -1,0 +1,19 @@
+### valid_mado_en cascade exit=unknown retr=False cards=0 llm={'n': 0, 'phases': []}
+ANS: That offer has expired (was valid until 2026-03-20). | A Turkish-style Ramadan Suhoor with up to 48% off @Mado branches from Mado Egypt. | Ask me for current offers from the same merchant if you like.
+EVT: [('gate', 'inactive-merchant', False)]
+TOOLS: []
+
+### valid_mado_en agent exit=agent-fallback:relax_failed retr=True cards=0 llm={'n': 2, 'phases': ['planner']}
+ANS: I couldn't find matching offers right now. Try a different merchant or category.
+EVT: [('gate', 'agent-turn-params', True), ('gate', 'agent-safety', False), ('agent-plan', 'planner', True), ('gate', 'agent-clarify-check', False), ('agent-tool', 'tool:search_offers', True), ('agent-plan', 'planner', True), ('gate', 'agent-replan', True), ('agent-tool', 'tool:search_offers', True), ('agent-tool', 'tool:search_offers', True), ('agent-tool', 'tool:search_offers', True), ('gate', 'agent-fallback', True)]
+TOOLS: [{'tool': 'search_offers', 'args': {'merchant': 'Mado Egypt', 'limit': 6, 'query': 'is the Mado Egypt sohour offer still valid?'}, 'ok': True, 'n_items': 0}, {'tool': 'search_offers', 'args': {'merchant': 'Mado Egypt', 'limit': 6, 'query': 'is the Mado Egypt sohour offer still valid?'}, 'ok': True, 'n_items': 0}, {'tool': 'search_offers', 'args': {'query': 'is the Mado Egypt sohour offer still valid?', 'limit': 6}, 'ok': False, 'n_items': 0}, {'tool': 'search_offers', 'args': {'query': 'is the Mado Egypt sohour offer still valid?', 'limit': 6}, 'ok': False, 'n_items': 0}]
+
+### valid_arabiata_ar cascade exit=unknown retr=False cards=0 llm={'n': 0, 'phases': []}
+ANS: العرض ده انتهى (كان صالح حتى 2021-05-13). | Special Sohour for 1 pax with 31% off at Arabiata branches! EGP 120 instead of EGP 175 من Arabiata. | لو عايز عروض شغالة دلوقتي من نفس المحل، قولي.
+EVT: [('gate', 'inactive-merchant', False)]
+TOOLS: []
+
+### valid_arabiata_ar agent exit=agent-fallback:tool_error retr=True cards=0 llm={'n': 1, 'phases': ['planner']}
+ANS: لم أجد عروضاً مطابقة الآن. جرب تاجراً أو فئة مختلفة.
+EVT: [('gate', 'agent-turn-params', True), ('gate', 'agent-safety', False), ('agent-plan', 'planner', True), ('gate', 'agent-clarify-check', False), ('agent-tool', 'tool:search_offers', True), ('agent-tool', 'tool:search_offers', True), ('gate', 'agent-fallback', True)]
+TOOLS: [{'tool': 'search_offers', 'args': {'limit': 6, 'query': 'عرض ارابياتا لسه شغال؟'}, 'ok': False, 'n_items': 0}, {'tool': 'search_offers', 'args': {'query': 'عرض ارابياتا لسه شغال؟', 'limit': 6}, 'ok': False, 'n_items': 0}]

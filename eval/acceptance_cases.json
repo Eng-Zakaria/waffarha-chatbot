@@ -1,26 +1,204 @@
 [
-  {"id": "greet_ya_hala", "kind": "non-search", "turns": ["يا هلا"], "session": "acc-greet"},
-  {"id": "greet_hala", "kind": "non-search", "turns": ["هلا"], "session": "acc-greet"},
-  {"id": "greet_hala_long", "kind": "non-search", "turns": ["هلااااا"], "session": "acc-greet"},
-  {"id": "greet_basha", "kind": "non-search", "turns": ["مرحبا يا باشا"], "session": "acc-greet"},
-  {"id": "greet_ezayak", "kind": "non-search", "turns": ["ازيك"], "session": "acc-greet"},
-  {"id": "greet_hello", "kind": "non-search", "turns": ["hello"], "session": "acc-greet"},
-  {"id": "thanks_basha", "kind": "non-search", "turns": ["شكرا يا باشا"], "session": "acc-greet"},
-  {"id": "gibberish", "kind": "non-search", "turns": ["asdkjh"], "session": "acc-greet"},
-  {"id": "offer_pizza", "kind": "offer-search", "turns": ["عايز عروض بيتزا"], "session": "acc-offer"},
-  {"id": "offer_under100", "kind": "offer-search", "turns": ["show me offers with no more than 100 EGP"], "session": "acc-offer"},
-  {"id": "meal_pizza_breakfast", "kind": "meal-record", "turns": ["عايز عروض بيتزا للفطار"], "session": "acc-meal"},
-  {"id": "meal_ramadan_breakfast", "kind": "meal-record", "turns": ["عايز عروض فطار رمضان"], "session": "acc-meal"},
-  {"id": "meal_sohour", "kind": "meal-record", "turns": ["سحور"], "session": "acc-meal"},
-  {"id": "meal_tamara_iftar", "kind": "meal-record", "turns": ["بكام إفطار تمارا؟"], "session": "acc-meal",
-   "note": "Documented Tamara iftar-vs-sohour case: EVALUATION_REPORT.md same-merchant disambiguation; reports/HALLUCINATION_ANALYSIS.md:59,208"},
-  {"id": "fp_delete_account", "kind": "false-positive", "turns": ["how do I delete my account"], "session": "acc-fp"},
-  {"id": "fp_hair", "kind": "false-positive", "turns": ["hair treatment offers"], "session": "acc-fp"},
-  {"id": "fp_physio", "kind": "false-positive", "turns": ["عروض علاج طبيعي"], "session": "acc-fp"},
-  {"id": "fp_gym", "kind": "false-positive", "turns": ["ايه احسن عرض من عروض الجيم"], "session": "acc-fp"},
-  {"id": "fp_cart", "kind": "false-positive", "turns": ["abandoned cart offers"], "session": "acc-fp"},
-  {"id": "fp_valid", "kind": "false-positive", "turns": ["is the offer actually valid?"], "session": "acc-fp"},
-  {"id": "followup_compare", "kind": "followup", "turns": ["عايز عروض بيتزا", "قارن بين أول عرض والتاني"], "session": "acc-follow"},
-  {"id": "loc_kfc_nasr", "kind": "location", "turns": ["فين فرع كنتاكي في مدينة نصر؟"], "session": "acc-loc"},
-  {"id": "personal_order", "kind": "personal", "turns": ["الطلب بتاعي وصل ولا لسه؟"], "session": "acc-personal"}
+  {
+    "id": "greet_ya_hala",
+    "kind": "non-search",
+    "turns": [
+      "يا هلا"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "greet_hala",
+    "kind": "non-search",
+    "turns": [
+      "هلا"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "greet_hala_long",
+    "kind": "non-search",
+    "turns": [
+      "هلااااا"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "greet_basha",
+    "kind": "non-search",
+    "turns": [
+      "مرحبا يا باشا"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "greet_ezayak",
+    "kind": "non-search",
+    "turns": [
+      "ازيك"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "greet_hello",
+    "kind": "non-search",
+    "turns": [
+      "hello"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "thanks_basha",
+    "kind": "non-search",
+    "turns": [
+      "شكرا يا باشا"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "gibberish",
+    "kind": "non-search",
+    "turns": [
+      "asdkjh"
+    ],
+    "session": "acc-greet"
+  },
+  {
+    "id": "offer_pizza",
+    "kind": "offer-search",
+    "turns": [
+      "عايز عروض بيتزا"
+    ],
+    "session": "acc-offer"
+  },
+  {
+    "id": "offer_under100",
+    "kind": "offer-search",
+    "turns": [
+      "show me offers with no more than 100 EGP"
+    ],
+    "session": "acc-offer"
+  },
+  {
+    "id": "meal_pizza_breakfast",
+    "kind": "meal-record",
+    "turns": [
+      "عايز عروض بيتزا للفطار"
+    ],
+    "session": "acc-meal"
+  },
+  {
+    "id": "meal_ramadan_breakfast",
+    "kind": "meal-record",
+    "turns": [
+      "عايز عروض فطار رمضان"
+    ],
+    "session": "acc-meal"
+  },
+  {
+    "id": "meal_sohour",
+    "kind": "meal-record",
+    "turns": [
+      "سحور"
+    ],
+    "session": "acc-meal"
+  },
+  {
+    "id": "meal_tamara_iftar",
+    "kind": "meal-record",
+    "turns": [
+      "بكام إفطار تمارا؟"
+    ],
+    "session": "acc-meal",
+    "note": "Documented Tamara iftar-vs-sohour case: EVALUATION_REPORT.md same-merchant disambiguation; reports/HALLUCINATION_ANALYSIS.md:59,208"
+  },
+  {
+    "id": "fp_delete_account",
+    "kind": "false-positive",
+    "turns": [
+      "how do I delete my account"
+    ],
+    "session": "acc-fp"
+  },
+  {
+    "id": "fp_hair",
+    "kind": "false-positive",
+    "turns": [
+      "hair treatment offers"
+    ],
+    "session": "acc-fp"
+  },
+  {
+    "id": "fp_physio",
+    "kind": "false-positive",
+    "turns": [
+      "عروض علاج طبيعي"
+    ],
+    "session": "acc-fp"
+  },
+  {
+    "id": "fp_gym",
+    "kind": "false-positive",
+    "turns": [
+      "ايه احسن عرض من عروض الجيم"
+    ],
+    "session": "acc-fp"
+  },
+  {
+    "id": "fp_cart",
+    "kind": "false-positive",
+    "turns": [
+      "abandoned cart offers"
+    ],
+    "session": "acc-fp"
+  },
+  {
+    "id": "fp_valid",
+    "kind": "false-positive",
+    "turns": [
+      "is the offer actually valid?"
+    ],
+    "session": "acc-fp"
+  },
+  {
+    "id": "followup_compare",
+    "kind": "followup",
+    "turns": [
+      "عايز عروض بيتزا",
+      "قارن بين أول عرض والتاني"
+    ],
+    "session": "acc-follow"
+  },
+  {
+    "id": "loc_kfc_nasr",
+    "kind": "location",
+    "turns": [
+      "فين فرع كنتاكي في مدينة نصر؟"
+    ],
+    "session": "acc-loc"
+  },
+  {
+    "id": "personal_order",
+    "kind": "personal",
+    "turns": [
+      "الطلب بتاعي وصل ولا لسه؟"
+    ],
+    "session": "acc-personal"
+  },
+  {
+    "id": "valid_mado_en",
+    "kind": "validity",
+    "turns": [
+      "is the Mado Egypt sohour offer still valid?"
+    ],
+    "session": "acc-valid"
+  },
+  {
+    "id": "valid_arabiata_ar",
+    "kind": "validity",
+    "turns": [
+      "عرض ارابياتا لسه شغال؟"
+    ],
+    "session": "acc-valid"
+  }
 ]

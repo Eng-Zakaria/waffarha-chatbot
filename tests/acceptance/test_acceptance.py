@@ -72,6 +72,11 @@ XFAIL = {
     # renders 5 unrelated expired cards outside the turn-1 set (cascade skips:
     # live catalog turn-1 stores no evidence).
     ("followup_compare", "agent"): "relax_failed fallback renders cards outside turn-1 set",
+    # Phase 1: agent has no explicit-validity path (scoped to cascade); it
+    # serves live-only cards for validity questions instead of honest framing.
+    ("valid_mado_en", "agent"): "no validity path on agent; serves live cards without expired framing",
+    ("valid_arabiata_ar", "agent"): "no validity path on agent; serves live cards without expired framing",
+    ("valid_mado_en:lang", "agent"): "reply_lang=ar for English query",
     ("fp_valid:lang", "agent"): "reply_lang=ar for English query",
 }
 
@@ -157,6 +162,17 @@ def test_personal_without_identity_no_offer_cards(engine):
     assert len(r["cards"]) == 0, "offer cards on personal query: %d" % len(r["cards"])
 
 
+@pytest.mark.parametrize("case", ["valid_mado_en", "valid_arabiata_ar"])
+@pytest.mark.parametrize("engine", ENGINES)
+def test_explicit_validity_honest_no_cards(case, engine):
+    _xfail(case, engine)
+    r = REC[(case, 0, engine)]
+    assert len(r["cards"]) == 0, "live-style cards on expired offer: %d" % len(r["cards"])
+    ans = r["answer_prefix"]
+    assert ("انتهى" in ans or "expired" in ans.lower()), \
+        "no honest expired framing: %r" % ans[:120]
+
+
 def test_reply_language_matches_query():
     for (case, turn, engine), r in sorted(REC.items()):
         if (case + ":lang", engine) in XFAIL:
@@ -167,6 +183,9 @@ def test_reply_language_matches_query():
 
 @pytest.mark.parametrize("engine", ENGINES)
 def test_reply_language_known_gap(engine):
-    _xfail("fp_valid:lang", engine)
+    for case in ("fp_valid", "valid_mado_en"):
+        _xfail(case + ":lang", engine)
     r = REC[("fp_valid", 0, engine)]
     assert r["reply_lang"] == "en", "want en got %s" % r["reply_lang"]
+    r2 = REC[("valid_mado_en", 0, engine)]
+    assert r2["reply_lang"] == "en", "want en got %s" % r2["reply_lang"]

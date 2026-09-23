@@ -19,7 +19,13 @@ import ollama
 
 from core import config
 from core.embedding_providers import get_embedding_provider, canonical_model_key  # CHANGED
-from core.rag_perfection import normalize_arabizi_and_arabic, check_out_of_scope_guardrail, classify_intent_robust
+from core.rag_perfection import (
+    normalize_arabizi_and_arabic,
+    check_out_of_scope_guardrail,
+    classify_intent_robust,
+    judge_faq_vs_offer,
+    _fold_keyword_text,
+)
 from vectorstores.vectorstores import get_store  # CHANGED
 from personal.personal_queries import is_personal_query, PERSONAL_ERROR
 from catalog.catalog_queries import is_catalog_query, CatalogQueryService, CATALOG_ERROR
@@ -364,7 +370,7 @@ _FAQ_TOPIC_RULES = [
     # question/title carries the status word the tests expect, English text is
     # a bonus for en-side assertions) ----
     ("status_12_fawry_pending", r"فورى بيندنج|فوري بيندنج|fawry pending", "purchasing_status_12", True),
-    ("status_3_used", r"used|مستعمل|استُخدم|استخدم بالفعل|بتاع الاستخدام|مستخدم بالفعل|اتستخدم", "purchasing_status_3", True),
+    ("status_3_used", r"used|مستعمل|الطلب مستخدم|طلب مستخدم|استُخدم|استخدم بالفعل|بتاع الاستخدام|مستخدم بالفعل|اتستخدم", "purchasing_status_3", True),
     ("status_2_in_process", r"in process|جارى التنفيذ|جاري التنفيذ|قيد التنفيذ|بيت implement|بيتنفذ", "purchasing_status_2", True),
     ("status_10_expired", r"expired|منتهى الصلاحية|منتهي الصلاحية|انتهت الصلاحية|انتهى صلاحيته|منتهية", "purchasing_status_10", True),
     ("status_5_canceled", r"canceled|cancelled|cancellation|ملغى|ملغي|إلغاء|الغاء|ألغى|الغي", "purchasing_status_5", True),
@@ -398,12 +404,19 @@ _FAQ_TOPIC_RULES = [
     ("pay_visa_cards", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay|فيزا)\b.{0,40}?(فيزا|فيز|visa|mastercard|ماستر كارد|البنكية)", "payment_66_info", True),
     # fawry code validity: "الكود بتاع فوري بيبقى صالح لحد امتى؟" -> payment_4
     ("pay_fawry", r"(فوري|فورى|fawry|بتاع فوري)\b[^؟?]{0,60}?(صالح|صلاحيته|مدة|امتى|حتى|ساعات|بيندنج)", "payment_4_info", True),
+    # fawry how-to ("How does paying with Fawry work?" / "ادفع بـ فوري ازاي"):
+    # same verb+brand shape as every other pay_* rule (the validity rule above
+    # only fires on validity words, so how-to questions fell through).
+    ("pay_fawry_how", r"(أدفع|ادفع|الدفع|دفع|طريقة|كيف|ازاي|إزاي|ezay|how|payment|pay|using|use|with)\b.{0,40}?(فوري|فورى|fawry)", "payment_4_info", True),
+    # ---- bill paying (faq_5), bill methods (faq_6), bill status (faq_7).
+    # BEFORE generic pay_methods: "paying bills" is bill-domain, not faq_3.
+    ("bill_methods", r"(فاتورة|فواتير|فواتيري|bills?|electricity|كهرباء|كهربا|مياه|غاز)\b[^؟?]{0,60}?(methods|method|ways|available|options|وسائل|وسايل|طرق|المتاحة|المتاحه)|\b(methods|method|ways|available|options|وسائل|وسايل|طرق)\b[^؟?]{0,60}?(فاتورة|فواتير|فواتيري|bills?|electricity|كهرباء|كهربا)", "faq_6", False),
+    ("bill_status", r"(فاتورة|فواتير|فواتيري|bills?|electricity|كهرباء|كهربا)\b[^؟?]{0,60}?(status|حالة|استعلام|اتدفعت|اندفعت|وصلت|وصل|check|went through|اعرف)|\b(status|حالة|استعلام|check)\b[^؟?]{0,60}?(فاتورة|فواتير|فواتيري|bills?|electricity|كهرباء|كهربا)", "faq_7", False),
+    ("bill_pay", r"(فاتورة|فواتير|فواتيري|bills?|electricity|كهرباء|كهربا|مياه|غاز)\b|\b(pay|paying|paid|ادفع|دفع)\b[^؟?]{0,30}?(فاتورة|فواتير|bill)", "faq_5", False),
     # ---- generic payment-methods question (no specific wallet) -> faq_3.
     # Deliberately placed AFTER every pay_<wallet>_info rule so a named wallet
     # ("ازاي أدفع بفاليو؟") wins; excludes bill-paying questions (faq_6 domain).
-    ("pay_methods", r"(?!.{0,40}(فاتورة|فواتير|فواتيري|bills?))(?:(طرق الدفع|وسايل الدفع|وسائل الدفع|منه هتدفعوا|هتدفعوا بايه|بتدفعوا|بتدفعو|payment methods|methods of payment|ways to pay|payment options|available payments|الدفع المتاحة|الدفع المتاحه))\b", "faq_3", False),
-    # ---- bank installment: needs no payment verb ("فيه تقسيط بدون فوائد؟") ----
-    ("installment", r"(تقسيط|قسط|installment|installments|اقساط|الأقساط)\b[^؟?]{0,50}(بنكى|بنكي|بدون فوائد|من غير فوائد|بفايدة|بفائده|بفائده)?\b", "payment_50_info", False),
+    ("pay_methods", r"(?!.{0,40}(فاتورة|فواتير|فواتيري|bills?))(?:(طرق الدفع|طريقة الدفع|طريقه الدفع|وسيلة الدفع|وسيله الدفع|وسايل الدفع|وسائل الدفع|وسائل دفع|منه هتدفعوا|هتدفعوا بايه|بتدفعوا|بتدفعو|payment methods|payment method|methods of payment|method of payment|ways to pay|ways\s+(?:can\s+i\s+)?pay|how\s+(?:can|do)\s+i\s+pay|payment options|available payments|الدفع المتاحة|الدفع المتاحه))\b", "faq_3", False),
     # ---- refunds: brand-specific first (signal and brand may appear in
     # either order, e.g. "لو رجعت من orange cash"), then coupon refund,
     # then a generic bare refund (e.g. "la2 i3mel refund") ----
@@ -415,25 +428,49 @@ _FAQ_TOPIC_RULES = [
     ("refund_bank", r"(?:تقسيط بنكى|تقسيط بنكي|bank installment)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:تقسيط بنكى|تقسيط بنكي|bank installment)", "payment_50_refund", True),
     ("refund_etisalat", r"(?:اتصالات|etisalat|e& money|اى اند ماني)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:اتصالات|etisalat|e& money|اى اند ماني)", "payment_66_refund", True),
     ("refund_wallet", r"(?:المحافظ الاخرى|المحافظ الأخرى|other wallets)\b[^؟?]{0,50}?(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)|\b(?:رجعت|استرجاع|استرداد|refund|الرجوع|يرجع)[^؟?]{0,50}?(?:المحافظ الاخرى|المحافظ الأخرى|other wallets)", "payment_48_refund", True),
+    # ---- bank installment info ("فيه تقسيط بدون فوائد؟"). AFTER every
+    # refund_* rule: "refund ... bank installment" must land on
+    # payment_50_refund, not this info doc (first-match order). ----
+    ("installment_info", r"(تقسيط|قسط|installment|installments|اقساط|الأقساط)\b[^؟?]{0,50}(بنكى|بنكي|بدون فوائد|من غير فوائد|بفايدة|بفائده|بفائده)?\b", "payment_50_info", False),
     # ---- generic refund-POLICY question ("ما هي سياسة الاسترجاع؟" / "refund policy")
     # -> the comprehensive faq_refund_policy doc. Placed AFTER every refund_<brand>
     # rule so "إيه سياسة الاسترجاع لو دفعت بـ ڤودافون كاش؟" still lands on the
     # brand-specific doc (payment_109_refund), but BEFORE refund_coupon so a
     # policy question is never short-circuited to the mechanics-only faq_8.
-    ("refund_policy", r"(سياسة\s*الاسترجاع|سياسة\s*الاسترداد|سياسة\s*الارجاع|سياسة\s*الإرجاع|refund\s*polic\w*|returns\s*polic\w*|return\s*polic\w*|شروط\s*الاسترجاع|مصاريف\s*الاسترجاع|بيتحسب\s*الاسترجاع|بتحسب\s*الاسترجاع|الاسترجاع\s*بكامل|الاسترجاع\s*على\s*دفعة|بنرجع\s*المبلغ|استرجاع\s*الفلوس\s*بياخد)", "faq_refund_policy", False),
-    ("refund_coupon", r"(?:استرجاع|استرداد|رجعت|refund|يرجع|الرجوع|ارجع|astarreg|astarj3|astarreg3)\b[^؟?]{0,60}?(?:كوبون|coupon|فلوس|المبلغ|قيمة العرض|بتاعه|koupon|kohen|flous)\b", "faq_8", True),
-    ("refund_any", r"\brefund\b|استرجاع|استرداد|رجعت|astarreg|astarj3", "faq_8", True),
+    ("refund_policy", r"(سياسة\s*الاسترجاع|سياسه\s*الاسترجاع|سياسة\s*الاسترداد|سياسه\s*الاسترداد|سياسة\s*الارجاع|سياسه\s*الارجاع|سياسة\s*الإرجاع|سياسه\s*الإرجاع|refund\s*polic\w*|returns\s*polic\w*|return\s*polic\w*|refund\s+(?:rules?|terms|conditions)|rules?\s+(?:for|about|of)\s+(?:refunds?|returning|returns)|قواعد\s*الاسترجاع|شروط\s*الاسترجاع|مصاريف\s*الاسترجاع|بيتحسب\s*الاسترجاع|بتحسب\s*الاسترجاع|الاسترجاع\s*بكامل|الاسترجاع\s*على\s*دفعة|بنرجع\s*المبلغ|استرجاع\s*الفلوس\s*بياخد)", "faq_refund_policy", False),
+    ("refund_coupon", r"(?:استرجاع|استرداد|رجعت|refund|refunds|return|returns|يرجع|الرجوع|ارجع|ترجيع|astarreg|astarj3|astarreg3|astarg3|asterg3)\b[^؟?]{0,60}?(?:كوبون|coupon|koupon|copon|copoun|فلوس|المبلغ|قيمة العرض|بتاعه|kohen|flous)\b", "faq_8", True),
+    ("refund_any", r"\brefunds?\b|استرجاع|استرداد|رجعت|astarreg|astarj3|astarg3", "faq_8", True),
+    # ---- bare "how do I pay?" (no brand, no bill words) -> faq_3.
+    # AFTER all refund_* rules: "how do i get a refund for my payment" must
+    # stay a refund answer, not a pay-methods answer. BEFORE use_coupon etc.
+    # is irrelevant (no coupon words here), but brand-specific pay_* rules
+    # above already claimed their queries. ----
+    ("pay_how", r"(ازاي|إزاي|ezay|how|كيف|طريقة|لو سمحت)\b[^؟?]{0,25}(ادفع|أدفع|الدفع|دفع|pay|payment)\b|\b(ادفع|أدفع|pay)\b[^؟?]{0,20}(ازاي|إزاي|ezay|how|كيف)\b", "faq_3", False),
     # ---- coupon usage / how to use after purchase ----
-    ("use_coupon", r"(استخدام|استخدم|بتستخدم|بستعمل|استعمال|use|activate|bstab3l|bstakhdem)[^؟?]{0,25}(كوبون|coupon|koupon)|(كوبون|coupon|koupon)[^؟?]{0,40}(استخدام|استخدم|بستعمل|بتستخدم|use|bstab3l)", "faq_4", False),
+    ("use_coupon", r"(استخدام|استخدم|بتستخدم|بستخدم|باستخدم|بيستخدم|يستخدم|بستعمل|استعمال|استلم|استلام|redeem|redemption|use|activate|bstab3l|bstakhdem|astkhdm|astakhdm|estkhdm)[^؟?]{0,25}(كوبون|coupon|koupon|copon|copoun)|(كوبون|coupon|koupon|copon|copoun)[^؟?]{0,40}(استخدام|استخدم|بستعمل|بتستخدم|بستخدم|استلم|redeem|use|bstab3l)|\bredeem\b|\bredemption\b", "faq_4", False),
+    # ---- coupon code lookup ("فين كود الكوبون؟" / "where is my code") ----
+    # Placed AFTER pay_fawry so "كود فوري صالح لحد امتى" keeps its validity doc.
+    ("coupon_code", r"(فين|وين|where|اظهر|show|ألاقي|الاقي|find|get|طلع)[^؟?]{0,25}(كود|code|coupon|كوبون)|(كود|code)[^؟?]{0,25}(كوبون|coupon|فين|وين|where)", "faq_4", False),
+    # ---- promocode questions ("ايه البروموكود ده؟"). No promocode doc
+    # exists in the corpus; faq_4 (coupon use / offer codes) is the closest
+    # grounded answer -- strictly better than an offer-search failure. ----
+    ("promocode", r"(بروموكود|برومو كود|promocode|promo code|كود خصم|كود الخصم|discount code)", "faq_4", False),
     ("check_coupon_active", r"([أا]عرف|عرفنى|عرفني|بتاع|على قد|لسه|لسة|متفعل|actived|activating|mezaaktiv)[^؟?]{0,30}?(كوبون|coupon|koupon)", "faq_4", False),
     # ---- purchase how-to (must not steal "عايز عروض وفرها") ----
     ("purchase", r"(ازاي|إزاي|ezay|how|كيف|عايز|أعرف|لو عايز|3ayez|3awez|law)[^؟?]{0,20}(اشتري|اشترى|ashtry|ashtery|شراء|buy|purchase)[^؟?]{0,40}?(وفرها|waffarha|كوبون|coupon|كوبونات|kohen|zyada|koupon)", "faq_2", False),
+    # ---- account registration ("how to sign up" / "كيفية انشاء حساب").
+    # Registration verbs only -- bare "account/حساب" is too broad (payment and
+    # privacy questions share the word) and is deliberately NOT included. ----
+    ("register", r"(sign\s*up|signup|sign-up|register|registration|create\s+(?:a\s+|new\s+|my\s+)?account|new\s+account|انشاء\s+حساب|إنشاء\s+حساب|انشئ\s+حساب|تسجيل\s+حساب|افتح\s+حساب|فتح\s+حساب|اعمل\s+حساب|اسجل\s+حساب|حساب\s+جديد)", "faq_1", False),
+    # ---- saved bank cards ("add or remove a saved card" -> faq_9, not a
+    # payment-method how-to). Needs a card word AND a manage verb. ----
+    ("manage_card", r"(إضافة|اضافة|حذف|احذف|امسح|مسح|حفظ|احفظ|إدارة|ادارة|add|remove|delete|save|manage|تغيير)\b[^؟?]{0,30}?(كارت|card|البنكي|البنكية|البنك|bank)|(كارت|card|البنكي|البنكية)\b[^؟?]{0,30}?(إضافة|اضافة|حذف|احذف|امسح|مسح|حفظ|احفظ|add|remove|delete|save|manage)", "faq_9", False),
     # ---- transfer money ----
     ("transfer", r"(تحويل|a7awel|ahawel|اعمل تحويل)\b[^؟?]{0,30}?(فلوس|flous|فلوسا|المال|محفظة)?\b", "payment_48_info", False),
     # ---- gift vouchers ----
     ("gift", r"(بطاقة هدية|بطاقات هدية|هدية|gift|قسيمة|قسائم|voucher)", "faq_10", False),
     # ---- privacy (what data does the company collect / share) ----
-    ("privacy", r"(privacy|خصوصية|البيانات الخاصة|بياناتك|بياناتي|بيانات العملاء|بيانات الشركة|بيانات الحساب|بتجمعوا معلومات|بتجمع معلومات|بتجمعوا بيانات|بتجمع بيانات|بتخزنوا بيانات|بتشاركوا بيانات|بتبعتوا بيانات|داتا|data collection|what\s+information|collect\w*\s+(?:information|data)|share\w*\s+(?:information|data)|information\s+(?:do|does|you)\s+collect|بيانات لي)", "faq_13_privacy", False),
+    ("privacy", r"(privacy|خصوصية|البيانات الخاصة|بياناتك|بياناتي|بيانات العملاء|بيانات الشركة|بيانات الحساب|بتجمعوا معلومات|بتجمع معلومات|بتجمعوا بيانات|بتجمع بيانات|تجمع بيانات|تجمع معلومات|تجمعها|يجمع بيانات|بتخزنوا بيانات|بتشاركوا بيانات|بتبعتوا بيانات|داتا|data collection|what\s+information|collect\w*(?:\s+\w+){0,3}\s+(?:information|data)|share\w*\s+(?:information|data)|information\s+(?:do|does|you)\s+collect|بيانات لي)", "faq_13_privacy", False),
     # ---- cashback policy ----
     ("cashback", r"(كاش باك|كاشباك|cashback)", "faq_11", False),
     # ---- company information / what is Waffarha. Conservative on purpose:
@@ -443,9 +480,41 @@ _FAQ_TOPIC_RULES = [
     # variants keep "وفرها" plus an explicit question cue, and the shared
     # offer-word guard above already drops any query that clearly wants
     # عروض/offers.
-    ("about_company_en", r"\b(?:what is|what's|about|tell me about)\s+waffarha\b\s*[?!.]*$", "faq_12_about", False),
+    ("about_company_en", r"\b(?:what(?: exactly| really)? is|what's|about|tell me about)\s+waffarha\b(?![^.؟?]{0,60}(cheapest|most expensive|highest discount|coupon|price of|offer price))", "faq_12_about", False),
     ("about_company", r"(ما هي وفرها|ما هو وفرها|ايه (?:هي )?وفرها|إيه (?:هي )?وفرها|معلومات عن وفرها|معلومات عن الشركة|عن شركة وفرها|شركة وفرها دي|وفرها بتشتغل|وفرها بتحكي|وفرها عاملة|وفرها شغالة|وفرها بتعمل|وفرها بتوفر|ازاي وفرها بتشتغل|إزاي وفرها بتشتغل|كيف وفرها بتشتغل|وفرها بتشتغل ازاي|وفرها بتشتغل إزاي|وفرها بتشتغل كيف|شرح وفرها|فكرة وفرها|يعني ايه وفرها|معنى وفرها|قصت وفرها)", "faq_12_about", False),
 ]
+
+
+# Bare single-token questions ("فوري؟", "pending?", "معلق؟"): the whole message
+# is one known payment-method or status token. No rule above fires without a
+# verb/cue, and the planner reads these as offer searches -- but a lone brand
+# or status word is never an offer lookup, so map it directly. Checked BEFORE
+# the rule loop (after the offer-guard: a token like "عروض" is not in either
+# map and still falls through to retrieval).
+_BARE_METHOD_FAQ = {
+    "فوري": "payment_4_info", "فورى": "payment_4_info", "fawry": "payment_4_info",
+    "فودافون": "payment_109_info", "ڤودافون": "payment_109_info", "vodafone": "payment_109_info",
+    "فاليو": "payment_68_info", "ڤاليو": "payment_68_info", "valu": "payment_68_info",
+    "سهولة": "payment_112_info", "سولهلة": "payment_112_info", "souhoola": "payment_112_info",
+    "فرصة": "payment_107_info", "forsa": "payment_107_info",
+    "بريميوم": "payment_75_info", "بريميم": "payment_75_info", "premium": "payment_75_info",
+    "اورنج": "payment_79_info", "أورنج": "payment_79_info", "اورنچ": "payment_79_info", "orange": "payment_79_info",
+    "اتصالات": "payment_66_info", "etisalat": "payment_66_info",
+    "اوباي": "payment_61_info", "اوباى": "payment_61_info", "opay": "payment_61_info",
+    "جيديا": "payment_95_info", "geidea": "payment_95_info",
+    "ضامن": "payment_117_info", "دامن": "payment_117_info", "damen": "payment_117_info",
+    "بساطة": "payment_119_info", "بساطه": "payment_119_info", "basata": "payment_119_info",
+    "ترو": "payment_131_info", "tru": "payment_131_info",
+    "كاش باك": "faq_11", "كاشباك": "faq_11", "cashback": "faq_11",
+}
+_BARE_STATUS_FAQ = {
+    "pending": "purchasing_status_7", "معلق": "purchasing_status_7",
+    "waiting": "purchasing_status_8", "انتظار": "purchasing_status_8",
+    "used": "purchasing_status_3", "مستعمل": "purchasing_status_3",
+    "paid": "purchasing_status_1", "تم الدفع": "purchasing_status_1",
+    "canceled": "purchasing_status_5", "cancelled": "purchasing_status_5", "ملغى": "purchasing_status_5", "ملغي": "purchasing_status_5",
+    "expired": "purchasing_status_10", "منتهي الصلاحية": "purchasing_status_10", "منتهى الصلاحية": "purchasing_status_10",
+}
 
 
 def _route_faq_topic(query: str, normalized_query: str) -> tuple:
@@ -462,9 +531,16 @@ def _route_faq_topic(query: str, normalized_query: str) -> tuple:
         r"دفع|أدفع|استرجاع|refund|كوبون|coupon|هدية|gift|طريقة|كيف|ازاي|ezay|how|يعني|own|فيه\s+\w+\s+بدون", blob, re.IGNORECASE
     ):
         return None
+    # Bare single-token questions ("فوري؟", "pending?"): a lone method/status
+    # word is never an offer lookup -- map it directly to its FAQ doc.
+    bare = re.sub(r"\s+", " ", re.sub(r"[؟?!.,]+", "", (query or "").strip().lower())).strip()
+    if bare in _BARE_METHOD_FAQ:
+        return ("bare_method", _BARE_METHOD_FAQ[bare], False)
+    if bare in _BARE_STATUS_FAQ:
+        return ("bare_status", _BARE_STATUS_FAQ[bare], True)
     # Status rules only make sense when the user is asking what a status MEANS
     # ("used يعني ايه", "state in process", "what does Pending mean?").
-    _meaning_cue = re.compile(r"يعني|يعنى|معنى|معناها|ماذا|ماهو|what does|what is|دلوقتي|ايه|eh|means|state|status|حالة|بيقول|قولى|وضح|مكتوب|مكتوبة", re.IGNORECASE)
+    _meaning_cue = re.compile(r"يعني|يعنى|معنى|معناها|ماذا|ماهو|what does|what is|دلوقتي|ايه|eh|means|state|status|حالة|بيقول|قولى|وضح|مكتوب|مكتوبة|what now|what to do|اعمل ايه|أعمل ايه|ايه العمل", re.IGNORECASE)
     for rule_name, pattern, faq_id, bilingual in _FAQ_TOPIC_RULES:
         if rule_name.startswith("status_") and not _meaning_cue.search(query + " " + (normalized_query or "")):
             continue
@@ -472,9 +548,11 @@ def _route_faq_topic(query: str, normalized_query: str) -> tuple:
         # الاسترجاع") must never be absorbed by a status-meaning rule --
         # status_6's bare \brefund\b (plus a "what is" meaning cue) used to
         # hijack exactly that and answer with the "مرتجع" status explanation
-        # instead of the actual refund policy.
+        # instead of the actual refund policy. Scoped to policy-indicating
+        # words only (NOT bare الاسترجاع/الارجاع -- those ARE the Arabic name
+        # of the "جاري الاسترجاع" status and status_11 needs them to fire).
         if rule_name.startswith("status_") and re.search(
-            r"polic|سياسة|الارجاع|الاسترجاع", query + " " + (normalized_query or ""), re.IGNORECASE
+            r"polic|سياسة|سياسه|شروط|مصاريف", query + " " + (normalized_query or ""), re.IGNORECASE
         ):
             continue
         if re.search(pattern, blob, re.IGNORECASE):
@@ -508,6 +586,12 @@ def _looks_like_greeting(query: str) -> bool:
 def _looks_like_gibberish(query: str) -> bool:
     q = (query or "").strip()
     if not q:
+        return True
+    # NEW: low-signal input with fewer than 2 word characters ("w", "?",
+    # "5") is never a real question -- clarify instead of retrieving. The
+    # acronym exception below deliberately starts at 2+ chars so brands like
+    # "KFC" still work.
+    if len(re.sub(r"[^\w\u0600-\u06FF]", "", q)) < 2:
         return True
     if any("\u0600" <= ch <= "\u06FF" for ch in q):
         return False
@@ -660,14 +744,22 @@ def _is_lexical_stopword(word: str) -> bool:
 
 
 def _classify_intent(query: str) -> str:
-    q = query.lower()
-    is_offer = any(w in q for w in _OFFER_INTENT_WORDS)
-    is_faq = any(w in q for w in _FAQ_INTENT_WORDS)
+    # Folded matching: سياسة/سياسه, ازاي/ازاى, طريقة/طريقه all hit the same
+    # entries, so a one-letter spelling variant can't flip the verdict alone.
+    q = _fold_keyword_text(query)
+    is_offer = any(w in q for w in _OFFER_INTENT_FOLD)
+    is_faq = any(w in q for w in _FAQ_INTENT_FOLD)
     if is_offer and not is_faq:
         return "offer"
     if is_faq and not is_offer:
         return "faq"
     return "mixed"
+
+
+# Folded (spelling-variant-proof) views of the intent word lists above,
+# precomputed once at import. See _fold_keyword_text.
+_OFFER_INTENT_FOLD = frozenset(_fold_keyword_text(w) for w in _OFFER_INTENT_WORDS)
+_FAQ_INTENT_FOLD = frozenset(_fold_keyword_text(w) for w in _FAQ_INTENT_WORDS)
 
 
 def _should_restrict_to_faq(query: str) -> bool:
@@ -677,13 +769,72 @@ def _should_restrict_to_faq(query: str) -> bool:
     source gate -- such queries' candidates are capped to FAQ docs only, so
     a broad company-info/policy question can never be answered with offers.
 
-    Deliberately one-directional (unlike the old hard intent filter, see the
-    config.INTENT_BONUS_WEIGHT comment): a question that ALSO carries an
-    offer-ish word ("How do I use my purchased coupon?", "عايز أعرف سياسة
-    الاسترجاع لو دفعت كاش؟") stays in the soft-bonus path, because its FAQ
-    doc must remain reachable but an offer doc can also legitimately win
-    ranks. Only the pure "faq with no offer signal" case is capped here."""
-    return _classify_intent(query or "") == "faq"
+    Mixed/ambiguous queries (the common case -- "ازاي", "coupon", "عايز"
+    appear in both worlds) go to the meaning judge: a tiny LLM call that
+    reads intent instead of counting keywords, so one-letter spelling
+    variants can't flip the verdict. A disabled/unreachable judge falls back
+    to the keyword verdict, never failing retrieval.
+    """
+    quick = _classify_intent(query or "")
+    if quick == "faq":
+        return True
+    if quick == "offer":
+        return False
+    return _judge_is_faq(query)
+
+
+_intent_judge_client = None
+_intent_judge_disabled = False
+
+
+def _intent_judge_client_get():
+    """Lazy singleton Ollama client for the intent judge. Cheap to create
+    (no I/O until a call); remembered-disabled after a failure so a down
+    Ollama can't slow every ambiguous query."""
+    global _intent_judge_client, _intent_judge_disabled
+    if _intent_judge_disabled:
+        return None
+    if _intent_judge_client is None:
+        try:
+            _intent_judge_client = ollama.Client(
+                host=config.OLLAMA_HOST,
+                timeout=config.INTENT_LLM_JUDGE_TIMEOUT)
+        except Exception:  # noqa: BLE001
+            _intent_judge_disabled = True
+            return None
+    return _intent_judge_client
+
+
+def _judge_is_faq(query: str) -> bool:
+    """Meaning-based FAQ verdict for keyword-ambiguous queries."""
+    if not config.INTENT_LLM_JUDGE_ENABLED:
+        return False
+    try:
+        return judge_faq_vs_offer(
+            query,
+            client=_intent_judge_client_get(),
+            llm_model=config.INTENT_LLM_JUDGE_MODEL,
+            timeout=config.INTENT_LLM_JUDGE_TIMEOUT) == "faq"
+    except Exception:  # noqa: BLE001 -- judge is advisory; a miss means "not gated"
+        return False
+
+
+def _smart_source_intent(query: str) -> str:
+    """faq/offer/mixed verdict used for the soft intent ranking bonus.
+    Keyword-clear cases answer instantly; ambiguous ones ask the judge."""
+    quick = _classify_intent(query or "")
+    if quick in ("faq", "offer"):
+        return quick
+    if not config.INTENT_LLM_JUDGE_ENABLED:
+        return "mixed"
+    try:
+        return judge_faq_vs_offer(
+            query,
+            client=_intent_judge_client_get(),
+            llm_model=config.INTENT_LLM_JUDGE_MODEL,
+            timeout=config.INTENT_LLM_JUDGE_TIMEOUT)
+    except Exception:  # noqa: BLE001
+        return "mixed"
 
 
 def _normalize_num(value) -> str:
@@ -2437,13 +2588,37 @@ class RagEngine:
             task="retrieval.query",  # CHANGED: asymmetric-task hint for jina:v5-style models
         ).astype("float32")
 
-        raw_results = self.store.search(q_emb, candidate_k)[0]
+        # Phase 1 (fix/routing-and-freshness): organic search is live-only.
+        # The live filter applies to the candidate set BEFORE scoring (not as
+        # a post-hoc drop from an already-scored top-k): Qdrant filters natively
+        # in the store call, every other backend over-fetches and drops expired
+        # indices from the merged pool below. Anchored follow-ups and the
+        # explicit-validity path never pass through here (they resolve against
+        # memory / the unfiltered index instead). Expired offers stay IN the
+        # index on purpose -- see core/freshness.py.
+        from core.freshness import is_live as _is_live, today as _fresh_today
+        _live_only = bool(getattr(config, "LIVE_ONLY_ORGANIC", True))
+        _now = _fresh_today()
+        _fetch_k = candidate_k
+        if _live_only:
+            _fetch_k = min(len(self.docs), max(candidate_k, candidate_k * 2 + 10))
+
+        raw_results = self.store.search(q_emb, _fetch_k,
+                                        live_only=_live_only, now=_now)[0]
+        if _live_only:
+            raw_results = [(s, i) for s, i in raw_results
+                           if 0 <= i < len(self.docs)
+                           and _is_live(self.docs[i].get("metadata", {}), _now)]
 
         # NEW: Hybrid search (BM25 + Dense embeddings) with Reciprocal Rank Fusion
         # If BM25 store is available, blend dense vector search and BM25 lexical search
         bm25_results = []
         if self.bm25_store is not None:
-            bm25_hits = self.bm25_store.search(retrieval_query, candidate_k)
+            bm25_hits = self.bm25_store.search(retrieval_query, _fetch_k)
+            if _live_only:
+                bm25_hits = [(s, i) for s, i in bm25_hits
+                             if 0 <= i < len(self.docs)
+                             and _is_live(self.docs[i].get("metadata", {}), _now)]
             # Combine raw_results (dense) and bm25_hits (lexical) via RRF
             from vectorstores.bm25_store import reciprocal_rank_fusion
             rrf_fused = reciprocal_rank_fusion(
@@ -2473,7 +2648,10 @@ class RagEngine:
             w for w in retrieval_query.replace("؟", " ").replace("?", " ").split()
             if len(w) >= 2 and not _is_lexical_stopword(w)
         ]
-        intent = _classify_intent(retrieval_query)
+        # Meaning-based source verdict for the soft ranking bonus: keyword-
+        # clear queries answer instantly, ambiguous ones ask the tiny LLM
+        # judge (cached) instead of flipping on one letter.
+        intent = _smart_source_intent(retrieval_query)
         # NEW: hard FAQ-source gate for strong FAQ intent. Generic
         # information/about/policy questions routinely embed closer to an
         # unrelated offer than to the one FAQ doc that actually answers them
@@ -2487,6 +2665,12 @@ class RagEngine:
  
         candidates = []
         for score, idx in raw_results:
+            if idx < 0 or idx >= len(self.docs):
+                # Defensive: a stale vector point (e.g. leftover ids from a
+                # previous index generation) must never 500 the request --
+                # skip it loudly so the index hygiene issue gets fixed.
+                log.warning("retrieve: dropping out-of-range doc idx=%d (n_docs=%d)", idx, len(self.docs))
+                continue
             doc = self.docs[idx]
             source = doc["metadata"]["source"]
             if faq_only and source != "faq":
@@ -2504,8 +2688,12 @@ class RagEngine:
             # -- it nudges ranking toward the classified source without
             # ever making the other source unreachable.
             intent_bonus = config.INTENT_BONUS_WEIGHT if intent == source else 0.0
- 
-            lexical_hits = sum(1 for w in query_words if w.lower() in doc["text"].lower())
+
+            # Folded overlap: both sides fold hamza/ya/ta-marbuta variants, so
+            # سياسه matches سياسة and ازاى matches ازاي in scoring -- the same
+            # one-letter robustness as intent classification.
+            doc_text_fold = _fold_keyword_text(doc["text"])
+            lexical_hits = sum(1 for w in query_words if _fold_keyword_text(w) in doc_text_fold)
             lexical_bonus = (lexical_hits / len(query_words)) * config.LEXICAL_BONUS_WEIGHT if query_words else 0.0
 
             # NEW: entity match bonus -- if query mentions a merchant/category/entity
@@ -2524,8 +2712,8 @@ class RagEngine:
             # Helps distinguish between offers from the same merchant
             title_match_bonus = 0.0
             if doc_title and query_words:
-                title_words_lower = doc_title.lower().split()
-                title_hits = sum(1 for w in query_words if w.lower() in title_words_lower)
+                title_words_fold = _fold_keyword_text(doc_title).split()
+                title_hits = sum(1 for w in query_words if _fold_keyword_text(w) in title_words_fold)
                 if title_hits > 0:
                     title_match_bonus = (title_hits / len(query_words)) * config.TITLE_MATCH_BONUS
 
@@ -2975,6 +3163,75 @@ class RagEngine:
             return f"💡 {merchant} also has {count} {noun} right now."
         return f"💡 {merchant} عندها كمان {_iso(str(count), lang)} عروض تانية دلوقتي."
 
+    # Phase 1 (fix/routing-and-freshness): explicit validity questions.
+    # Closed intent -- a validity phrasing PLUS a resolvable merchant/product
+    # referent in the message text. Resolves against the UNFILTERED index and,
+    # when the matched offer is expired, answers honestly from metadata only
+    # (name + expiry date, no live-style card, no LLM offer facts). Live
+    # matches and unresolvable queries return None so the normal pipeline
+    # serves them. Never touches memory: follow-ups about shown offers
+    # ("العرض ده لسه شغال؟") carry no text referent and fall through to the
+    # anchored path, which resolves them from session memory instead.
+    _VALIDITY_RES = [
+        "still valid", "still available", "still on", "still running",
+        "still there", "still exist", "has it expired", "is it expired",
+        "expired?", "validity", "when does", "when will",
+        "لسه شغال", "لسه شغالة", "لسه موجود", "لسه موجودة", "لسه متاح",
+        "لسه متاحة", "لسه صالح", "انتهى", "انتهت", "خلص", "خلصت",
+        "صلاحية", "ساري ولا", "شغال ولا", "موجود ولا", "ينتهي", "هينتهي",
+    ]
+
+    def _explicit_validity_answer(self, query: str, reply_lang: str = None):
+        q = (query or "").strip()
+        if not q or self.faceted is None:
+            return None
+        low = q.lower()
+        if not any(p in low for p in self._VALIDITY_RES):
+            return None
+        merchants = self.faceted.resolve_merchants(q)
+        product = self.faceted.resolve_product(q)
+        if not merchants and not product:
+            return None
+        cands = []
+        for d in self.docs:
+            meta = d.get("metadata", {})
+            if meta.get("source") != "offer":
+                continue
+            if merchants and meta.get("merchant") not in merchants:
+                continue
+            cands.append(d)
+        if not cands:
+            return None
+        if product:
+            key = product
+            scored = []
+            for d in cands:
+                text = ((d.get("text") or "") + " " + (d["metadata"].get("title") or "")).lower()
+                scored.append((sum(1 for w in key.lower().split() if w and w in text), d))
+            scored.sort(key=lambda t: t[0], reverse=True)
+            if scored[0][0] == 0:
+                return None
+            cands = [d for _, d in scored]
+        meta = cands[0].get("metadata", {})
+        from core.freshness import is_live as _is_live, today as _fresh_today
+        if _is_live(meta, _fresh_today()):
+            return None
+        title = meta.get("title") or ""
+        merchant = meta.get("merchant") or ""
+        expiry = meta.get("expiry") or ""
+        lang = reply_lang or _reply_lang(q)
+        if lang == "ar":
+            return (
+                f"العرض ده انتهى (كان صالح حتى {expiry}).\n"
+                f"{title} من {merchant}.\n"
+                "لو عايز عروض شغالة دلوقتي من نفس المحل، قولي."
+            )
+        return (
+            f"That offer has expired (was valid until {expiry}).\n"
+            f"{title} from {merchant}.\n"
+            "Ask me for current offers from the same merchant if you like."
+        )
+
     def _get_stock_direct_answer(self, retrieved: list, reply_lang: str, query: str):
         """Handles 'how many left / is it sold out' questions explicitly
         instead of letting them fall through to the generic offer-facts
@@ -3152,7 +3409,8 @@ class RagEngine:
             if not anchor_merchant or self.faceted is None:
                 return None
             entries = self.faceted.offers_for_merchant(
-                anchor_merchant, reply_lang, exclude_ids=shown_ids)
+                anchor_merchant, reply_lang, exclude_ids=shown_ids,
+                live_only=False)  # anchored: shown offers stay resolvable even if expired
             cards = [_format_offer_card(e["metadata"], reply_lang)
                      for e in entries]
             cards = [c for c in cards if c]
@@ -3173,7 +3431,8 @@ class RagEngine:
                     if t.get("metadata")]
             if scope == "same_merchant" and anchor_merchant and self.faceted is not None:
                 entries = self.faceted.offers_for_merchant(
-                    anchor_merchant, reply_lang, exclude_ids=shown_ids)
+                    anchor_merchant, reply_lang, exclude_ids=shown_ids,
+                    live_only=False)  # anchored: shown offers stay resolvable even if expired
                 pool += [e["metadata"] for e in entries]
             priced = [(m.get("price"), m) for m in pool
                       if isinstance(m.get("price"), (int, float))]
@@ -3299,18 +3558,31 @@ class RagEngine:
         reply_lang = reply_lang or _reply_lang(q)
         recent_offers = recent_offers or []
 
-        # Never hijack FAQ / greeting / personal / how-to questions.
-        if self.faceted.has_faq_guard(q):
-            return None
-        if _looks_like_superlative_price_query(q):
-            return None          # handled earlier in answer_stream
-
         has_off = self.faceted.has_offer_intent(q)
         merchants = self.faceted.resolve_merchants(q)
         product = self.faceted.resolve_product(q)
         category = self.faceted.resolve_category(q)
         price_range = extract_price_range(q)
         pr = price_range or None   # (lo, hi) or None
+
+        # Never hijack FAQ / greeting / personal / how-to questions -- with
+        # one exception: generic question stems ("what are" / "what is") live
+        # in the FAQ guard list, but an explicit merchant/product mention PLUS
+        # offer language ("What are the KFC offers?") is an offer lookup, not
+        # a support question. And when the query carries BOTH (a merchant AND
+        # a deterministic FAQ topic, e.g. "I want a refund for my KFC
+        # coupon"), the FAQ topic wins -- the user asked how-to, not browse.
+        if self.faceted.has_faq_guard(q):
+            if not (has_off and (merchants or product)):
+                return None
+            _mixed_topic = _route_faq_topic(q, normalize_arabizi_and_arabic(q))
+            if _mixed_topic is not None:
+                _rule_name, _faq_id, _bilingual = _mixed_topic
+                _mixed_answer = self._faq_topic_answer(_faq_id, reply_lang, bilingual=_bilingual)
+                if _mixed_answer:
+                    return _mixed_answer
+        if _looks_like_superlative_price_query(q):
+            return None          # handled earlier in answer_stream
 
         # ---- Comparison: 2+ resolved merchants, explicit "compare" wording
         if _looks_like_comparison(q) and len(merchants) < 2:
@@ -3512,6 +3784,14 @@ class RagEngine:
         # NEW: reset the cached follow-up reading for this turn -- it is
         # recomputed per query (see _store_followup_ctx / _followup_ctx).
         self._followup_ctx = None
+        # NEW: reset last-retrieved evidence for this turn. Every early-return
+        # path below (greeting / gibberish / injection / out-of-scope / FAQ
+        # topic / refusal floors) yields an answer WITHOUT retrieving, so
+        # without this reset app.py would render the PREVIOUS turn's offer
+        # cards/sources alongside a refusal or FAQ text (e.g. an Espressolab
+        # card under "How do I use my purchased coupon?"). Paths that do
+        # retrieve set _last_retrieved explicitly before yielding.
+        self._last_retrieved = []
         # CHANGED: history is now passed through -- retrieve() uses it to
         # anchor follow-up queries ("explain this offer") on the previous
         # turn's topic instead of retrieving on the follow-up's own,
@@ -3640,6 +3920,15 @@ class RagEngine:
         oos = check_out_of_scope_guardrail(query, detect_lang(query))
         if oos:
             yield oos
+            return
+
+        # Phase 1 (fix/routing-and-freshness): explicit validity questions
+        # ("is X still available?", "عرض X لسه شغال؟") resolve against the
+        # UNFILTERED index and get an honest expired framing instead of a
+        # live-style card. Live matches fall through to normal handling.
+        _validity_answer = self._explicit_validity_answer(query, _reply_lang(query))
+        if _validity_answer is not None:
+            yield _validity_answer
             return
 
         # NEW: personal-data queries ("my coupons", "my orders") are answered
@@ -3812,6 +4101,10 @@ class RagEngine:
                 "Strict refusal: query=%r best_score=%.3f < %.3f",
                 query, best_score, config.MIN_RELEVANCE_SCORE_STRICT,
             )
+            # Refusals carry no evidence: _last_retrieved was just set above
+            # from retrieve(), and app.py would otherwise render those
+            # unrelated offer cards next to the refusal text.
+            self._last_retrieved = []
             yield FALLBACK_MESSAGE.get(detect_lang(query), FALLBACK_MESSAGE["en"])
             return
 
@@ -3825,6 +4118,9 @@ class RagEngine:
                     "Relevance classifier rejected: query=%r best_score=%.3f",
                     query, best_score,
                 )
+                # Same as the strict floor above: a rejected context must not
+                # leak into source/offer cards next to the refusal.
+                self._last_retrieved = []
                 yield FALLBACK_MESSAGE.get(detect_lang(query), FALLBACK_MESSAGE["en"])
                 return
 

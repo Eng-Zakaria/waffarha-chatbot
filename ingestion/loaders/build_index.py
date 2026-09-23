@@ -433,6 +433,13 @@ def load_offers() -> list:
                 "source": "offer", "id": offer_id, "title": title, "merchant": merchant,
                 "price": price, "old_price": old_price if show_old_price else None,
                 "discount": discount if (discount is not None and str(discount).strip() != "") else None, "expiry": expiry,
+                # Phase 1 (fix/routing-and-freshness): carry the raw status +
+                # effective valid-until so future indexes support status-aware
+                # filtering without re-deriving it. (The current built index
+                # predates these keys and holds uniform-active offers, so the
+                # runtime live filter keys on "expiry" only -- no reindex.)
+                "offer_status": offer.get("offer_status"),
+                "valid_until": expiry,
                 "lang": lang, "section_id": offer.get("_section_id"),
                 "sold_count": sold_count,  # NEW -- see _extract_sold_count
                 # NEW -- partner contact/location, see fetch_offers_clickhouse.py.

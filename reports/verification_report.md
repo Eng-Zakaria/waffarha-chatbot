@@ -149,3 +149,39 @@ against genuinely-shown offers only.
 Anomaly (environment, unverified cause): one agent turn (`هلااااا`, run of 2026-09-22)
 recorded latency_ms=2479848 (~41 min) while completing normally (2 cards). Suspected
 Ollama stall, not product behavior; flagged, not asserted.
+
+## Phase 1 addendum (same branch): query-time live-offer filtering
+
+No reindex: expired offers stay IN the index (7,692 expired docs untouched).
+New default organic behavior behind `LIVE_ONLY_ORGANIC` (core/config.py, default true):
+`core/freshness.py` (`today()` on the existing REFERENCE_DATE clock, `is_live`,
+`split_live`); `retrieve()` filters the candidate pool BEFORE scoring (over-fetch
+x2+10; BM25 hits likewise); faceted pools (`offers_for_*`, superlatives,
+`in_price_range`) take `live_only` (anchored call sites pass False); catalog
+`list_*/get_*` apply `_live_rows`; `_fresh_only` leniency gated behind the flag;
+new narrow `_explicit_validity_answer` cascade path (validity phrasing + resolvable
+referent + expired match -> honest metadata-only text, no card, no LLM);
+`build_index.py` writes `offer_status`/`valid_until` for future builds.
+Qdrant native filter attempted and REVERTED with reason in code: this
+qdrant-client's Range is float-only, payload expiry is a string, no payload index
+— pool-level filtering covers all backends uniformly (verified by probe + traces).
+
+Before/after (validity cases): before (unpatched) Mado cascade served live catalog
+text / Arabiata cascade served 5 faceted cards with zero honest framing; after:
+both cascade turns exit `validity` with honest expired text, 0 cards, 0 LLM.
+Agent has no validity path (Phase 1 scoped cascade) — new xfails record it.
+
+Acceptance deltas (`pytest tests/acceptance/` -> 20 passed, 1 skipped, 24 xfailed;
+`tests/acceptance/test_freshness.py` -> 2 passed): EVERY organic path now serves
+zero expired cards (greetings 5x exp=0, Tamara faceted 5x exp=0, agent tools exp=0,
+catalog text live-only); `سحور` cascade is now an honest strict-floor refusal
+(empty live pool) instead of 5 invented-expired cards. New xfails: validity agent
+x2 (+1 lang), all citing this phase. Anchored exemption PROVEN by --now-split
+traced procedure (show at --now 2026-09-21, follow-up at --now 2027-06-01 over
+redis memory): cascade `followup-anchored` resolved Pizza Hut id 7270 while
+expired, zero retrieval. Unit set unchanged (same 4 pre-existing failures).
+Baseline post-Phase-1 (reports/verify/20260923_153121_phase1_check/):
+**151/172 checked passed (was 150), hit@1 0.315 -> 0.481, hit@k 0.741 -> 0.796,
+mrr 0.483 -> 0.585.** Rank-1 selection improved sharply from removing expired
+candidates that were outranking the right doc — the Phase 4 target signal
+appearing early; bonus-inflation work (Phase 4) is still pending.

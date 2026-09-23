@@ -1,0 +1,4 @@
+[
+  {"id": "valid_mado_en", "kind": "validity", "turns": ["is the Mado Egypt sohour offer still valid?"], "session": "acc-valid"},
+  {"id": "valid_arabiata_ar", "kind": "validity", "turns": ["عرض ارابياتا لسه شغال؟"], "session": "acc-valid"}
+]

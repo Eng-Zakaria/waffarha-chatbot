@@ -62,6 +62,10 @@ for (case, turn), rs in by_case.items():
             verdict(case, e, nc == 0, "cards=%d exit=%s" % (nc, short_exit(r["exit_gate"])))
         elif case == "personal_order":
             verdict(case, e, nc == 0, "cards=%d exit=%s" % (nc, short_exit(r["exit_gate"])))
+        elif case.startswith("valid_"):
+            honest = ("انتهى" in ans or "expired" in ans.lower())
+            verdict(case, e, nc == 0 and honest,
+                    "cards=%d honest_expired=%s exit=%s" % (nc, honest, short_exit(r["exit_gate"])))
         # language match every case
         want = "ar" if r["query_lang"] in ("ar",) or any(
             ord(c) > 127 for c in q) else "en"
