@@ -101,6 +101,13 @@ INCLUDE_EXPIRED_OFFERS = os.getenv("INCLUDE_EXPIRED_OFFERS", "false").lower() ==
 # LIVE_ONLY_ORGANIC=false to restore the legacy show-everything behavior.
 LIVE_ONLY_ORGANIC = os.getenv("LIVE_ONLY_ORGANIC", "true").lower() == "true"
 
+# Phase 2 (fix/routing-and-freshness): agent fallback serves zero cards.
+# A parse error, timeout, or unusable plan routes to clarify/fallback text
+# with empty evidence -- never to stale tool results or the ungrounded
+# semantic-fallback search. Set STRICT_AGENT_FALLBACK=false to restore the
+# legacy fallback search-and-render behavior.
+STRICT_AGENT_FALLBACK = os.getenv("STRICT_AGENT_FALLBACK", "true").lower() == "true"
+
 OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 
 # CHANGED: default embedding model upgraded to BGE-M3 for better Arabic retrieval.

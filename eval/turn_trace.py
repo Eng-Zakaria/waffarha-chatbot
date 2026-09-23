@@ -390,10 +390,18 @@ def run_turn(engine_name, engine, query, session, recent_offers, history,
                 recent_offers=recent_offers, user_id=user_id,
                 identity=("u%d" % user_id) if user_id else None))
             answer = ""
+            turn_evidence = None
             for p in pieces:
                 if isinstance(p, str):
                     answer = p
-            evidence = list(getattr(engine, "_last_evidence", []) or [])
+                elif isinstance(p, dict) and p.get("kind") == "agent_turn_report":
+                    # Per-turn evidence from the report (always fresh). The
+                    # engine's _last_evidence attribute is sticky: fallback
+                    # paths never reset it, so reading it here would attribute
+                    # the PREVIOUS turn's cards to this turn.
+                    turn_evidence = p.get("evidence") or []
+            evidence = (turn_evidence if turn_evidence is not None
+                        else list(getattr(engine, "_last_evidence", []) or []))
     finally:
         latency_ms = round((time.perf_counter() - t0) * 1000.0, 1)
         rec.restore()

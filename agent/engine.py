@@ -29,6 +29,7 @@ The trace only exposes structured decisions -- never chain-of-thought.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 from collections.abc import Callable
@@ -40,9 +41,12 @@ from agent.grounding import (ground_search_args, grounded_category,
 from agent.planner import PlanParseError, build_plan_prompt, call_planner
 from agent.reference import corroborate_references, resolve_reference
 from agent.state import AgentState
+from core import config
 from core.config import AGENT_MODEL, MAX_AGENT_LLM_CALLS, MAX_AGENT_TOOL_CALLS
 
 _MAX_HISTORY = 8
+
+log = logging.getLogger("waffarha-agent")
 
 
 def _defaults_default():
@@ -263,10 +267,17 @@ class AgentEngine:
         if self._facade_faq_topic(params.get("query") or ""):
             if plan.get("tool") != "retrieve_faq" and "retrieve_faq" in self._registry.names():
                 plan["tool"] = "retrieve_faq"
-                args = dict(plan.get("args") or {})
-                if args.get("query") is None:
-                    args["query"] = params.get("query") or ""
-                plan["args"] = args
+                # A rerouted FAQ turn answers from the FAQ corpus only: drop
+                # every offer-shaped constraint the planner may have invented
+                # (price_range/exclude/merchant) so the evidence gate cannot
+                # fail a policy answer on a price it was never asked about.
+                # Also clear missing_information: the deterministic router
+                # already resolved the topic, so there is nothing left to ask
+                # -- otherwise _needs_clarification hijacks the turn into a
+                # question right after we decided it is answerable.
+                plan["args"] = {"query": params.get("query") or ""}
+                plan["constraints"] = {}
+                plan["missing_information"] = ""
                 plan["intent"] = "faq"
                 plan["next_action"] = "plan"
                 state.metrics["planned_tool"] = "retrieve_faq"
@@ -499,10 +510,11 @@ class AgentEngine:
         method, order status, about-the-company). Uses the SAME `_route_faq_topic`
         router the RetrieveFaqTool consults, so the routing decision is made by
         the existing FAQ router -- never a new one and never an LLM."""
-        facade = self._facade
-        route_fn = getattr(facade, "_route_faq_topic", None)
-        if route_fn is None:
+        try:
+            from core.rag_engine import _route_faq_topic as route_fn
+        except Exception:  # noqa: BLE001 -- a router miss must not crash a turn
             return None
+        facade = self._facade
         norm = getattr(facade, "normalize_arabizi_and_arabic", None)
         nq = norm(query) if callable(norm) else query
         try:
@@ -732,9 +744,15 @@ class AgentEngine:
         if tool == "search_offers" and not any(
                 o.get("metadata", {}).get("source") == "offer" for o in obtained):
             return False, "no_offer_items"
-        price = args.get("price_range")
-        if price and not _respects_price(obtained, price):
-            return False, "price_not_satisfied"
+        # Price spans only constrain OFFER tools. FAQ/personal/single-lookup
+        # answers carry no price by design -- a stray price_range in the args
+        # must never fail them (the override + grounding already strip
+        # unconfirmed prices before the call; this is the backstop).
+        if tool in ("search_offers", "compare_offers", "superlative_offer",
+                    "catalog"):
+            price = args.get("price_range")
+            if price and not _respects_price(obtained, price):
+                return False, "price_not_satisfied"
         return True, "ok"
 
     def _handle_no_matches(self, params, state, tool_ctx, replan=False):
@@ -866,12 +884,12 @@ class AgentEngine:
         """
         reply = params.get("reply_lang") or "ar"
         if reply == "en":
-            return ("_I'd like to find the right offer for you. "
-                    "_What are you looking for? A merchant (e.g. KFC, Amazon) "
-                    "or a category (e.g. electronics, fashion, food)?_")
-        return ("_عشان ألاقي أحسن عرض ليك. قصدك متجر معين "
-                "(زي كينتاكي أو أمازون) ولا فئة "
-                "(زي إلكترونيات أو ملابس أو أكل)؟_")
+            return ("I'd like to find the right offer for you. "
+                    "What are you looking for? A merchant (e.g. KFC, McDonald's) "
+                    "or a category (e.g. food, fashion, beauty)?")
+        return ("عشان ألاقي أحسن عرض ليك، قصدك متجر معين "
+                "(زي كنتاكي أو ماكدونالدز) ولا فئة "
+                "(زي أكل أو ملابس أو تجميل)؟")
 
     def _finish_fallback(self, params, state, fallback_reason=None) -> dict:
         """Deterministic fallback when planning/execution could not produce a
@@ -884,6 +902,13 @@ class AgentEngine:
         exhaustion case (replan_budget ONLY) also surfaces a SHORT,
         non-technical note so a hard user constraint is never silently
         dropped -- never a trace dump.
+
+        Phase 2 (fix/routing-and-freshness): a parse error, timeout, or
+        unusable plan must NEVER render tool results -- not the current turn's
+        not-yet-gated evidence, and not a fresh semantic-fallback search
+        (which bypasses grounding and the evidence gate entirely). Fallback
+        therefore serves zero cards with empty evidence; the only exception
+        (legacy semantic-fallback search) sits behind STRICT_AGENT_FALLBACK=false.
         """
         answer = _NO_ANSWER_FOUND.get(params["reply_lang"], _NO_ANSWER_FOUND["en"])
         fallback_items = []
@@ -891,7 +916,18 @@ class AgentEngine:
         allowed, reason = params.get("retrieval_allowed") or (True, None)
         if not allowed:
             return self._no_retrieval_reply(params, state, reason)
-        if state.tool_calls >= MAX_AGENT_TOOL_CALLS:
+        # Phase 2: never render tool results from a failed turn. Evidence
+        # collected under a plan that did not pass the evidence gate (parse
+        # error, timeout, unusable replan, exhausted relax) is stale w.r.t.
+        # the current plan, and the legacy semantic-fallback search below is
+        # ungrounded and ungated by construction. Clear both and answer
+        # honestly with zero cards.
+        if bool(getattr(config, "STRICT_AGENT_FALLBACK", True)):
+            state.trace_step(S.TRACE_KIND_DECISION,
+                             "fallback serves zero cards (failed plan)",
+                             reason_code=fallback_reason or "fallback")
+            state.evidence = []
+        elif state.tool_calls >= MAX_AGENT_TOOL_CALLS:
             state.trace_step(S.TRACE_KIND_DECISION, "tool budget exhausted; no fallback",
                              reason_code="tool_budget")
         else:
@@ -1013,9 +1049,18 @@ class AgentEngine:
     def _safety_gate(self, params) -> tuple | None:
         query = params["query"]
         low = query.lower()
+        if _is_thanks(query):
+            return (S.TRACE_KIND_DECISION, "thanks; warm reply + affordance",
+                    _THANKS_REPLY)
         if _any_substring(low, _CLOSING):
             return (S.TRACE_KIND_DECISION, "closing; polite farewell",
                     _FAREWELL)
+        if _is_help_request(query):
+            return (S.TRACE_KIND_DECISION, "help; capabilities reply",
+                    _HELP_REPLY)
+        if _is_identity_question(query):
+            return (S.TRACE_KIND_DECISION, "identity; who-am-i reply",
+                    _IDENTITY_REPLY)
         if self._facade._looks_like_greeting(query):
             return (S.TRACE_KIND_DECISION, "greeting; brief greeting + affordance",
                     _GREETING_REPLY)
@@ -1023,6 +1068,13 @@ class AgentEngine:
             return (S.TRACE_KIND_DECISION, "gibberish rejected", _GIBBERISH_REPLY)
         if self._facade._looks_like_injection_attempt(query):
             return (S.TRACE_KIND_DECISION, "injection attempt rejected", _INJECTION_REPLY)
+        # Low-signal input ("w", "?", "5"): never a real question and never
+        # an offer browse -- clarify before the planner can turn it into a
+        # full-catalog dump. Mirrors _looks_like_gibberish (2+ word chars
+        # required), so brands ("KFC") and bare method words ("فوري؟") pass.
+        # Reply matches _clarify's wording (asks what they are looking for).
+        if len(re.sub(r"[^\w\u0600-\u06FF]", "", query or "")) < 2:
+            return (S.TRACE_KIND_DECISION, "low-signal rejected", _LOW_SIGNAL_REPLY)
         return None
 
     def _tool_context(self, params, state):
@@ -1260,24 +1312,113 @@ def _build_engine(facade, registry, planner=None, prompt_builder=None):
 
 
 _CLOSING = (
-    "bye", "goodbye", "السلام عليكم", "مع السلامة", "وداعا", "تصبح على خير",
-    "خلاص", "مش محتاج", "لا داعي", "شكراً", "شكرا",
+    "bye", "goodbye", "مع السلامة", "وداعا", "تصبح على خير",
+    "خلاص", "مش محتاج", "لا داعي",
 )
 _FAREWELL = {
     "en": "Goodbye! If you want to compare any of these offers, just say the word.",
     "ar": "إلى اللقاء! إذا أردت مقارنة أي من هذه العروض، فقط قل لي.",
 }
+# Thanks is NOT a closing: it gets a warm acknowledgement + what-to-ask-next
+# so the sales conversation can continue instead of ending on a farewell.
+_THANKS_REPLY = {
+    "en": "You're welcome! Anything else -- another merchant, a cheaper option, "
+          "or how to pay and use your coupon?",
+    "ar": "العفو! تحب تسأل عن حاجة تانية -- متجر مختلف، خيار أرخص، "
+          "أو طريقة الدفع واستخدام الكوبون؟",
+}
+# Capabilities reply: teaches the small model nothing new at runtime (it is
+# deterministic), but gives the customer the full menu in one turn so the
+# conversation can go anywhere next: discovery, prices/options, purchase
+# steps, payments, order status, refunds.
+_HELP_REPLY = {
+    "en": "I can help you with:\n"
+          "- Finding real Waffarha offers by merchant, food, or category\n"
+          "- Prices, discounts, and the available options inside an offer\n"
+          "- How to buy, pay (cards, wallets, Fawry and more), and use your coupon\n"
+          "- Order status meanings, refunds, cashback, and your account\n"
+          "Just tell me what you're looking for!",
+    "ar": "أقدر أساعدك في:\n"
+          "- تلاقي عروض وفرها الحقيقية بالمتجر أو الأكلة أو الفئة\n"
+          "- الأسعار والخصومات والاختيارات المتاحة جوه كل عرض\n"
+          "- طريقة الشراء والدفع (كروت، محافظ، فوري وغيرها) واستخدام الكوبون\n"
+          "- معاني حالات الطلب والاسترجاع والكاش باك والحساب\n"
+          "قولي بتدور على إيه!",
+}
+_IDENTITY_REPLY = {
+    "en": "I'm the Waffarha assistant -- I help you find real Waffarha offers, "
+          "compare prices, and walk you through buying, paying, and refunds. "
+          "What are you looking for today?",
+    "ar": "أنا مساعد وفرها -- أساعدك تلاقي عروض وفرها الحقيقية وتقارن الأسعار، "
+          "وأمشي معاك خطوة بخطوة في الشراء والدفع والاسترجاع. بتدور على إيه النهاردة؟",
+}
+
+
+def _is_thanks(query: str) -> bool:
+    """Pure thank-you lines (no offer/policy topic inside)."""
+    cleaned = _strip_diacritics_and_noise(query)
+    if not cleaned:
+        return False
+    if _has_offer_topic_signal(query):
+        return False
+    if cleaned in ("thanks", "thank you", "thank u", "thx", "شكرا",
+                   "شكرا لك", "شكرا ليك", "متشكر", "متشكرين", "تسلم",
+                   "تسلملي", "شكرا جدا", "الف شكر"):
+        return True
+    return any(g in cleaned for g in ("thank you", "thanks a lot", "شكرا")) \
+        and len(cleaned.split()) <= 4
+
+
+def _is_help_request(query: str) -> bool:
+    """'What can you do / help me' -- capabilities question, no catalog call."""
+    q = _strip_diacritics_and_noise(query)
+    if not q:
+        return False
+    if _has_offer_topic_signal(query):
+        return False
+    return any(w in q for w in (
+        "what can you do", "what do you do", "how can you help",
+        "help me", "help", "ساعدني", "ساعدنى", "بتعمل ايه", "بتعمل إيه",
+        "بتعرف تعمل ايه", "بتعرف تعمل إيه", "تقدر تعمل ايه", "تقدر تعمل إيه",
+        "ايه اللي تقدر", "إيه اللي تقدر", "ممكن تساعدني", "محتاج مساعدة",
+        "محتاج مساعده", "sa3dni", "sa3dny", "tsa3dni",
+    ))
+
+
+def _is_identity_question(query: str) -> bool:
+    """'Who are you / what is Waffarha' style identity questions."""
+    q = _strip_diacritics_and_noise(query)
+    if not q:
+        return False
+    return any(w in q for w in (
+        "who are you", "what are you", "مين انت", "مين أنت", "انت مين",
+        "أنت مين", "انتي مين", "ما هي وفرها", "ما هو وفرها", "ايه هي وفرها",
+        "إيه هي وفرها", "يعني ايه وفرها", "يعني إيه وفرها", "about yourself",
+        "introduce yourself", "عرف نفسك", "مين وفرها",
+    ))
 _GREETING_REPLY = {
-    "en": "Hello! I can help you find real Waffarha offers, compare them, and "
-          "track coupons. Try asking: what offers does KFC have right now?",
-    "ar": "مرحباً! يمكنني مساعدتك في العثور على عروض وفرها الحقيقية ومقارنتها "
-          "وتتبع الكوبونات. جرب أن تسأل: ما هي عروض KFC الحالية؟",
+    "en": "Hello! I can find real Waffarha offers, show prices and options, "
+          "compare them, and walk you through buying, paying, and refunds. "
+          "What are you craving today?",
+    "ar": "مرحباً! أقدر ألاقيلك عروض وفرها الحقيقية بالأسعار والاختيارات، "
+          "وأقارن بينها، وأمشي معاك في الشراء والدفع والاسترجاع. "
+          "نفسك في إيه النهاردة؟",
 }
 _GIBBERISH_REPLY = {
     "en": "I didn't catch that. Could you rephrase? I can find real Waffarha "
           "offers, compare them, and track coupons.",
     "ar": "لم أفهم. هل يمكنك إعادة الصياغة؟ يمكنني إيجاد عروض وفرها الحقيقية "
           "ومقارنتها وتتبع الكوبونات.",
+}
+# Low-signal ("w", "?", "5") clarify -- same wording as _clarify() so the
+# safety-gate shortcut and the planner-driven clarify path speak identically.
+_LOW_SIGNAL_REPLY = {
+    "en": ("I'd like to find the right offer for you. "
+           "What are you looking for? A merchant (e.g. KFC, McDonald's) "
+           "or a category (e.g. food, fashion, beauty)?"),
+    "ar": ("عشان ألاقي أحسن عرض ليك، قصدك متجر معين "
+           "(زي كنتاكي أو ماكدونالدز) ولا فئة "
+           "(زي أكل أو ملابس أو تجميل)؟"),
 }
 _INJECTION_REPLY = {
     "en": "I can't help with that request.",

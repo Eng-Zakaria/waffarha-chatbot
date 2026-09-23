@@ -185,3 +185,35 @@ Baseline post-Phase-1 (reports/verify/20260923_153121_phase1_check/):
 mrr 0.483 -> 0.585.** Rank-1 selection improved sharply from removing expired
 candidates that were outranking the right doc — the Phase 4 target signal
 appearing early; bonus-inflation work (Phase 4) is still pending.
+
+## Phase 2 addendum (same branch): agent evidence-gate hole closed
+
+Path inventory (agent/engine.py): the ONLY ungated route to rendered cards was
+`_finish_fallback` — reached on plan_parse_error / planner_error /
+replan_unusable / tool_error / tool_budget / relax_failed / replan_budget, it
+unconditionally ran a semantic `search_offers` fallback (no grounding, no
+evidence gate) and rendered whatever came back, including `state.evidence`
+collected under the failed plan. All other routes are gated or card-free
+(safety/clarify/respond/no-retrieval/no_matches-broaden-then-gate).
+
+Fix: `_finish_fallback` serves zero cards with emptied evidence behind
+`STRICT_AGENT_FALLBACK` (core/config.py, default true); legacy search-and-render
+preserved under `false`. Reproduced pre-fix via trace (location query fallback
+rendered KFC+Pizza Hut with zero address evidence); post-fix the same turns
+answer honestly with no cards.
+
+Regression test `tests/acceptance/test_agent_gate.py` (8 passed, no LLM):
+planner mocked to raise PlanParseError on 6 varied queries (location, personal,
+off-topic, ambiguous, well-formed AR/EN) + valid-plan-then-replan-failure on 2
+more — all assert zero evidence, zero card markers, non-empty reply.
+
+Acceptance deltas: `fp_gym`/`fp_valid` agent xfail→pass (fallback now honest);
+follow-up agent subset test SKIPs (t1 fallback renders nothing — nothing to
+compare, reported not hidden); `loc_kfc_nasr` agent stays xfail (successful-plan
+search, 1 card, no address data). Suite: 32 passed, 2 skipped, 21 xfailed.
+Harness fix in passing: agent per-turn evidence now comes from the yielded turn
+report, not the sticky `_last_evidence` attribute (which fallback paths never
+reset — previously misattributed the prior turn's cards).
+Baseline post-Phase-2 (reports/verify/20260923_204001_phase2_check/):
+**151/172, hit@1 0.481, hit@k 0.796, mrr 0.585 — identical to post-Phase-1**,
+as expected for an agent-only change.
