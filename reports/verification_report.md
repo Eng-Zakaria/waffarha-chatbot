@@ -270,3 +270,36 @@ turn_router design decision. Acceptance: 38 passed, 2 skipped, 15 xfailed
 (basha-cascade reason updated to embedding-floor refusal; all else stable).
 Unit set: 3 direct-answer guard tests updated to the embedding-only contract
 (blocked-cases pass unchanged); final 285 passed, same 4 pre-existing failures.
+
+## Phase 5 addendum (same branch): 82/225 breakdown (reporting only, no fixes)
+
+Categorizer: `eval/categorize_full.py` (one category per failed record —
+routing/intent, retrieval-quality, generation/wording, card-rendering,
+language-mismatch, other; rule in file header). Baseline 82/225 splits as
+**routing/intent 79, generation/wording 46, retrieval-quality 15,
+language-mismatch 3, card-rendering 0, other 0**. Card-rendering never fires:
+whenever retrieval is right, wording passes too (or no cards render) — the
+"right offers, wrong card" failure mode does not occur in this suite.
+
+Post-phase re-run (`--rag-only`, reports/verify/*_phase5_rerun/): **64/225**
+— routing/intent 109 (+30), generation/wording 37 (-9), retrieval-quality 14
+(-1), language-mismatch 1 (-2). Per-id movement: 3 fixed, 21 broke
+(reports/phase5_movement.txt). Of the 21 broke, **15 are honest
+refusals/empties** (the eval's expected answer is expired inventory Phase 1
+now withholds — e.g. spa/gym/nail-course offers; stale ground truth, not a
+regression) and 6 served-other: `offer_expiry_check_ar` is the new validity
+path answering honestly ("انتهى... 2023-11-01") where the eval wants a
+live-style card (correct behavior, stale expectation); zadna/wafflicious/
+dentalboss/same-merchant serve LIVE right-merchant offers failing only on
+strict id/keywords; `price_range_over_1000_ar` picked a worse "closest"
+(paragliding 9277 over the prior pick) — the one genuine ranking shift to
+watch. Fixed include `offer_nonexistent_starbucks` (served a coffee offer
+for a nonexistent brand before → honest refusal now).
+
+Net reading: the pipeline got more conservative — fewer wrong answers served
+(Starbucks-class hallucinations gone, zero expired cards anywhere organic),
+at the cost of refusing queries whose ground truth is expired stock. The
+82->64 drop measures ground-truth staleness + honest refusal, not worse
+understanding. Rank-1 ordering itself (hit@1 0.481->0.444 in Phase 4) is the
+open item this breakdown points at — which is exactly the turn_router
+question below.

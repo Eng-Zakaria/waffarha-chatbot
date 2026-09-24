@@ -1,0 +1,35 @@
+### offer_spa_ar
+BEFORE passed=True top=('offer', 4933) checks={'expected_source': True, 'no_scaffolding_leak': True}
+BEFORE ans: مرحبا، نحن سعداء بتوفيق عرضنا من العروض الخاصة لك في بامبو سبا الدقي. يرجى رؤية العروض المقدمة أدناه. |  | 🏷️ باقة العناية المتقدمة  بالبشرة بخصم 47% في بامبو سبا الدقي! فقط بـ 399 جنيه بدلا من 750 جنيه | المتجر: بامبو نيل سبا
+AFTER  passed=False top=(None, None) checks={'expected_source': False, 'no_scaffolding_leak': True}
+AFTER  ans: للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.
+
+### offer_gym_solo_ar
+BEFORE passed=True top=('offer', 129) checks={'expected_source': True, 'expected_keywords': True, 'no_scaffolding_leak': True}
+BEFORE ans: إليك العروض الحالية: |  | 🏷️ ادفع 125 جنيه بدلا من 250جنيه ورجع رشاقتك وحيويتك من تانى مع اشتراك لمدة شهر من سولو جيم + خصم 20% على الاشتراكات الجاية (للرجال والسيدات) | المتجر: سولو جيم | الفئة: الجمال والعناية | السعر: 125 جنيه | 
+AFTER  passed=False top=(None, None) checks={'expected_source': False, 'expected_keywords': False, 'no_scaffolding_leak': True}
+AFTER  ans: للأسف مفيش عندنا عروض من سولو جيم حاليًا. | لو محتاج مساعدة، اتواصل مع دعم وффارها على support@waffarha.com.
+
+### typo_yaya_ar
+BEFORE passed=True top=('offer', 7872) checks={'expected_source': True, 'no_scaffolding_leak': True}
+BEFORE ans: مرحبا، تم ترتيب العروض الخاصة لك في مكان واحد تحتوي على خصومات مغرية من فروع يايا سويت للحلوى والكنافة خلال شهر رمضان. يرجى التحقق من العروض المقدمة أدناه. |  | 🏷️ حلًي رمضانك بحلويات شرقية وغربية وكنافة بأنواع مختلفة بخصم ح
+AFTER  passed=False top=(None, None) checks={'expected_source': False, 'no_scaffolding_leak': True}
+AFTER  ans: للأسف مفيش عندنا عروض من يايا سويت حاليًا. | لو محتاج مساعدة، اتواصل مع دعم وффارها على support@waffarha.com.
+
+### category_education_ar
+BEFORE passed=True top=('offer', 7656) checks={'expected_source': True, 'no_scaffolding_leak': True}
+BEFORE ans: مرحبًا، سأجيب على طلبك وستجد العروض المخصصة لك أدناه. |  | 🏷️ بوابتك لعالم الهندسة والتكنولوجيا من دورات تدريبية وإرشاد أكاديمي بلا حدود بخصم 40% في CourseVox! | المتجر: CourseVox | الفئة: الترفيه والعائلة | السعر: 299 جنيه | بدل ما
+AFTER  passed=False top=(None, None) checks={'expected_source': False, 'no_scaffolding_leak': True}
+AFTER  ans: للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.
+
+### price_range_over_1000_ar
+BEFORE passed=True top=('offer', 181) checks={'expected_source': True, 'expected_keywords': True, 'no_scaffolding_leak': True}
+BEFORE ans: [No offers found between 1000-inf EGP. Closest: ادفعي 150جنيه بدل 525 جنيه لباقة كبيرة تشمل: ازالة شعر الجسم الزائد بالشمع+ تنظيف الوجه والحواجب وأعلى الشفاه+غسيل وحمام كريم وقص وتصفيف للشعر+5 ماسكات للبشرة (منهم قناع ال
+AFTER  passed=False top=('offer', 9277) checks={'expected_source': True, 'expected_keywords': False, 'no_scaffolding_leak': True}
+AFTER  ans: مرحباً، تم تجهيز لك عروضنا المميزة التي سنعرضها لك تحت هذه القمصان. هل ترغب في معرفة ما نقدمه؟ |  | 🏷️ تجربة طيران شراعي فوق البحر الأحمر والمتوسط بخصم 30% في Sky Sports Egypt | المتجر: Sky Sports Egypt | الفئة: الترفيه والعائلة
+
+### offer_nonexistent_starbucks
+BEFORE passed=False top=('offer', 1026) checks={'expected_source': False, 'forbidden_keywords': False, 'no_scaffolding_leak': True}
+BEFORE ans: مرحبا، حضرتك تعرف عن العروض المميزة التي نقدمها لك؟ انظروا إلى ما وفرنا من خصومات على الطعام والمشروبات في المتاجر المختلفة. |  | 🏷️ ادفع 20 جنيه بدلا من 44 جنيه واحصل على أي مشروب كبير من اختيارك + (مافن أو كرواسون أو دونات
+AFTER  passed=True top=(None, None) checks={'expected_source': True, 'forbidden_keywords': True, 'no_scaffolding_leak': True}
+AFTER  ans: للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.

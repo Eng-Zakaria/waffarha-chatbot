@@ -1,0 +1,40 @@
+pass=64/225
+
+== generation/wording: 36
+  - [greeting_salam] السلام عليكم 👋 | top=(None, None) fails=expected_keywords
+  - [greeting_shukran] شكراً ليكم 🙏 | top=(None, None) fails=expected_keywords
+  - [greeting_ahlan_bik] أهلا بيك يا باشا 😊 | top=(None, None) fails=expected_keywords
+  - [offer_kfc_arabic_direct] عندكم عرض كنتاكي؟ بكام؟ 🍗 | top=('offer', 8119) fails=expected_keywords
+  - [offer_mcdonalds_price_ar] كام سعر ماكدونالدز؟ عايز أعرف 👀 | top=('offer', 6737) fails=expected_keywords
+  - [offer_highest_discount_ar] أيه العرض اللي عليه أكبر خصم؟ 🎁 | top=('offer', 9192) fails=expected_keywords
+  - [price_range_under_100_ar] عايز عروض تحت 100 جنيه 🙏 | top=('offer', 6441) fails=expected_keywords
+  - [price_range_over_500_ar] عايز عروض فوق 500 جنيه | top=('offer', 7937) fails=expected_keywords
+  ... +28 more
+
+== generation/wording (forbidden-hit): 1
+  - [memory_ambiguous_no_context] كام سعره؟ | top=('offer', 9193) fails=forbidden_keywords
+
+== language-mismatch: 1
+  - [franco_wafflicious] waffle wafflicious be kam ya basha? | top=('offer', 7645) fails=expected_id
+
+== retrieval-quality: 14
+  - [offer_koshary_ar] عندي شغف للكشري، عندكم عرض كشري؟ | top=('offer', 7683) fails=expected_id,expected_keywords
+  - [offer_hilton_dayuse_ar] بكام إقامة نهار في هيلتون الزمالك؟ | top=('offer', 9121) fails=expected_id
+  - [offer_most_expensive_ar] أغلى عرض فين؟ كم سعره؟ | top=('offer', 9310) fails=expected_id,expected_keywords
+  - [faq_refund_ar] أنا عايز أرجع فلوسي، إزاي؟ 🤔 | top=('faq', 'faq_refund_policy') fails=expected_id
+  - [faq_about_waffarha_ar] وفرها تطبيقات إيه؟ 📱 | top=('faq', 'faq_13_privacy') fails=expected_id,expected_keywords
+  - [memory_followup_ordinal_first_ar] أول عرض في القائمة ده إيه؟ | top=('offer', 7683) fails=expected_id,expected_keywords
+  - [offer_delivery_negative_ar] العرض ده التوصيل عليه متاح؟ | top=('offer', 6756) fails=expected_id
+  - [order_status_expired_ar] لما أقول حالة الطلب 'منتهي'، إيه المعنى؟ | top=('faq', 'faq_4') fails=expected_id
+  ... +6 more
+
+== routing/intent: 109
+  - [offer_nonexistent_pizza_hut] عندكم بيتزا هت؟🍕 | top=('offer', 7270) fails=expected_source,forbidden_keywords
+  - [faq_register_ar] أنا جديد، ازاي أشتغل حساب جديد؟ | top=(None, None) fails=expected_id,expected_keywords,expected_source
+  - [faq_purchase_ar] إزاي أشتري كوبون من التطبيق؟ | top=(None, None) fails=expected_id,expected_keywords,expected_source
+  - [faq_payment_methods_ar] إيه طرق الدفع المتاحة؟ 💳 | top=(None, None) fails=expected_id,expected_keywords,expected_source
+  - [faq_use_coupon_ar] أنا اشتريت كوبون، إزاي أستخدمه؟ | top=(None, None) fails=expected_id,expected_keywords,expected_source
+  - [faq_bill_payment_ar] أقدر أدفع فواتيري من على الوفرها؟ | top=(None, None) fails=expected_id,expected_keywords,expected_source
+  - [faq_cashback_ar] الكاش باك بيتصرف إزاي؟ | top=(None, None) fails=expected_id,expected_keywords,expected_source
+  - [faq_not_in_kb_refund_policy] إمتى بيوصلني الكوبون بعد الشراء؟ | top=('faq', 'faq_2') fails=expected_source
+  ... +101 more

@@ -1,0 +1,14 @@
+### offer_expiry_check_ar passed=False
+ANS: العرض ده انتهى (كان صالح حتى 2023-11-01). | 11th Anniversary! Fried chicken combo meal with 58% off from KFC branches! EGP 125 instead of EGP 299 من KFC. | لو عايز عروض شغالة دلوقتي من نفس المحل، قولي.
+
+### offer_zadna_ar passed=False
+ANS: إليك العروض الحالية: |  | 🏷️ استمتع بباقات القهوة التركي مع المعمول والتمور وكوكيز الشيكولاته والمكسرات والعسل بخصم حتى 26% من فروع زادنا! | المتجر: زادنا | الفئة: الطعام والمشروبات | السعر: من 49 حتى 550 جنيه (16 خيارات) | 🔥 خصم 26% | - كوبون برطمان دبس التمر السعودي (330 جم): 49 جنيه (كانت 66 جنيه، خصم 26%) | - ك
+
+### offer_wafflicious_en passed=False
+ANS: Here are the current offers: |  | 🏷️ Make your gathering full of sweetness and delicious choices with up to 35% off from Wafflicious | Merchant: Wafflicious | Category: Food & Beverage | Price: from 165 to 470 EGP (3 options) | 🔥 Save 35% | - Enjoy-it Belgium Waffle - North Coast branches coupon: 165 EGP (was 260
+
+### offer_dentalboss_price_ar passed=False
+ANS: إليك العروض الحالية: |  | 🏷️ باقات تبييض وحشو وعناية مختلفة بالأسنان بخصم حتى 60% في عيادة Dental Boss! | المتجر: Dental Boss | الفئة: الجمال والعناية | السعر: 280 جنيه | بدل ما كان 700 جنيه | 🔥 خصم 60% | ساري حتى 2026-11-01 | 📍 🔗 رابط العرض: https://waffarha.com/ar/o-8145
+
+### same_merchant_eastern_nightstay passed=False
+ANS: مرحبًا، نحن سعداء بتوفير هذه العروض المميزة لك في فنادقنا المختلفة. يمكنك مشاهدة وتنزيلها أدناه. |  | 🏷️ إقامة ليلية تجمع الراحة والرفاهية مع بوفيه إفطار وعشاء في فندق ريتال فيو، العين السخنة! | المتجر: فندق ريتال فيو السخنة | الفئة: السفر والأنشطة | السعر: 4320 جنيه | 🔥 خصم 0% | ساري حتى 2026-11-01 | 📍 🔗 رابط العر
