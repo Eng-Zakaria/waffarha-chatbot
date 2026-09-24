@@ -312,9 +312,12 @@ def test_budget_exhaustion_measures_drift_and_trace():
                                recent_offers=_stored())
     m = report["metrics"]
     assert m["fallback_reason"] == "replan_budget"
-    assert "price_not_satisfied" in m["fallback_drift"]
-    assert m["fallback_note"] is True
-    assert "may not fully match" in answer
+    # Phase 2 (fix/routing-and-freshness): fallback serves zero cards, so the
+    # drift is measured against an empty result and no budget note is appended
+    # (legacy assertions price_not_satisfied / note True / "may not fully
+    # match" in answer assumed the render-cards fallback).
+    assert "empty" in (m["fallback_drift"] or [])
+    assert m["fallback_note"] is False
     traces = [s for s in report["trace"] if s["summary"] == "fallback reply"]
     assert traces and traces[-1]["reason_code"] == "replan_budget"
 

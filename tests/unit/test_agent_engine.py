@@ -814,9 +814,14 @@ def test_stage3_mid_replan_budget_exhaustion_falls_back_silently():
     # Stage-4 measurement: the fallback records WHY (in metrics AND on the
     # final trace step, not just a generic default) plus the drift between the
     # executed plan's price bound and what the fallback returned.
+    # Phase 2 (fix/routing-and-freshness): fallback serves zero cards, so the
+    # drift is measured against an empty result and no budget note is appended
+    # (the note's "here are the closest real offers" text would be false with
+    # nothing rendered). Previously asserted price_not_satisfied + note True
+    # from the legacy render-cards fallback.
     assert report["metrics"].get("fallback_reason") == "replan_budget"
-    assert "price_not_satisfied" in (report["metrics"].get("fallback_drift") or [])
-    assert report["metrics"].get("fallback_note") is True
+    assert "empty" in (report["metrics"].get("fallback_drift") or [])
+    assert report["metrics"].get("fallback_note") is False
     trace = [s for s in (report.get("trace") or [])
              if s.get("summary") and "fallback reply" in str(s.get("summary"))]
     assert trace and trace[-1].get("reason_code") == "replan_budget"

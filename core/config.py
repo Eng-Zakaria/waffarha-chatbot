@@ -108,6 +108,14 @@ LIVE_ONLY_ORGANIC = os.getenv("LIVE_ONLY_ORGANIC", "true").lower() == "true"
 # legacy fallback search-and-render behavior.
 STRICT_AGENT_FALLBACK = os.getenv("STRICT_AGENT_FALLBACK", "true").lower() == "true"
 
+# Phase 3 (fix/routing-and-freshness): strict social-turn matching.
+# SOCIAL_GREETING_NORMALIZE: normalize (vocative strip, elongation collapse,
+# hamza/ya fold) before the closed greeting-set lookup. CLOSING_TOKEN_MATCH:
+# token/phrase-boundary closing match instead of substring-in-string.
+# Disable either (false) to restore the legacy looser behavior.
+SOCIAL_GREETING_NORMALIZE = os.getenv("SOCIAL_GREETING_NORMALIZE", "true").lower() == "true"
+CLOSING_TOKEN_MATCH = os.getenv("CLOSING_TOKEN_MATCH", "true").lower() == "true"
+
 OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 
 # CHANGED: default embedding model upgraded to BGE-M3 for better Arabic retrieval.

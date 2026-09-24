@@ -217,3 +217,27 @@ reset — previously misattributed the prior turn's cards).
 Baseline post-Phase-2 (reports/verify/20260923_204001_phase2_check/):
 **151/172, hit@1 0.481, hit@k 0.796, mrr 0.585 — identical to post-Phase-1**,
 as expected for an agent-only change.
+
+## Phase 3 addendum (same branch): cascade text-matching fixes
+
+`_looks_like_greeting`: shared `_normalize_short_text` helper (extracted
+verbatim) + flag-gated normalization (`SOCIAL_GREETING_NORMALIZE`, default
+true) — vocative strip, elongation collapse (3+ repeats), hamza/ya fold —
+before the UNCHANGED closed-set lookup. Closing check → `_is_closing_message`
+(token/phrase-boundary on the normalized message + filler remainder,
+`CLOSING_TOKEN_MATCH` default true). Verified at unit level: يا هلا/هلااااا
+now greet; مرحبا يا باشا still misses (باشا kept out per closed-set rule);
+"no more than"→thanks, "abandoned"→done, "actually"→actual all dead;
+"شكرا يا باشا" still closes.
+
+Acceptance: `greet_ya_hala` x2, `greet_hala_long` x2, `fp_cart`/`fp_valid`
+cascade, `fp_valid` agent+lang — **8 xfails removed** (all hit greeting/
+safety/closing/catalog-handle pre-retrieval with zero cards). `مرحبا يا باشا`
+x2 stays (documented باشا limitation). Suite: 38 passed, 2 skipped, 15 xfailed.
+Unit set: my greeting edit initially broke 1 passing test (fold mapped listed
+"أهلاً بيك" to unlisted "اهلا بيك") — fixed additively (raw OR folded); the 2
+budget-note tests pinned legacy render-cards fallback and were updated to the
+Phase-2 zero-card contract with comments (not among the protected 4, which
+remain untouched and still failing). Final: 285 passed, same 4 pre-existing
+failures. Baseline post-Phase-3 (reports/verify/20260924_024327_phase3_check/):
+**identical 151/172, 0.481/0.796/0.585** (social matching doesn't touch scoring).

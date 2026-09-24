@@ -49,23 +49,27 @@ FALSE_POS = ["fp_delete_account", "fp_hair", "fp_physio", "fp_gym",
 #   (STRICT_AGENT_FALLBACK: plan_parse_error fallback serves zero cards).
 # - ("followup_compare", "agent"): fallback now renders nothing (Phase 2), so
 #   the subset test SKIPs instead of failing.
+# - ("greet_ya_hala", both), ("greet_hala_long", both): passed since Phase 3
+#   (greeting normalization: vocative strip + elongation collapse; both hit
+#   greeting/agent-safety pre-retrieval with zero cards).
+# - ("fp_cart", "cascade"), ("fp_valid", "cascade"): passed since Phase 3
+#   (token-boundary closing match kills the "done"⊂"abandoned" and literal
+#   "actual" false positives; both now reach catalog-handle).
+# - ("fp_valid:lang", "agent"): passed since Phase 2+3 (fallback serves zero
+#   cards with an English reply).
 XFAIL = {
-    ("greet_ya_hala", "cascade"): "5 offer cards via llm-cards-intro; 'يا' breaks greeting match",
-    ("greet_ya_hala", "agent"): "5 offer cards via tool:search_offers; planner intent catalog",
-    ("greet_hala_long", "cascade"): "retrieval ran (relevance rejected 0.524<0.55, refusal text); HARD needs zero retrieval",
-    ("greet_hala_long", "agent"): "2 offer cards via tool:search_offers; planner intent catalog",
-    ("greet_basha", "cascade"): "5 offer cards via llm-cards-intro; 'يا باشا' breaks greeting match",
-    ("greet_basha", "agent"): "2 offer cards via tool:search_offers; planner intent catalog",
-    ("offer_under100", "cascade"): "closing reply ('no more' substring of 'no more than'); zero cards",
+    ("greet_basha", "cascade"): "5 offer cards via llm-cards-intro; 'باشا' not stripped (closed-set rule keeps it)",
+    ("greet_basha", "agent"): "5 offer cards via tool:search_offers; 'باشا' not stripped",
+    # Phase 3: closing FP dead ("no more than" no longer matches); still zero
+    # structured cards because the live catalog path answers in text.
+    ("offer_under100", "cascade"): "catalog-handle text answer, zero structured cards",
     ("fp_delete_account", "cascade"): "out-of-scope refusal; task expects it answered (retrieve_faq on agent)",
     ("fp_hair", "cascade"): "out-of-scope refusal; task expects it answered",
     ("fp_hair", "agent"): "3 offer cards via tool:search_offers despite OUT_OF_SCOPE hint",
     ("fp_physio", "cascade"): "out-of-scope refusal; task expects it answered",
     ("fp_physio", "agent"): "4 offer cards via tool:search_offers despite OUT_OF_SCOPE hint",
     ("fp_gym", "cascade"): "out-of-scope refusal; task expects it answered",
-    ("fp_cart", "cascade"): "closing reply ('done' substring of 'abandoned'); zero cards",
     ("fp_cart", "agent"): "3 offer cards via tool:search_offers",
-    ("fp_valid", "cascade"): "closing reply ('actual' is a closing phrase); zero cards",
     ("loc_kfc_nasr", "agent"): "1 offer card via successful-plan search_offers; no address data",
     # Phase 0 (live catalog): cascade now answers via catalog-handle with zero
     # cards ("Couldn't find location info" — no verified address data used).
@@ -80,7 +84,6 @@ XFAIL = {
     ("valid_mado_en", "agent"): "no validity path on agent; serves live cards without expired framing",
     ("valid_arabiata_ar", "agent"): "no validity path on agent; serves live cards without expired framing",
     ("valid_mado_en:lang", "agent"): "reply_lang=ar for English query",
-    ("fp_valid:lang", "agent"): "reply_lang=ar for English query",
 }
 
 
@@ -186,9 +189,7 @@ def test_reply_language_matches_query():
 
 @pytest.mark.parametrize("engine", ENGINES)
 def test_reply_language_known_gap(engine):
-    for case in ("fp_valid", "valid_mado_en"):
+    for case in ("valid_mado_en",):
         _xfail(case + ":lang", engine)
-    r = REC[("fp_valid", 0, engine)]
-    assert r["reply_lang"] == "en", "want en got %s" % r["reply_lang"]
     r2 = REC[("valid_mado_en", 0, engine)]
     assert r2["reply_lang"] == "en", "want en got %s" % r2["reply_lang"]

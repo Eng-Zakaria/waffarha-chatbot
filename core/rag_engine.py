@@ -560,12 +560,75 @@ def _route_faq_topic(query: str, normalized_query: str) -> tuple:
     return None
 
 
-def _looks_like_greeting(query: str) -> bool:
-    # Strip emojis and trailing punctuation before checking
-    q = (query or "").strip()
-    # Remove common emoji patterns (keep just letters/numbers and Arabic vowels)
+def _normalize_short_text(text: str) -> str:
+    """Shared normalization for social-turn matching (greetings + closings):
+    strip emojis, map punctuation to spaces, lowercase. Extracted verbatim
+    from _looks_like_greeting so both gates normalize identically."""
+    q = (text or "").strip()
     q = re.sub(r"[^\w\s؟?!.,،ًٌٍَُِّْءآأإؤئ]", " ", q)
     q = re.sub(r"[؟?!.,،]+", " ", q).strip().lower()
+    return q
+
+
+# Phase 3 (fix/routing-and-freshness): tokens that may accompany a closing
+# phrase without changing its meaning (vocatives, politeness, intensifiers).
+# A closing match requires the phrase tokens plus only filler remainder --
+# so "شكرا يا باشا" still closes, but "no more than 100" (remainder: than,
+# 100, ...) and "abandoned cart offers" ("done" never a standalone token)
+# do not.
+_CLOSING_FILLERS = frozenset([
+    "يا", "باشا", "جدا", "جداً", "اوي", "أوي", "very", "much", "so",
+    "please", "لو", "سمحت", "فضلك",
+])
+
+
+def _is_closing_message(query: str, phrases) -> bool:
+    """Token/phrase-boundary closing match on the normalized full message.
+
+    Matches when the normalized query IS a listed phrase, or when stripping
+    every listed phrase's tokens leaves only filler tokens. Never a raw
+    substring: "actual" must not fire inside "actually", "done" inside
+    "abandoned", "no more" inside "no more than 100".
+    """
+    q = _normalize_short_text(query)
+    if not q:
+        return False
+    normed = [_normalize_short_text(p) for p in phrases]
+    normed = [p for p in normed if p]
+    if q in normed:
+        return True
+    remaining = q.split()
+    for p in sorted(normed, key=len, reverse=True):
+        pt = p.split()
+        if not pt:
+            continue
+        kept = []
+        i = 0
+        while i < len(remaining):
+            if remaining[i:i + len(pt)] == pt:
+                i += len(pt)
+            else:
+                kept.append(remaining[i])
+                i += 1
+        remaining = kept
+    return bool(remaining) and all(t in _CLOSING_FILLERS for t in remaining)
+
+
+def _looks_like_greeting(query: str) -> bool:
+    # Strip emojis and trailing punctuation before checking
+    q = _normalize_short_text(query)
+    # Phase 3 (fix/routing-and-freshness): normalize before the closed-set
+    # lookup -- strip the Arabic vocative, collapse elongation (3+ repeats),
+    # fold hamza/ya variants. The set itself is unchanged (no fuzzy matcher).
+    if bool(getattr(config, "SOCIAL_GREETING_NORMALIZE", True)):
+        folded = _normalize_arabic(q)
+        folded = re.sub(r"(.)\1{2,}", r"\1", folded)
+        folded = " ".join(w for w in folded.split() if w != "يا").strip()
+        # Additive: the folded form is checked ALONGSIDE the raw normalized
+        # form, never instead of it -- listed spellings (e.g. "أهلاً بيك")
+        # keep matching exactly as before.
+        if folded in _GREETING_PHRASES:
+            return True
     return q in _GREETING_PHRASES
 
 
@@ -3824,7 +3887,13 @@ class RagEngine:
             "m3a salama", "allah ybarek feek", "rbna ybarek feek",
             "kefaya", "khalas", "actual", "5alas", "akher kalam",
         ]
-        if any(phrase in query.lower() for phrase in closing_phrases):
+        # Phase 3 (fix/routing-and-freshness): token/phrase-boundary match on
+        # the normalized full message instead of substring-in-string, so "no
+        # more" no longer fires inside "no more than 100", "done" inside
+        # "abandoned", or "actual" inside "actually".
+        if _is_closing_message(query, closing_phrases) if bool(
+                getattr(config, "CLOSING_TOKEN_MATCH", True)) else any(
+                phrase in query.lower() for phrase in closing_phrases):
             _closing_reply = {
                 "en": "You're welcome! Let me know if there's anything else.",
                 "ar": "عافاك! لو محتاج أي حاجة تانية، أنا موجود",

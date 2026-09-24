@@ -1,20 +1,22 @@
-### greet_hala_long t0 cascade exit=refusal-relevance
-answer_prefix: للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.
-ev: gate followup-resolve dec=True ([], 'NEW_TOPIC')
-llm: [{'n': 2, 'phases': ['intent-judge', 'relevance-check']}, {'phase': 'intent-judge', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'relevance-check', 'model': 'qwen2.5:3b-instruct'}]
-intents: {'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
+### greet_hala_long t0 cascade exit=greeting
+answer_prefix: أهلاً بيك! أقدر أساعدك في العروض، طلباتك، الكاش باك، أو الاسترجاع — تحب تعرف إيه؟
+ev: gate greeting dec=True True
+llm: [{'n': 0, 'phases': []}]
+intents: {}
 
 ### offer_pizza t0 cascade exit=catalog-handle
-answer_prefix: مفيش عروض نشطة مطابقة للطلب. (checked: بيتزا سفير)
+answer_prefix: دي العروض الحالية من Pizza Master:
+- بيتزا ماستر — 360 جنيه (was 515 جنيه), 30% off — صالح حتى 2026-11-01
 ev: gate catalog dec=True True
-ev: gate catalog-handle dec=True {'answer': 'مفيش عروض نشطة مطابقة للطلب. (checked: بيتزا سفير)', 'sources': []}
+ev: gate catalog-handle dec=True {'answer': 'دي العروض الحالية من Pizza Master:\n- بيتزا ماستر — 360 جنيه (was 515 جنيه), 30% off — صالح حتى 2026-11-01',
 llm: [{'n': 0, 'phases': []}]
 intents: {}
 
 ### followup_compare t0 cascade exit=catalog-handle
-answer_prefix: مفيش عروض نشطة مطابقة للطلب. (checked: بيتزا سفير)
+answer_prefix: دي العروض الحالية من Pizza Master:
+- بيتزا ماستر — 360 جنيه (was 515 جنيه), 30% off — صالح حتى 2026-11-01
 ev: gate catalog dec=True True
-ev: gate catalog-handle dec=True {'answer': 'مفيش عروض نشطة مطابقة للطلب. (checked: بيتزا سفير)', 'sources': []}
+ev: gate catalog-handle dec=True {'answer': 'دي العروض الحالية من Pizza Master:\n- بيتزا ماستر — 360 جنيه (was 515 جنيه), 30% off — صالح حتى 2026-11-01',
 llm: [{'n': 0, 'phases': []}]
 intents: {}
 
@@ -43,28 +45,15 @@ llm: [{'n': 0, 'phases': []}]
 intents: {'_classify_intent': 'offer', '_smart_source_intent': 'offer'}
 
 ### followup_compare t1 agent exit=agent-fallback:relax_failed
-answer_prefix: عثرت على عروض مناسبة:
-🏷️ داي يوز مليان حيوية بين البحر وحمام السباحة في فندق ميرال، العين السخنة!
-الفئة: السفر والأنشطة
-السعر: 999 جنيه
-🔥 خصم 0%
-ساري حتى 2026-11-01
-📍 🔗 رابط العرض: https://waffarha.com/ar/o-9573
-🏷️ اختيارك بين 60 دقيقة كياك أو افطار عالنيل مع كياك بخصم حتى 37% في EgyRow, بداخل نادي 
-card: id=9573 price=999.0 expiry=2026-11-01 expired=False title=داي يوز مليان حيوية بين البحر وحمام السباحة في فندق ميرال، ا
-card: id=7079 price=95.0 expiry=2026-11-01 expired=False title=اختيارك بين 60 دقيقة كياك أو افطار عالنيل مع كياك بخصم حتى 3
-card: id=8016 price=299.0 expiry=2026-11-01 expired=False title=وجبات غداء وعشاء بين المشاوي والفطير المشلتت والشرقي بأنواعه
-card: id=6996 price=200.0 expiry=2026-11-01 expired=False title=30 دقيقة من الأدرينالين مع ألعاب الواقع الإفتراضي بخصم 33% ف
-card: id=8425 price=225.0 expiry=2026-11-01 expired=False title=أجواء ونكهات فريدة لخروجة استثنائية مع أصحابك بخصم حتى 42% ف
+answer_prefix: لم أجد عروضاً مطابقة الآن. جرب تاجراً أو فئة مختلفة.
 ev: gate agent-turn-params dec=True {'query': 'قارن بين أول عرض والتاني', 'reply_lang': 'ar', 'detected_intent': 'MULTI_MERCHANT', 'retrieval_allowed': (Tru
 ev: agent-plan planner dec=True {'tool': 'compare_offers', 'intent': 'comparison', 'next_action': 'plan', 'goal': 'Compare the first offer with the second offer', 'entities': "{'merchant': ['Waffarha']}", 'constraints': '{}', 'missing_information': '', 'references': "['that_offer']"}
-ev: agent-tool tool:compare_offers dec=True {'args': "{'offer_ids': ['that_offer'], 'merchants': ['Waffarha'], 'limit': 6, 'query': 'قارن بين أول عرض والت", 'ok': 'True', 'n_items': '0', 'ms': '9.4'}
+ev: agent-tool tool:compare_offers dec=True {'args': "{'offer_ids': ['that_offer'], 'merchants': ['Waffarha'], 'limit': 6, 'query': 'قارن بين أول عرض والت", 'ok': 'True', 'n_items': '0', 'ms': '10.4'}
 ev: gate agent-evidence-gate dec=True (False, 'empty_result')
 ev: agent-plan planner dec=True {'tool': 'compare_offers', 'intent': 'comparison', 'next_action': 'plan', 'goal': 'Compare the first offer with the second offer', 'entities': "{'merchant': ['that_merchant_1', 'that_merchant_2']}", 'constraints': '{}', 'missing_information': '', 'references': "['that_offer_1', 'that_offer_2']"}
 ev: gate agent-replan dec=True {'tool': 'compare_offers', 'args': {'offer_ids': ['that_offer_1', 'that_offer_2'], 'merchants': ['that_merchant_1', 'tha
-ev: agent-tool tool:compare_offers dec=True {'args': "{'offer_ids': ['that_offer_1', 'that_offer_2'], 'merchants': ['that_merchant_1', 'that_merchant_2'],", 'ok': 'True', 'n_items': '0', 'ms': '19.7'}
+ev: agent-tool tool:compare_offers dec=True {'args': "{'offer_ids': ['that_offer_1', 'that_offer_2'], 'merchants': ['that_merchant_1', 'that_merchant_2'],", 'ok': 'True', 'n_items': '0', 'ms': '21.1'}
 ev: gate agent-evidence-gate dec=True (False, 'empty_result')
-ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'قارن بين أول عرض والتاني', 'limit': 6}", 'ok': 'True', 'n_items': '5', 'ms': '972.6'}
 ev: gate agent-fallback dec=True fallback_reason=relax_failed
 llm: [{'n': 2, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
 intents: {'planner_intent': 'comparison', 'planner_tool': 'compare_offers', 'detected_hint': 'MULTI_MERCHANT'}
@@ -77,18 +66,19 @@ llm: [{'n': 0, 'phases': []}]
 intents: {}
 
 ### meal_tamara_iftar t0 cascade exit=faceted
-answer_prefix: مرحبًا، سألك عن العروض وسأعرض لك منتجاتنا المتنوعة التي تشمل القهوة والطعام والأنشطة والاستراحات والأطعمة الغريبية بخصومات مغرية، يمكنك مشاهدتها مباشرةً.
+answer_prefix: مرحبًا، سألك عن العروض وسأقدم لك خيارات متنوعة ومغرية تبدأ من فروع زادنا حتى COCO Restaurants، يمكنك مشاهدتها مباشرةً في الرابط المذكور.
 
 🏷️ استمتع بباقات القهوة التركي مع المعمول والتمور وكوكيز الشيكولاته والمكسرات والعسل بخصم حتى 26% من فروع زادنا!
 المتجر: زادنا
-الفئة: الطعام والم
+الفئة: الطعام والمشروبات
+السعر: من 
 card: id=7944 price=49.0 expiry=2026-11-01 expired=False title=استمتع بباقات القهوة التركي مع المعمول والتمور وكوكيز الشيكو
 card: id=8209 price=340.0 expiry=2026-11-01 expired=False title=داي يوز ممتع لكل الأسرة مع ألعاب مائية ووجبتي إفطار وغداء في
 card: id=8173 price=295.0 expiry=2026-11-01 expired=False title=اختيارات متنوعة من وجبات الإفطار الغربي مع مشروب بخصم 42% في
 card: id=7224 price=329.0 expiry=2026-11-01 expired=False title=ألعاب بينت بول وفولي بولي وألعاب كتير بخصم 30% في C.O.D.E Pa
 card: id=8968 price=75.0 expiry=2026-11-01 expired=False title=تشكيلة متكاملة من المنتجات الطبيعية والمشروبات المتنوعة بخصم
-ev: gate offer-intro dec=True مرحبًا، سألك عن العروض وسأعرض لك منتجاتنا المتنوعة التي تشمل القهوة والطعام والأنشطة والاستراحات والأطعمة الغريبية بخصوم
-ev: gate faceted dec=True مرحبًا، سألك عن العروض وسأعرض لك منتجاتنا المتنوعة التي تشمل القهوة والطعام والأنشطة والاستراحات والأطعمة الغريبية بخصوم
+ev: gate offer-intro dec=True مرحبًا، سألك عن العروض وسأقدم لك خيارات متنوعة ومغرية تبدأ من فروع زادنا حتى COCO Restaurants، يمكنك مشاهدتها مباشرةً في
+ev: gate faceted dec=True مرحبًا، سألك عن العروض وسأقدم لك خيارات متنوعة ومغرية تبدأ من فروع زادنا حتى COCO Restaurants، يمكنك مشاهدتها مباشرةً في
 llm: [{'n': 1, 'phases': ['offer-intro']}, {'phase': 'offer-intro', 'model': 'qwen2.5:3b-instruct'}]
 intents: {}
 
@@ -127,7 +117,7 @@ _جميع العروض أعلاه حقيقية ومرتبة حسب
 card: id=8119 price=189.0 expiry=2026-11-01 expired=False title=حصريا: وجبة ساندوتش زنجر وقطع ستربس كومبو بخصم 39% من فروع ك
 ev: gate agent-turn-params dec=True {'query': 'فين فرع كنتاكي في مدينة نصر؟', 'reply_lang': 'ar', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (T
 ev: agent-plan planner dec=True {'tool': 'search_offers', 'intent': 'catalog', 'next_action': 'plan', 'goal': 'Find the closest KFC restaurant in Cairo', 'entities': "{'merchant': ['KFC']}", 'constraints': "{'price_range': [0, 1000]}", 'missing_information': '', 'references': '[]'}
-ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'فين فرع كنتاكي في مدينة نصر', 'merchant': 'KFC', 'exclude': [], 'limit': 1}", 'ok': 'True', 'n_items': '1', 'ms': '10.2'}
+ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'فين فرع كنتاكي في مدينة نصر', 'merchant': 'KFC', 'exclude': [], 'limit': 1}", 'ok': 'True', 'n_items': '1', 'ms': '9.7'}
 ev: gate agent-evidence-gate dec=True (True, 'ok')
 llm: [{'n': 1, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
 intents: {'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
@@ -135,13 +125,15 @@ intents: {'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detecte
 ### personal_order t0 cascade exit=llm-full
 answer_prefix: للتحقق من حالة طلبك، يمكنك اتباع هذه الخطوات:
 
-1. دخولك إلى حسابك عبر الموقع الإلكتروني أو التطبيق الرسمي للشركة.
+1. دخولك إلى حسابك عبر الموقع أو التطبيق الذي تستخدمه للشراء.
 
 2. زيارة صفحة "طلباتي" أو "تفاصيل الطلب".
 
-3. التحقق من حالة طلبك هناك. إذا كان طلبك في حالة "Paid"، فهذا يعني أنه تم الدفع وتم تأكيده، وبالتالي قد يكون قد وصل بالفعل.
+3. التحقق من حالة طلبك هناك.
 
-4. إذا كنت لا تز
+4. إذا كان طلبك في حالة "Pending"، فهذا يعني أنه لم يتم إتمام الدفع بعد.
+
+5. إذا كان طلبك في حالة "Fawry Pending"، فه
 ev: gate followup-resolve dec=True ([], 'NEW_TOPIC')
 llm: [{'n': 2, 'phases': ['generation', 'intent-judge']}, {'phase': 'intent-judge', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'generation', 'model': 'qwen2.5:3b-instruct'}]
 intents: {'_classify_intent': 'mixed', '_smart_source_intent': 'faq', '_judge_is_faq': 'True'}
@@ -150,65 +142,39 @@ intents: {'_classify_intent': 'mixed', '_smart_source_intent': 'faq', '_judge_is
 answer_prefix: لم أجد عروضاً مطابقة الآن. جرب تاجراً أو فئة مختلفة.
 ev: gate agent-turn-params dec=True {'query': 'الطلب بتاعي وصل ولا لسه؟', 'reply_lang': 'ar', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (True,
 ev: agent-plan planner dec=True {'tool': 'search_offers', 'intent': 'out_of_scope', 'next_action': 'plan', 'goal': "Check the status of the user's order", 'entities': "{'merchant': ['unknown'], 'category': ['unknown'], 'product': ['unknown']}", 'constraints': "{'price_range': [0, 10000], 'exclude': [], 'limit': 1}", 'missing_information': 'the merchant and category of the order', 'references': '[]'}
-ev: agent-tool tool:search_offers dec=True {'args': "{'exclude': [], 'limit': 1, 'query': 'الطلب بتاعي وصل ولا لسه؟'}", 'ok': 'True', 'n_items': '0', 'ms': '963.9'}
+ev: agent-tool tool:search_offers dec=True {'args': "{'exclude': [], 'limit': 1, 'query': 'الطلب بتاعي وصل ولا لسه؟'}", 'ok': 'True', 'n_items': '0', 'ms': '949.9'}
 ev: agent-plan planner dec=True {'tool': 'search_offers', 'intent': 'out_of_scope', 'next_action': 'respond_one', 'goal': "check the status of the user's order", 'entities': "{'merchant': None, 'product': None}", 'constraints': "{'price_range': None}", 'missing_information': '', 'references': '[]'}
 ev: gate agent-replan dec=True {'tool': 'search_offers', 'args': {'merchant': None, 'category': None, 'product': None, 'price_range': None, 'exclude': 
-ev: agent-tool tool:search_offers dec=True {'args': "{'merchant': None, 'category': None, 'product': None, 'price_range': None, 'exclude': None, 'limit':", 'ok': 'True', 'n_items': '0', 'ms': '996.2'}
-ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'الطلب بتاعي وصل ولا لسه؟', 'limit': 6}", 'ok': 'True', 'n_items': '0', 'ms': '952.3'}
+ev: agent-tool tool:search_offers dec=True {'args': "{'merchant': None, 'category': None, 'product': None, 'price_range': None, 'exclude': None, 'limit':", 'ok': 'True', 'n_items': '0', 'ms': '923.4'}
+ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'الطلب بتاعي وصل ولا لسه؟', 'limit': 6}", 'ok': 'True', 'n_items': '0', 'ms': '928.5'}
 ev: gate agent-fallback dec=True fallback_reason=relax_failed
 llm: [{'n': 2, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
 intents: {'planner_intent': 'out_of_scope', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 
 ### fp_gym t0 agent exit=agent-fallback:plan_parse_error
-answer_prefix: عثرت على عروض مناسبة:
-🏷️ باقات متنوعة للاشتراك الشهري في الجيم بخصم حتى 55% للسيدات والرجال في The Cave Wellness & Fitness!
-المتجر: The Cave Wellness & Fitness
-الفئة: الجمال والعناية
-السعر: 666 جنيه
-بدل ما كان 1111 جنيه
-🔥 خصم 55%
-ساري حتى 2026-11-01
-📍 🔗 رابط العرض: https://waffarha.com/ar/o-6879
-🏷️ 
-card: id=8401 price=280.0 expiry=2026-11-01 expired=False title=باقات متنوعة لجلسات استشفاء وحجامة وعلاج طبيعي بخصم حتى 46% 
-card: id=8529 price=650.0 expiry=2026-11-01 expired=False title=جلسات استشفاء، حجامة، تغذية وعلاج طبيعي بخصم حتى 40% في عياد
-card: id=9529 price=315.0 expiry=2026-11-01 expired=False title=صحتك أولوية! كشف تغذية، جلسات علاج طبيعي، حجامة وغيرهم بخصم 
-card: id=9259 price=105.0 expiry=2026-11-01 expired=False title=أقوى عروض السيرك مع فقرات الأسود والنمور بخصم 30% في سيرك كو
-card: id=7418 price=325.0 expiry=2026-11-01 expired=False title=احضر عروض الدولفين الممتعة وأنشطة السباحة والتصوير معها بخصم
+answer_prefix: لم أجد عروضاً مطابقة الآن. جرب تاجراً أو فئة مختلفة.
 ev: gate agent-turn-params dec=True {'query': 'ايه احسن عرض من عروض الجيم', 'reply_lang': 'ar', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (Tru
-ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'ايه احسن عرض من عروض الجيم', 'limit': 6}", 'ok': 'True', 'n_items': '5', 'ms': '1002.7'}
 ev: gate agent-fallback dec=True fallback_reason=plan_parse_error
 llm: [{'n': 1, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
 intents: {'detected_hint': 'OFFER_LOOKUP'}
 
 ### fp_valid t0 agent exit=agent-fallback:plan_parse_error
-answer_prefix: Found matching offers:
-🏷️ تجربة حقيقة لأطفالك للاستمتاع والتعلم وتنمية المهارات بخصم حتى 33% في Play Hub، ساوث بارك - مدينتي!
-Merchant: Play Hub
-Category: Entertainment & Family
-Price: 390 EGP
-Was 580 EGP
-🔥 Save 33%
-Valid until 2026-11-01
-📍 🔗 Offer link: https://waffarha.com/en/o-8533
-🏷️ An Exciting
-card: id=6756 price=160.0 expiry=2026-11-01 expired=False title=Get 20% off Stationery supplies @Bernasos Stationary! EGP 16
-card: id=7807 price=110.0 expiry=2026-11-01 expired=False title=Reach the maximum productivity with up to 47% off @Shaghaf C
-card: id=7282 price=1125.0 expiry=2026-11-01 expired=False title=Different-shaped fish aquariums for a modern touch to your h
-card: id=7681 price=290.0 expiry=2026-11-01 expired=False title=Precious gifts of aesthetic colorful flowers with up to 4% o
-card: id=8392 price=40.0 expiry=2026-11-01 expired=False title=Boost your productivity in the perfect comfortable atmospher
+answer_prefix: I couldn't find matching offers right now. Try a different merchant or category.
 ev: gate agent-turn-params dec=True {'query': 'is the offer actually valid?', 'reply_lang': 'en', 'detected_intent': 'OFFER_LOOKUP', 'retrieval_allowed': (T
-ev: agent-tool tool:search_offers dec=True {'args': "{'query': 'is the offer actually valid?', 'limit': 6}", 'ok': 'True', 'n_items': '6', 'ms': '1054.9'}
 ev: gate agent-fallback dec=True fallback_reason=plan_parse_error
 llm: [{'n': 1, 'phases': ['planner']}, {'phase': 'planner', 'model': 'qwen2.5:3b-instruct'}]
 intents: {'detected_hint': 'OFFER_LOOKUP'}
 
-### fp_cart t0 cascade exit=closing
-answer_prefix: You're welcome! Let me know if there's anything else.
+### fp_cart t0 cascade exit=catalog-handle
+answer_prefix: I couldn't find any active offers matching that. (checked: abandoned cart)
+ev: gate catalog dec=True True
+ev: gate catalog-handle dec=True {'answer': "I couldn't find any active offers matching that. (checked: abandoned cart)", 'sources': []}
 llm: [{'n': 0, 'phases': []}]
 intents: {}
 
-### offer_under100 t0 cascade exit=closing
-answer_prefix: You're welcome! Let me know if there's anything else.
+### offer_under100 t0 cascade exit=catalog-handle
+answer_prefix: I couldn't find any active offers matching that. (checked: show me)
+ev: gate catalog dec=True True
+ev: gate catalog-handle dec=True {'answer': "I couldn't find any active offers matching that. (checked: show me)", 'sources': []}
 llm: [{'n': 0, 'phases': []}]
 intents: {}
