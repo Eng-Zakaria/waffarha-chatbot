@@ -116,6 +116,14 @@ STRICT_AGENT_FALLBACK = os.getenv("STRICT_AGENT_FALLBACK", "true").lower() == "t
 SOCIAL_GREETING_NORMALIZE = os.getenv("SOCIAL_GREETING_NORMALIZE", "true").lower() == "true"
 CLOSING_TOKEN_MATCH = os.getenv("CLOSING_TOKEN_MATCH", "true").lower() == "true"
 
+# Phase 4 (fix/routing-and-freshness): qualification gates read embedding
+# similarity only. MIN_RELEVANCE_SCORE / STRICT / RELEVANCE_CHECK /
+# _context_is_relevant / direct-answer shortcuts all consult the raw
+# embedding score; combined_score (embedding + lexical/intent/entity/title/
+# price bonuses) is used for ORDERING only. Set false to restore the legacy
+# bonus-inflated qualification.
+SCORE_GATES_EMBEDDING_ONLY = os.getenv("SCORE_GATES_EMBEDDING_ONLY", "true").lower() == "true"
+
 OFFERS_LIST_CANDIDATES = ["data", "result", "offers", "items", "sectionOffers"]
 
 # CHANGED: default embedding model upgraded to BGE-M3 for better Arabic retrieval.

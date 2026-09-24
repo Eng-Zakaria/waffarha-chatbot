@@ -58,7 +58,7 @@ FALSE_POS = ["fp_delete_account", "fp_hair", "fp_physio", "fp_gym",
 # - ("fp_valid:lang", "agent"): passed since Phase 2+3 (fallback serves zero
 #   cards with an English reply).
 XFAIL = {
-    ("greet_basha", "cascade"): "5 offer cards via llm-cards-intro; 'باشا' not stripped (closed-set rule keeps it)",
+    ("greet_basha", "cascade"): "retrieval runs (embedding-only strict floor refuses at 0.444); zero cards served",
     ("greet_basha", "agent"): "5 offer cards via tool:search_offers; 'باشا' not stripped",
     # Phase 3: closing FP dead ("no more than" no longer matches); still zero
     # structured cards because the live catalog path answers in text.

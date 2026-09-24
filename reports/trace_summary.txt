@@ -6,7 +6,7 @@ greet_hala             t0 cascade exit=greeting               retr=False cards=0
 greet_hala_long        t0 agent   exit=agent-safety           retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={'detected_hint': 'OFFER_LOOKUP'}
 greet_hala_long        t0 cascade exit=greeting               retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 greet_basha            t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
-greet_basha            t0 cascade exit=llm-cards-intro        retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=2(intent-judge,offer-intro) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
+greet_basha            t0 cascade exit=refusal-strict-floor   retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=1(intent-judge) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
 greet_ezayak           t0 agent   exit=agent-safety           retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={'detected_hint': 'OFFER_LOOKUP'}
 greet_ezayak           t0 cascade exit=greeting               retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 greet_hello            t0 agent   exit=agent-safety           retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={'detected_hint': 'GREETING'}
@@ -23,11 +23,11 @@ meal_pizza_breakfast   t0 agent   exit=tool:search_offers     retr=True  cards=5
 meal_pizza_breakfast   t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 meal_ramadan_breakfast t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 meal_ramadan_breakfast t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
-meal_sohour            t0 agent   exit=agent-clarify          retr=False cards=0 exp=0 null=0 lang=ar/ar llm=1(planner) tools=- intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
+meal_sohour            t0 agent   exit=agent-fallback         retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=2(planner) tools=search_offers,search_offers,search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 meal_sohour            t0 cascade exit=refusal-strict-floor   retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=1(intent-judge) tools=- intents={'_classify_intent': 'mixed', '_smart_source_intent': 'mixed', '_judge_is_faq': 'False'}
 meal_tamara_iftar      t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 meal_tamara_iftar      t0 cascade exit=faceted                retr=False cards=5 exp=0 null=0 lang=ar/ar llm=1(offer-intro) tools=- intents={}
-fp_delete_account      t0 agent   exit=tool:retrieve_faq      retr=True  cards=0 exp=0 null=0 lang=en/en llm=1(planner) tools=retrieve_faq intents={'planner_intent': 'faq', 'planner_tool': 'retrieve_faq', 'detected_hint': 'FAQ_INQUIRY'}
+fp_delete_account      t0 agent   exit=agent-fallback         retr=True  cards=0 exp=0 null=0 lang=en/en llm=2(planner) tools=retrieve_faq,retrieve_faq,search_offers intents={'planner_intent': 'faq', 'planner_tool': 'retrieve_faq', 'detected_hint': 'FAQ_INQUIRY'}
 fp_delete_account      t0 cascade exit=out-of-scope           retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
 fp_hair                t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=en/en llm=2(planner,tool:search_offers) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OUT_OF_SCOPE'}
 fp_hair                t0 cascade exit=out-of-scope           retr=False cards=0 exp=0 null=0 lang=en/en llm=0() tools=- intents={}
@@ -42,7 +42,7 @@ fp_valid               t0 cascade exit=catalog-handle         retr=False cards=0
 followup_compare       t0 agent   exit=tool:search_offers     retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 followup_compare       t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 followup_compare       t1 agent   exit=agent-fallback         retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=2(planner) tools=compare_offers,compare_offers intents={'planner_intent': 'comparison', 'planner_tool': 'compare_offers', 'detected_hint': 'MULTI_MERCHANT'}
-followup_compare       t1 cascade exit=comparison             retr=True  cards=5 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={'_classify_intent': 'offer', '_smart_source_intent': 'offer'}
+followup_compare       t1 cascade exit=refusal-strict-floor   retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={'_classify_intent': 'offer', '_smart_source_intent': 'offer'}
 loc_kfc_nasr           t0 agent   exit=tool:search_offers     retr=True  cards=1 exp=0 null=0 lang=ar/ar llm=1(planner) tools=search_offers intents={'planner_intent': 'catalog', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
 loc_kfc_nasr           t0 cascade exit=catalog-handle         retr=False cards=0 exp=0 null=0 lang=ar/ar llm=0() tools=- intents={}
 personal_order         t0 agent   exit=agent-fallback         retr=True  cards=0 exp=0 null=0 lang=ar/ar llm=2(planner) tools=search_offers,search_offers,search_offers intents={'planner_intent': 'out_of_scope', 'planner_tool': 'search_offers', 'detected_hint': 'OFFER_LOOKUP'}
@@ -67,7 +67,7 @@ greet_hala_long            cascade PASS  cards=0 retr=False exit=greeting
 greet_hala_long:lang       cascade PASS  want=ar got=ar
 greet_basha                agent   FAIL  cards=5 retr=True exit=tool:search_offers
 greet_basha:lang           agent   PASS  want=ar got=ar
-greet_basha                cascade FAIL  cards=5 retr=True exit=llm-cards-intro
+greet_basha                cascade FAIL  cards=0 retr=True exit=refusal-strict-floor
 greet_basha:lang           cascade PASS  want=ar got=ar
 greet_ezayak               agent   PASS  cards=0 retr=False exit=agent-safety
 greet_ezayak:lang          agent   PASS  want=ar got=ar
@@ -101,7 +101,7 @@ meal_sohour:lang           agent   PASS  want=ar got=ar
 meal_sohour:lang           cascade PASS  want=ar got=ar
 meal_tamara_iftar:lang     agent   PASS  want=ar got=ar
 meal_tamara_iftar:lang     cascade PASS  want=ar got=ar
-fp_delete_account          agent   PASS  oos=False cards=0 closing_like=False exit=tool:retrieve_faq
+fp_delete_account          agent   PASS  oos=False cards=0 closing_like=False exit=agent-fallback
 fp_delete_account:lang     agent   PASS  want=en got=en
 fp_delete_account          cascade FAIL  oos=True cards=0 closing_like=False exit=out-of-scope
 fp_delete_account:lang     cascade PASS  want=en got=en

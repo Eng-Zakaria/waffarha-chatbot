@@ -2486,12 +2486,17 @@ class RagEngine:
         if not retrieved:
             return False
         top = retrieved[0]
-        top_score = top.get("combined_score", 0.0)
-        if top_score >= config.RELEVANCE_CHECK_SCORE:
+        # Phase 4: the skip-if-confident shortcut and the floor below read
+        # the raw embedding similarity (None when the top hit is BM25-only).
+        # Unmeasured top: neither confident enough to skip nor weak enough to
+        # refuse -- run the text classifier, which needs no scores at all.
+        from core.freshness import qual_score as _qual_score
+        top_score = _qual_score(top)
+        if top_score is not None and top_score >= config.RELEVANCE_CHECK_SCORE:
             return True  # confident match; skip the classifier
         # Only bother querying the LLM when the score is borderline
         # but still above the hard refusal floor.
-        if top_score < config.MIN_RELEVANCE_SCORE:
+        if top_score is not None and top_score < config.MIN_RELEVANCE_SCORE:
             return False
         try:
             resp = self.client.chat(
@@ -2676,6 +2681,10 @@ class RagEngine:
         # NEW: Hybrid search (BM25 + Dense embeddings) with Reciprocal Rank Fusion
         # If BM25 store is available, blend dense vector search and BM25 lexical search
         bm25_results = []
+        # Phase 4: indices with no dense measurement (BM25-only additions)
+        # carry embedding_score=None so qualification gates skip them instead
+        # of judging them on the fabricated 0.5 neutral ordering prior.
+        bm25_only = set()
         if self.bm25_store is not None:
             bm25_hits = self.bm25_store.search(retrieval_query, _fetch_k)
             if _live_only:
@@ -2696,8 +2705,17 @@ class RagEngine:
             for doc_idx, _ in rrf_fused[:candidate_k]:
                 if doc_idx not in dense_indices:
                     dense_indices.append(doc_idx)
-            # Recompute candidate list using combined indices
-            raw_results = [(next((s for s, i in raw_results if i == idx), 0.5), idx) for idx in dense_indices[:candidate_k]]
+            # Recompute candidate list using combined indices. A BM25-only
+            # index keeps 0.5 as a NEUTRAL ORDERING PRIOR (not a measurement);
+            # its embedding_score is recorded as None below.
+            _merged = []
+            for idx in dense_indices[:candidate_k]:
+                _hit = next((s for s, i in raw_results if i == idx), None)
+                if _hit is None:
+                    bm25_only.add(idx)
+                    _hit = 0.5
+                _merged.append((_hit, idx))
+            raw_results = _merged
  
         # CHANGED: filter out common function words (see _LEXICAL_STOPWORDS)
         # before computing lexical overlap -- previously ANY word >=2 chars
@@ -2752,11 +2770,15 @@ class RagEngine:
             # ever making the other source unreachable.
             intent_bonus = config.INTENT_BONUS_WEIGHT if intent == source else 0.0
 
-            # Folded overlap: both sides fold hamza/ya/ta-marbuta variants, so
-            # سياسه matches سياسة and ازاى matches ازاي in scoring -- the same
-            # one-letter robustness as intent classification.
+            # Phase 4 (fix/routing-and-freshness): TOKEN match on folded text,
+            # not substring -- "مطعم" must not hit inside "مطاعم"-as-substring
+            # accidents, and digit tokens never count here at all ("150" must
+            # not hit "1500"; prices are handled by price_match_bonus below).
             doc_text_fold = _fold_keyword_text(doc["text"])
-            lexical_hits = sum(1 for w in query_words if _fold_keyword_text(w) in doc_text_fold)
+            doc_tokens = set(doc_text_fold.split())
+            lexical_hits = sum(
+                1 for w in query_words
+                if not w.isdigit() and _fold_keyword_text(w) in doc_tokens)
             lexical_bonus = (lexical_hits / len(query_words)) * config.LEXICAL_BONUS_WEIGHT if query_words else 0.0
 
             # NEW: entity match bonus -- if query mentions a merchant/category/entity
@@ -2782,13 +2804,16 @@ class RagEngine:
 
             # NEW: price match bonus -- exact price in query matched in doc title/price field
             # Helps disambiguate offers like "99 EGP hawawshi" from "125 EGP hawawshi"
+            # Phase 4: TOKEN match on the folded title (never substring, so
+            # "150" can't hit "1500") and NUMERIC equality on the price field.
             price_match_bonus = 0.0
             if doc_title and query_words:
+                title_words_fold = _fold_keyword_text(doc_title).split()
                 # Extract prices from query words
                 for w in query_words:
                     if w.isdigit():
-                        # Check if this number appears in the doc title
-                        if w in doc_title:
+                        # Check if this number appears as a token in the doc title
+                        if w in title_words_fold:
                             price_match_bonus = getattr(config, 'TITLE_PRICE_MATCH_BONUS', 0.60)
                             break
                 # Also check the doc's actual price field if available
@@ -2796,13 +2821,23 @@ class RagEngine:
                     doc_price = doc["metadata"].get("price", "")
                     if doc_price:
                         for w in query_words:
-                            if w.isdigit() and w in str(doc_price):
-                                price_match_bonus = getattr(config, 'TITLE_PRICE_MATCH_BONUS', 0.60)
-                                break
+                            if not w.isdigit():
+                                continue
+                            try:
+                                if float(w) == float(str(doc_price).replace(",", "")):
+                                    price_match_bonus = getattr(config, 'TITLE_PRICE_MATCH_BONUS', 0.60)
+                                    break
+                            except ValueError:
+                                continue
 
             combined_score = float(score) + lexical_bonus + intent_bonus + entity_match_bonus + title_match_bonus + price_match_bonus
- 
-            if combined_score < config.MIN_RELEVANCE_SCORE:
+
+            # Phase 4: the MIN pool floor reads the raw embedding similarity,
+            # never the bonus-inflated combined score. BM25-only candidates
+            # (embedding unmeasured) are exempt from this gate -- it cannot
+            # judge them -- and stay in the pool for ordering/recall.
+            _emb = None if idx in bm25_only else float(score)
+            if _emb is not None and _emb < config.MIN_RELEVANCE_SCORE:
                 continue
  
             # NEW: exclude previously shown offer when user asks for "other" offers
@@ -2840,7 +2875,11 @@ class RagEngine:
                 # (direct-answer shortcuts, refusal floors) read embedding_score
                 # instead. bonus_total is the additive bonus carved out of
                 # combined_score, kept observable so thresholds are auditable.
-                "embedding_score": float(score),
+                # Phase 4: BM25-only candidates (no dense measurement) carry
+                # embedding_score=None -- gates skip them instead of judging
+                # them on the 0.5 neutral ordering prior kept in "score".
+                "embedding_score": (None if idx in bm25_only else float(score)),
+                "bm25_only": idx in bm25_only,
                 "bonus_total": max(0.0, combined_score - float(score)),
                 # NEW: carried through so the direct-answer shortcuts can
                 # tell "the model is confident because of ACTUAL query-word
@@ -3050,13 +3089,24 @@ class RagEngine:
         # NEW: bonus-inflation-safe qualification (see config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE).
         # ranking bonuses must never be what tips a weak embedding match over the
         # direct-answer confidence bar -- the raw similarity has to clear the floor too.
-        if top.get("embedding_score", top.get("combined_score", 0.0)) < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
+        # Phase 4: unmeasured (BM25-only) top also blocks the shortcut (None).
+        from core.freshness import qual_score as _qual_score
+        if getattr(config, "SCORE_GATES_EMBEDDING_ONLY", True):
+            _floor_emb = _qual_score(top)
+        else:
+            _floor_emb = top.get("embedding_score", top.get("combined_score", 0.0))
+        if _floor_emb is None or _floor_emb < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
             log.debug(
-                "FAQ direct answer blocked by embedding floor: query=%r emb=%.3f < %.3f",
-                query, top.get("embedding_score", 0.0), config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
+                "FAQ direct answer blocked by embedding floor: query=%r emb=%s < %.3f",
+                query, _floor_emb, config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
             )
             return None
-        if top["combined_score"] < config.FAQ_DIRECT_ANSWER_SCORE:
+        # Phase 4: qualification reads the raw embedding similarity only --
+        # bonuses order candidates but never qualify them. Unmeasured
+        # (BM25-only) top or runner-up: no shortcut, fall through to LLM.
+        from core.freshness import qual_score as _qual_score
+        _top_emb = _qual_score(top)
+        if _top_emb is None or _top_emb < config.FAQ_DIRECT_ANSWER_SCORE:
             return None
         # CHANGED: multi_item now covers both explicit comparison wording AND
         # queries that literally name 2+ merchants -- either way the user
@@ -3067,7 +3117,10 @@ class RagEngine:
             return None
         if len(retrieved) > 1:
             second = retrieved[1]
-            margin = top["combined_score"] - second["combined_score"]
+            _second_emb = _qual_score(second)
+            if _second_emb is None:
+                return None
+            margin = _top_emb - _second_emb
             if _same_entity_family(top["metadata"], second["metadata"]):
                 # CHANGED: same FAQ category on both sides -- require the
                 # full, conservative margin regardless of absolute score.
@@ -3084,7 +3137,7 @@ class RagEngine:
                 if margin < config.FAQ_DIRECT_ANSWER_NO_GROUNDING_MARGIN:
                     return None
             else:
-                high_confidence = top["combined_score"] >= config.FAQ_DIRECT_ANSWER_HIGH_CONFIDENCE
+                high_confidence = _top_emb >= config.FAQ_DIRECT_ANSWER_HIGH_CONFIDENCE
                 if margin < config.FAQ_DIRECT_ANSWER_MARGIN and not high_confidence:
                     return None
 
@@ -3138,13 +3191,23 @@ class RagEngine:
         if top["metadata"].get("source") != "offer":
             return None
         # NEW: bonus-inflation-safe qualification (see config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE).
-        if top.get("embedding_score", top.get("combined_score", 0.0)) < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
+        # Phase 4: unmeasured (BM25-only) top also blocks the shortcut (None).
+        from core.freshness import qual_score as _qual_score
+        if getattr(config, "SCORE_GATES_EMBEDDING_ONLY", True):
+            _floor_emb = _qual_score(top)
+        else:
+            _floor_emb = top.get("embedding_score", top.get("combined_score", 0.0))
+        if _floor_emb is None or _floor_emb < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
             log.debug(
-                "Offer direct answer blocked by embedding floor: query=%r emb=%.3f < %.3f",
-                query, top.get("embedding_score", 0.0), config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
+                "Offer direct answer blocked by embedding floor: query=%r emb=%s < %.3f",
+                query, _floor_emb, config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
             )
             return None
-        if top["combined_score"] < config.OFFER_DIRECT_ANSWER_SCORE:
+        # Phase 4: qualification reads the raw embedding similarity only.
+        # Unmeasured (BM25-only) top: no shortcut, fall through to LLM.
+        from core.freshness import qual_score as _qual_score
+        _top_emb = _qual_score(top)
+        if _top_emb is None or _top_emb < config.OFFER_DIRECT_ANSWER_SCORE:
             return None
         # CHANGED: see _get_faq_direct_answer -- multi_item also fires for
         # "what's the deal at X and Y" (named merchants), not just "compare".
@@ -3157,7 +3220,10 @@ class RagEngine:
             return None
         if len(retrieved) > 1:
             second = retrieved[1]
-            margin = top["combined_score"] - second["combined_score"]
+            _second_emb = _qual_score(second)
+            if _second_emb is None:
+                return None
+            margin = _top_emb - _second_emb
             if _same_entity_family(top["metadata"], second["metadata"]):
                 # CHANGED: same merchant on both sides -- this is exactly the
                 # "Sedra kahk box vs Sedra's other offer" / "Abou Al Zouz"
@@ -3180,7 +3246,7 @@ class RagEngine:
                 if margin < config.OFFER_DIRECT_ANSWER_NO_GROUNDING_MARGIN:
                     return None
             else:
-                high_confidence = top["combined_score"] >= config.OFFER_DIRECT_ANSWER_HIGH_CONFIDENCE
+                high_confidence = _top_emb >= config.OFFER_DIRECT_ANSWER_HIGH_CONFIDENCE
                 if margin < config.OFFER_DIRECT_ANSWER_MARGIN and not high_confidence:
                     return None
 
@@ -3312,13 +3378,21 @@ class RagEngine:
         if top["metadata"].get("source") != "offer":
             return None
         # NEW: bonus-inflation-safe qualification (see config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE).
-        if top.get("embedding_score", top.get("combined_score", 0.0)) < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
+        # Phase 4: unmeasured (BM25-only) top also blocks the shortcut (None).
+        from core.freshness import qual_score as _qual_score
+        if getattr(config, "SCORE_GATES_EMBEDDING_ONLY", True):
+            _floor_emb = _qual_score(top)
+        else:
+            _floor_emb = top.get("embedding_score", top.get("combined_score", 0.0))
+        if _floor_emb is None or _floor_emb < config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE:
             log.debug(
-                "Stock direct answer blocked by embedding floor: query=%r emb=%.3f < %.3f",
-                query, top.get("embedding_score", 0.0), config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
+                "Stock direct answer blocked by embedding floor: query=%r emb=%s < %.3f",
+                query, _floor_emb, config.DIRECT_ANSWER_MIN_EMBEDDING_SCORE,
             )
             return None
-        if top["combined_score"] < config.OFFER_DIRECT_ANSWER_SCORE:
+        # Phase 4: qualification reads the raw embedding similarity only.
+        from core.freshness import qual_score as _qual_score
+        if (_qual_score(top) or 0.0) < config.OFFER_DIRECT_ANSWER_SCORE:
             return None
 
         title = top["metadata"].get("title") or ""
@@ -4159,13 +4233,24 @@ class RagEngine:
 
         self._last_retrieved = retrieved
 
-        best_score = max((r["combined_score"] for r in retrieved), default=0.0)
+        # Phase 4: qualification reads the raw embedding similarity via
+        # freshness.qual_score (None for BM25-only candidates, which gates
+        # skip). A fully unmeasured pool cannot be judged -- proceed without
+        # floor/refusal so pure-lexical matches are never refused for lack
+        # of a dense measurement.
+        from core.freshness import qual_score as _qual_score
+        _measured = [_qual_score(r) for r in retrieved]
+        _measured = [s for s in _measured if s is not None]
+        # Empty pool keeps the legacy 0.0 refusal semantics; a non-empty but
+        # fully unmeasured (BM25-only) pool skips the dense floors below.
+        best_score = (max(_measured) if _measured
+                      else (0.0 if not retrieved else None))
 
         # STRICTER refusal floor: even if the score clears the
         # soft MIN_RELEVANCE_SCORE used for routing, refuse outright
         # if it's below MIN_RELEVANCE_SCORE_STRICT — the context is
         # too weak to trust the LLM with.
-        if best_score < config.MIN_RELEVANCE_SCORE_STRICT:
+        if best_score is not None and best_score < config.MIN_RELEVANCE_SCORE_STRICT:
             log.warning(
                 "Strict refusal: query=%r best_score=%.3f < %.3f",
                 query, best_score, config.MIN_RELEVANCE_SCORE_STRICT,
@@ -4181,7 +4266,7 @@ class RagEngine:
         # (MIN_RELEVANCE_SCORE_STRICT <= best_score < RELEVANCE_CHECK_SCORE).
         # Catches cases where the retrieved doc passed the score floor
         # but is about a *different* topic than the query.
-        if best_score < config.RELEVANCE_CHECK_SCORE:
+        if best_score is not None and best_score < config.RELEVANCE_CHECK_SCORE:
             if not self._context_is_relevant(retrieved, query):
                 log.info(
                     "Relevance classifier rejected: query=%r best_score=%.3f",
@@ -4195,7 +4280,7 @@ class RagEngine:
 
         # Log a hallucination-risk warning when we're falling through
         # to the LLM with a mediocre score.
-        if best_score < config.HALLUCINATION_RISK_LOG_THRESHOLD:
+        if best_score is not None and best_score < config.HALLUCINATION_RISK_LOG_THRESHOLD:
             log.warning(
                 "Hallucination risk: query=%r best_score=%.3f < %.3f — LLM may fabricate",
                 query, best_score, config.HALLUCINATION_RISK_LOG_THRESHOLD,

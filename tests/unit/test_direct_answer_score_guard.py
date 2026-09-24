@@ -76,8 +76,10 @@ class TestFaqDirectAnswerEmbeddingFloor:
         assert result is None
 
     def test_allowed_when_both_above_thresholds(self):
-        """Both embedding floor AND combined threshold cleared -> answer returned."""
-        retrieved = [_faq_candidate(embedding_score=0.60, combined_score=0.90)]
+        """Phase 4 (fix/routing-and-freshness): qualification reads the raw
+        embedding similarity only -- embedding 0.90 clears the 0.85 shortcut
+        bar on its own; bonuses order but never qualify."""
+        retrieved = [_faq_candidate(embedding_score=0.90, combined_score=1.40)]
         result = _mk_engine()._get_faq_direct_answer(retrieved, "en", "query",
                                                      multi_item=False)
         assert result == "Test answer."
@@ -104,8 +106,8 @@ class TestOfferDirectAnswerEmbeddingFloor:
         assert result is None
 
     def test_allowed_when_above_floor(self):
-        """Genuine match (embedding 0.60, combined 1.00) allowed."""
-        retrieved = [_offer_candidate(embedding_score=0.60, combined_score=1.00)]
+        """Phase 4: genuine match qualifies on embedding alone (0.90 >= 0.85)."""
+        retrieved = [_offer_candidate(embedding_score=0.90, combined_score=1.40)]
         result = _mk_engine()._get_offer_direct_answer(retrieved, "en", "query",
                                                        multi_item=False)
         assert result is not None  # returns the formatted offer card line
@@ -121,8 +123,9 @@ class TestStockDirectAnswerEmbeddingFloor:
         assert result is None
 
     def test_allowed_when_above_floor(self):
-        """Uses "sold out" stock wording + high embedding + high combined."""
-        retrieved = [_offer_candidate(embedding_score=0.65, combined_score=1.10)]
+        """Phase 4: "sold out" stock wording + embedding 0.90 clearing the
+        shortcut bar on its own."""
+        retrieved = [_offer_candidate(embedding_score=0.90, combined_score=1.40)]
         result = _mk_engine()._get_stock_direct_answer(retrieved, "en",
                                                        "is this sold out")
         assert result is not None

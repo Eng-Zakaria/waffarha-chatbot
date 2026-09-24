@@ -241,3 +241,32 @@ Phase-2 zero-card contract with comments (not among the protected 4, which
 remain untouched and still failing). Final: 285 passed, same 4 pre-existing
 failures. Baseline post-Phase-3 (reports/verify/20260924_024327_phase3_check/):
 **identical 151/172, 0.481/0.796/0.585** (social matching doesn't touch scoring).
+
+## Phase 4 addendum (same branch): retrieval qualification on embedding only
+
+`SCORE_GATES_EMBEDDING_ONLY` (core/config.py, default true) + `qual_score()`
+(core/freshness.py): MIN pool floor, strict floor, relevance check + classifier,
+risk log, and all three direct-answer shortcuts (threshold AND margins, with
+strict unmeasured handling) read raw embedding similarity; combined_score orders
+only. Lexical hits are TOKEN matches on folded text (digits excluded — prices
+have their own bonus, now token-match on title + numeric equality on the price
+field, so "150" can't hit "1500"). BM25-only candidates carry
+embedding_score=None (0.5 kept as neutral ORDERING prior only): gates skip them
+instead of judging them; direct shortcuts never fire on them. Qdrant native
+date filter documented as infeasible without reindex (client Range float-only).
+Recovered mid-phase: None-embedding TypeError crash in the shortcut floors
+(now None-safe with exact legacy reproduction under the flag).
+
+Measured (reports/verify/20260924_162207_phase4_check/ vs .../phase4_check2/):
+**151/172 both, hit@k 0.796 flat, hit@1 0.481 -> 0.444 (DOWN 0.037), mrr
+0.585 -> 0.569.** Honest negative: the target signal did NOT materialize.
+Post-mortem: ordering still uses combined_score, and the token-lexical +
+digit-exclusion changes shrank the very bonuses that were putting several
+expected docs at rank 1 — bonuses were helping rank-1 on this suite more than
+hurting it. Gates are now principled (no weak-match qualification; refusal
+paths read uninflated scores — e.g. باشا now refuses at embedding 0.444), but
+rank-1 selection per se wants ordering work, not gate work: input for the
+turn_router design decision. Acceptance: 38 passed, 2 skipped, 15 xfailed
+(basha-cascade reason updated to embedding-floor refusal; all else stable).
+Unit set: 3 direct-answer guard tests updated to the embedding-only contract
+(blocked-cases pass unchanged); final 285 passed, same 4 pre-existing failures.
