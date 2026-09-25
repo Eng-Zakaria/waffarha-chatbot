@@ -246,6 +246,7 @@
   .msg-row.user .bubble-wrap{ align-items:flex-end; }
   .bubble{
     padding:12px 15px; border-radius:16px; font-size:14.5px; line-height:1.55;
+    overflow-wrap:break-word; white-space:pre-wrap;
   }
   .msg-row.bot .bubble{ background:var(--surface); border:1px solid var(--peach-line); border-start-start-radius:5px; }
   .msg-row.user .bubble{ background:var(--orange); color:#fff; border-start-end-radius:5px; }
@@ -729,6 +730,16 @@ const backdrop = document.getElementById('backdrop');
 function formatMessage(raw){
   let html = raw
     .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    // Linkify bare URLs (backend answers embed waffarha.com offer links as
+    // plain text) -- after escaping so inserted quotes can't break out.
+    .replace(/(https?:\/\/[^\s<]+|www\.[^\s<]+)/g, (m=>{
+      const href = m.startsWith('www.') ? 'https://' + m : m;
+      const trail = m.match(/[.,;:!?)\]]+$/);
+      const clean = trail ? m.slice(0, -trail[0].length) : m;
+      const cleanHref = trail ? href.slice(0, -trail[0].length) : href;
+      const tail = trail ? trail[0] : '';
+      return `<a href="${cleanHref}" target="_blank" rel="noopener noreferrer">${clean}</a>${tail}`;
+    }))
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   const lines = html.split("\n");
   let out = ""; let inList = false;
@@ -946,10 +957,23 @@ function renderOfferCards(row, offers) {
         if (hasDiscount) {
             html += `<div class="offer-discount">${isAr ? '🔥 خصم' : '🔥 Save'} ${escapeHtml(discount)}</div>`;
         }
-        if (offer.url) {
-            html += `<div class="offer-expiry"><a href="${escapeHtml(offer.url)}" target="_blank" rel="noopener noreferrer">📍 🔗 ${isAr ? 'رابط العرض' : 'Offer link'}</a></div>`;
-        } else if (offer.expiry) {
-            html += `<div class="offer-expiry">${isAr ? 'صالح حتى' : 'Valid until'} ${escapeHtml(offer.expiry)}</div>`;
+        // Every card links out: prefer the backend URL, else rebuild it from
+        // the offer id with Waffarha's /o-<id> pattern (same as _offer_url).
+        // Expiry (when known) stays visible next to the link.
+        let link = offer.url || '';
+        if (!link && offer.id != null && offer.id !== '') {
+            link = `https://waffarha.com/${isAr ? 'ar' : 'en'}/o-${encodeURIComponent(offer.id)}`;
+        }
+        if (link || offer.expiry) {
+            html += `<div class="offer-expiry">`;
+            if (offer.expiry) {
+                html += `${isAr ? 'صالح حتى' : 'Valid until'} ${escapeHtml(offer.expiry)}`;
+            }
+            if (link) {
+                if (offer.expiry) html += ` &nbsp; `;
+                html += `<a href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">📍 🔗 ${isAr ? 'رابط العرض' : 'Offer link'}</a>`;
+            }
+            html += `</div>`;
         }
         card.innerHTML = html;
         container.appendChild(card);
@@ -1058,6 +1082,7 @@ async function streamBotMessageLive(userText){
   let sources = [];
   let suggestions = [];
   let sawError = false;
+  let sawToken = false;
   let responseType = 'text';
   let offers = [];
 
@@ -1130,9 +1155,17 @@ async function streamBotMessageLive(userText){
         sources = data.sources || [];
         suggestions = data.suggestions || [];
       } else if(eventName === 'token'){
+        sawToken = true;
         full += data.text;
-        bubbleEl.textContent = full; // plain text while streaming, formatted on finalize
+        bubbleEl.textContent = full; // pre-wrap CSS keeps line breaks live, formatted on finalize
         chatScroll.scrollTop = chatScroll.scrollHeight;
+      } else if(eventName === 'status'){
+        // Agent server (:8001) progress phases (understanding -> searching -> respond).
+        // Shown only until the first real token arrives; :8000 never sends these.
+        if(!sawToken && data.text){
+          bubbleEl.textContent = data.text;
+          chatScroll.scrollTop = chatScroll.scrollHeight;
+        }
       } else if(eventName === 'error'){
         sawError = true;
         full = data.message || (CHAT_API_ERROR[lang] || CHAT_API_ERROR.en);
