@@ -4,98 +4,98 @@
     "question_en": "What does the order status \"Paid\" mean?",
     "answer_en": "Your payment for this order was received and confirmed.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"تم الدفع\"؟",
-    "answer_ar": "تم استلام وتأكيد دفعتك لهذا الطلب.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"تم الدفع\"ØŸ",
+    "answer_ar": "ØªÙ… Ø§Ø³ØªÙ„Ø§Ù… ÙˆØªØ£ÙƒÙŠØ¯ Ø¯ÙØ¹ØªÙƒ Ù„Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_2",
     "question_en": "What does the order status \"In Process\" mean?",
     "answer_en": "Your order has been confirmed and is currently being processed.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"جارى التنفيذ\"؟",
-    "answer_ar": "تم تأكيد طلبك وجارٍ تنفيذه حاليًا.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"جارى التنفيذ\"ØŸ",
+    "answer_ar": "ØªÙ… ØªØ£ÙƒÙŠØ¯ Ø·Ù„Ø¨Ùƒ ÙˆØ¬Ø§Ø±Ù ØªÙ†ÙÙŠØ°Ù‡ Ø­Ø§Ù„ÙŠÙ‹Ø§.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_3",
     "question_en": "What does the order status \"Used\" mean?",
     "answer_en": "This coupon has already been redeemed.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"مستعمل\"؟",
-    "answer_ar": "تم استخدام هذا الكوبون بالفعل.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"مستعمل\"ØŸ",
+    "answer_ar": "ØªÙ… Ø§Ø³ØªØ®Ø¯Ø§Ù… Ù‡Ø°Ø§ Ø§Ù„ÙƒÙˆØ¨ÙˆÙ† Ø¨Ø§Ù„ÙØ¹Ù„.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_5",
     "question_en": "What does the order status \"Canceled\" mean?",
     "answer_en": "This order or coupon has been canceled.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"ملغى\"؟",
-    "answer_ar": "تم إلغاء هذا الطلب أو الكوبون.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"ملغى\"ØŸ",
+    "answer_ar": "ØªÙ… Ø¥Ù„ØºØ§Ø¡ Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨ Ø£Ùˆ Ø§Ù„ÙƒÙˆØ¨ÙˆÙ†.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_6",
     "question_en": "What does the order status \"Refund\" mean?",
     "answer_en": "This order has been refunded.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"مرتجع\"؟",
-    "answer_ar": "تم استرداد قيمة هذا الطلب.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"مرتجع\"ØŸ",
+    "answer_ar": "ØªÙ… Ø§Ø³ØªØ±Ø¯Ø§Ø¯ Ù‚ÙŠÙ…Ø© Ù‡Ø°Ø§ Ø§Ù„Ø·Ù„Ø¨.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_7",
     "question_en": "What does the order status \"Pending\" mean?",
     "answer_en": "Your order is awaiting payment confirmation.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"معلق\"؟",
-    "answer_ar": "طلبك في انتظار تأكيد الدفع.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"معلق\"ØŸ",
+    "answer_ar": "Ø·Ù„Ø¨Ùƒ ÙÙŠ Ø§Ù†ØªØ¸Ø§Ø± ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø¯ÙØ¹.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_8",
     "question_en": "What does the order status \"Waiting\" mean?",
     "answer_en": "Your order is on hold, awaiting a further step before it can proceed.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"انتظار\"؟",
-    "answer_ar": "طلبك في وضع الانتظار قبل استكمال الخطوات التالية.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"انتظار\"ØŸ",
+    "answer_ar": "Ø·Ù„Ø¨Ùƒ ÙÙŠ ÙˆØ¶Ø¹ Ø§Ù„Ø§Ù†ØªØ¸Ø§Ø± Ù‚Ø¨Ù„ Ø§Ø³ØªÙƒÙ…Ø§Ù„ Ø§Ù„Ø®Ø·ÙˆØ§Øª Ø§Ù„ØªØ§Ù„ÙŠØ©.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_9",
     "question_en": "What does the order status \"V Pending\" mean?",
     "answer_en": "Your order is in a pending verification state.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"معلق\"؟",
-    "answer_ar": "طلبك في مرحلة انتظار التحقق.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"معلق\"ØŸ",
+    "answer_ar": "Ø·Ù„Ø¨Ùƒ ÙÙŠ Ù…Ø±Ø­Ù„Ø© Ø§Ù†ØªØ¸Ø§Ø± Ø§Ù„ØªØ­Ù‚Ù‚.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_10",
     "question_en": "What does the order status \"Expired\" mean?",
     "answer_en": "This coupon's validity period has passed and it can no longer be used.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"منتهي الصلاحية\"؟",
-    "answer_ar": "انتهت صلاحية هذا الكوبون ولم يعد صالحًا للاستخدام.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"منتهي الصلاحية\"ØŸ",
+    "answer_ar": "Ø§Ù†ØªÙ‡Øª ØµÙ„Ø§Ø­ÙŠØ© Ù‡Ø°Ø§ Ø§Ù„ÙƒÙˆØ¨ÙˆÙ† ÙˆÙ„Ù… ÙŠØ¹Ø¯ ØµØ§Ù„Ø­Ù‹Ø§ Ù„Ù„Ø§Ø³ØªØ®Ø¯Ø§Ù….",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_11",
     "question_en": "What does the order status \"In Refund Process\" mean?",
     "answer_en": "Your refund has been initiated and is currently being processed.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"جاري الاسترجاع\"؟",
-    "answer_ar": "تم بدء عملية استرداد قيمة طلبك وجارٍ تنفيذها.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"جاري الاسترجاع\"ØŸ",
+    "answer_ar": "ØªÙ… Ø¨Ø¯Ø¡ Ø¹Ù…Ù„ÙŠØ© Ø§Ø³ØªØ±Ø¯Ø§Ø¯ Ù‚ÙŠÙ…Ø© Ø·Ù„Ø¨Ùƒ ÙˆØ¬Ø§Ø±Ù ØªÙ†ÙÙŠØ°Ù‡Ø§.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   },
   {
     "id": "purchasing_status_12",
     "question_en": "What does the order status \"Fawry Pending\" mean?",
     "answer_en": "Your payment via Fawry has not yet been confirmed.",
     "category": "purchase_status",
-    "question_ar": "ماذا تعني حالة الطلب \"فوري بيندنج\"؟",
-    "answer_ar": "لم يتم تأكيد الدفع عبر فوري حتى الآن.",
-    "category_ar": "حالة الطلب"
+    "question_ar": "Ù…Ø§Ø°Ø§ ØªØ¹Ù†ÙŠ Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨ \"فوري بيندنج\"ØŸ",
+    "answer_ar": "Ù„Ù… ÙŠØªÙ… ØªØ£ÙƒÙŠØ¯ Ø§Ù„Ø¯ÙØ¹ Ø¹Ø¨Ø± ÙÙˆØ±ÙŠ Ø­ØªÙ‰ Ø§Ù„Ø¢Ù†.",
+    "category_ar": "Ø­Ø§Ù„Ø© Ø§Ù„Ø·Ù„Ø¨"
   }
 ]

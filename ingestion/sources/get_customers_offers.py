@@ -42,6 +42,7 @@ def fetch_offers_fct_coupons(client, user_id: int, limit: int = 50, status: int 
     # Use f-string for the optional status clause (no ClickHouse type annotations there);
     # all literal parameters go through the parameters dict so clickhouse-connect
     # handles {param:Type} syntax without Python's str.format() interfering.
+    db = _cfg.CLICKHOUSE_DATABASE
     status_filter = f"AND c.coupon_status = {{status:Int32}}" if status is not None else ""
     query = f"""
         SELECT
@@ -56,9 +57,9 @@ def fetch_offers_fct_coupons(client, user_id: int, limit: int = 50, status: int 
             o.offer_brief_en,
             o.offer_brief_ar,
             p.part_name_en
-        FROM main.fct_coupons AS c
-        LEFT JOIN main.dim_offers AS o ON c.offer_id = o.offer_id
-        LEFT JOIN main.dim_partners AS p ON c.partner_id = p.part_id
+        FROM {db}.fct_coupons AS c
+        LEFT JOIN {db}.dim_offers AS o ON c.offer_id = o.offer_id
+        LEFT JOIN {db}.dim_partners AS p ON c.partner_id = p.part_id
         WHERE c.user_id = {{user_id:Int32}}
         {status_filter}
         ORDER BY c.created_at DESC
@@ -76,6 +77,7 @@ def fetch_offers_coupons_new(client, user_id: int, limit: int = 50, status: int 
     Query the legacy table (coupons_new) — uses users_id instead of user_id,
     and no direct partner join available in this schema.
     """
+    db = _cfg.CLICKHOUSE_DATABASE
     status_filter = f"AND c.coupon_status = {{status:Int32}}" if status is not None else ""
     query = f"""
         SELECT
@@ -89,8 +91,8 @@ def fetch_offers_coupons_new(client, user_id: int, limit: int = 50, status: int 
             c.discount,
             o.offer_brief_en,
             o.offer_brief_ar
-        FROM main.coupons_new AS c
-        LEFT JOIN main.dim_offers AS o ON c.offer_id = o.offer_id
+        FROM {db}.coupons_new AS c
+        LEFT JOIN {db}.dim_offers AS o ON c.offer_id = o.offer_id
         WHERE c.users_id = {{user_id:Int32}}
         {status_filter}
         ORDER BY c.created DESC

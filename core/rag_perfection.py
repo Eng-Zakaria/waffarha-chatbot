@@ -195,9 +195,11 @@ def classify_intent_robust(query: str, client: Any = None, llm_model: str = "qwe
         except Exception as e:
             log.warning(f"Zero-shot intent classification failed: {e}, falling back to heuristics.")
 
-    # Fallback heuristic rules
-    is_faq = any(w in q_lower for w in ["how do i", "how to", "what is", "payment", "refund", "bill", "register", "login", "كيف", "طريقة", "دفع", "استرداد", "تسجيل", "حساب", "فاتورة", "إزاي"])
-    is_offer = any(w in q_lower for w in ["offer", "deal", "discount", "price", "coupon", "عرض", "عروض", "خصم", "سعر", "بكام", "كام"])
+    # Fallback heuristic rules (normalized: hamza/ya/ta-marbuta folded so
+    # one-letter spelling variants can't flip the verdict by themselves)
+    nq = _fold_keyword_text(q_lower)
+    is_faq = any(w in nq for w in _FAQ_HINT_WORDS)
+    is_offer = any(w in nq for w in _OFFER_HINT_WORDS)
 
     # If query is primarily about HOW TO do something (faq), route there even if it mentions offers/coupons
     if is_faq and not is_offer:
@@ -206,3 +208,118 @@ def classify_intent_robust(query: str, client: Any = None, llm_model: str = "qwe
     if is_faq and is_offer:
         return INTENT_FAQ_INQUIRY
     return INTENT_OFFER_LOOKUP
+
+
+# ==============================================================================
+# FAQ-vs-OFFER understanding judge (meaning, not keywords)
+# ==============================================================================
+# Keyword lists alone can never "understand" a question: Egyptian-dialect
+# spelling variants (سياسة/سياسه، ازاي/ازاى، طريقة/طريقه) and generic words
+# (coupon, عايز, ازاي) flip a pure keyword verdict with a single letter.
+# So keywords are only the FAST PATH for clear cases; anything mixed or
+# signal-less goes to a tiny LLM judge that reads MEANING (with few-shot
+# Egyptian examples), cached per normalized query so repeats are free and a
+# failure/timeout falls back to the keyword verdict instead of failing.
+
+# Matched against _fold_keyword_text() output, so each entry needs only ONE
+# spelling -- variants fold to the same form before matching.
+_FAQ_HINT_WORDS = [
+    "how do i", "how to", "what is", "what are", "how does",
+    "payment", "refund", "bill", "register", "login", "cashback",
+    "policy", "policies", "status", "account",
+    "كيف", "طريقه", "دفع", "استرداد", "استرجاع", "تسجيل", "حساب",
+    "فاتوره", "ازاي", "سياسه", "كاش باك", "كاشباك", "يعني ايه",
+    "حاله", "مستعمل", "استخدام", "معني", "شراء", "اشتري",
+    "فودافون", "فوري", "تقسيط", "محفظه",
+]
+_OFFER_HINT_WORDS = [
+    "offer", "deal", "discount", "price", "cheapest", "compare",
+    "عرض", "عروض", "خصم", "سعر", "بكام", "كام", "ارخص", "قارن",
+    "مطعم", "شاورما", "بيتزا", "برجر",
+]
+
+
+def _fold_keyword_text(text: str) -> str:
+    """Fold Arabic spelling variants for keyword matching: hamza forms -> ا,
+    ى -> ي, ة -> ه, diacritics stripped, lowercase. Applied to BOTH the query
+    and (implicitly, via single-spelling lists) the keywords, so سياسة/سياسه,
+    ازاي/ازاى, طريقة/طريقه all match the same entry."""
+    s = (text or "").lower()
+    s = s.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    s = s.replace("ى", "ي").replace("ة", "ه")
+    s = re.sub(r"[ً-ْٰـ]", "", s)
+    return s
+
+
+_JUDGE_SYSTEM_PROMPT = (
+    "You classify customer messages for the Waffarha deals assistant. "
+    "Reply with EXACTLY one word: FAQ, OFFER, or MIXED.\n"
+    "- FAQ: the customer asks HOW to do something or about policies: buying steps, "
+    "paying, using or refunding coupons, order status meaning, cashback, account, bills.\n"
+    "- OFFER: the customer wants to FIND, SHOW, or COMPARE deals, merchants, products, or prices.\n"
+    "- MIXED: asks for both at once.\n"
+    "Decide by MEANING, ignoring spelling mistakes and Egyptian dialect variants.\n"
+    "Examples:\n"
+    "'ازاي اشتري من وفرها؟' -> FAQ\n"
+    "'عايز عرض شاورما' -> OFFER\n"
+    "'ايه سياسه الاسترجاع؟' -> FAQ\n"
+    "'What payment method are available?' -> FAQ\n"
+    "'compare kfc and pizza hut' -> OFFER\n"
+    "'عايز اعرف طريقة الدفع' -> FAQ\n"
+    "'what is cheapest offer?' -> OFFER\n"
+    "'يعني ايه حالة مستعمل؟' -> FAQ\n"
+    "Reply with only the word."
+)
+
+_JUDGE_CACHE: dict = {}
+_JUDGE_CACHE_SIZE = 500
+
+
+def _judge_cache_key(query: str) -> str:
+    return _fold_keyword_text(query).strip()
+
+
+def judge_faq_vs_offer(query: str, client: Any = None,
+                       llm_model: str = "qwen2.5:3b-instruct",
+                       timeout: int = 12) -> str:
+    """Return 'faq', 'offer', or 'mixed' by MEANING.
+
+    Clear keyword cases answer instantly; mixed/signal-less queries go to the
+    small LLM judge (cached). Any failure falls back to the keyword verdict --
+    the judge can only ever upgrade understanding, never break retrieval.
+    """
+    q = (query or "").strip()
+    if not q:
+        return "mixed"
+    key = _judge_cache_key(q)
+    if key in _JUDGE_CACHE:
+        return _JUDGE_CACHE[key]
+
+    nq = _fold_keyword_text(q.lower())
+    is_faq = any(w in nq for w in _FAQ_HINT_WORDS)
+    is_offer = any(w in nq for w in _OFFER_HINT_WORDS)
+    fast = "faq" if (is_faq and not is_offer) else ("offer" if (is_offer and not is_faq) else "mixed")
+
+    verdict = fast
+    if fast == "mixed" and client is not None:
+        try:
+            resp = client.chat(
+                model=llm_model,
+                messages=[
+                    {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Query: {q}"},
+                ],
+                stream=False,
+                options={"num_predict": 8, "temperature": 0.0},
+            )
+            raw = (resp.get("message", {}).get("content") or "").strip().upper().split()
+            word = raw[0] if raw else ""
+            if word in ("FAQ", "OFFER", "MIXED"):
+                verdict = word.lower()
+        except Exception as e:  # noqa: BLE001 -- judge is advisory; fall back silently
+            log.warning(f"FAQ/OFFER judge failed, keeping keyword verdict: {e}")
+
+    _JUDGE_CACHE[key] = verdict
+    while len(_JUDGE_CACHE) > _JUDGE_CACHE_SIZE:
+        _JUDGE_CACHE.pop(next(iter(_JUDGE_CACHE)))
+    return verdict

@@ -74,9 +74,10 @@ A production-ready customer support chat widget for [Waffarha](https://waffarha.
 | `core/identity.py` | Trusted user_id resolution from request | `IdentityResolver`, `get_identity_resolver()` |
 | `personal/personal_queries.py` | Live ClickHouse queries for user-specific data | `is_personal_query()`, `answer_personal_query()` |
 | `catalog/catalog_queries.py` | Live ClickHouse queries for public catalog data | `is_catalog_query()`, `CatalogQueryService` |
-| `ingestion/loaders/build_index.py` | Build vector indexes from `data/*.json` | CLI: `python ingestion/loaders/build_index.py` |
-| `ingestion/sources/fetch_offers.py` | Scrape live offers from Waffarha mobile API | CLI: `python ingestion/sources/fetch_offers.py` |
-| `ingestion/sources/fetch_*_clickhouse.py` | ClickHouse-based data fetchers | Various fetch scripts |
+| `ingestion/refresh.py` | Canonical entry point -- fetch from ClickHouse + build/rebuild index | CLI: `python ingestion/refresh.py` |
+| `ingestion/loaders/build_index.py` | Build vector indexes from `data/*.json` + write index manifest | CLI: `python ingestion/loaders/build_index.py` |
+| `ingestion/loaders/index_manifest.py` | Shared index manifest format / helpers | Used by build_index*.py + manifest check in RagEngine |
+| `ingestion/sources/fetch_*_clickhouse.py` | ClickHouse-based source fetchers (offers, partners, type_price …) | Driven by `ingestion/refresh.py` |
 | `tests/manual_test_runner.py` | Manual verification of Perfection Pillars | CLI: `python tests/manual_test_runner.py` |
 | `eval/run_eval.py` | Run `queries.json` eval suite against RagEngine | CLI: `python eval/run_eval.py` |
 | `eval/queries.json` | 100+ eval test cases with assertions | Test cases: `expected_source`, `expected_id`, keywords |
@@ -122,7 +123,7 @@ docker run -d --name waffarha-redis -p 6379:6379 redis:7-alpine
 ```bash
 copy .env.example .env    # Windows
 # cp .env.example .env    # macOS/Linux
-# Edit .env — WAFFARHA_SECURITY_KEY required for offer fetching
+# Edit .env — OLLAMA_MODEL, CLICKHOUSE_* (only needed to re-run ingestion)
 ```
 
 ### 4. Run the Server
@@ -133,7 +134,8 @@ uvicorn app:app --reload --port 8000
 
 Open **http://localhost:8000** — the chat widget loads from `static/` and talks to the real backend.
 
-> First message takes ~10–30s (embedding model loads, Ollama warms up). Subsequent responses are fast.
+> First message takes ~30–60s on a CPU-only host (embedding model load
+> measured at ~47s here; Ollama warm-up on top). Subsequent responses are fast.
 
 ---
 
@@ -184,11 +186,11 @@ Open **http://localhost:8000**.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `EMBEDDING_DEVICE` | `cpu` | `cpu` or `cuda` |
-| `EMBEDDING_MODEL` | `intfloat/multilingual-e5-large` | HF model for embeddings |
+| `EMBEDDING_MODEL` | `BAAI/bge-m3` | Embedding model (must match the built index) |
 | `OLLAMA_MODEL` | `qwen2.5:3b-instruct` | Ollama model tag |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama server URL |
 | `OLLAMA_NUM_CTX` | `1536` | Context window for generation |
-| `VECTOR_BACKEND` | `faiss` | `faiss` \| `chroma` \| `qdrant` \| `lancedb` \| `pgvector` |
+| `VECTOR_STORE_BACKEND` | `qdrant` | `faiss` \| `chroma` \| `qdrant` \| `lancedb` \| `pgvector` |
 | `INDEX_DIR` | `data/index/<model>/<backend>/` | Auto-computed from embedding model + backend |
 | `MIN_RELEVANCE_SCORE` | `0.30` | Cosine similarity floor |
 | `MIN_RELEVANCE_SCORE_STRICT` | `0.45` | Hard refusal floor |
@@ -197,19 +199,68 @@ Open **http://localhost:8000**.
 | `INTENT_BONUS_WEIGHT` | `0.18` | Intent classification soft bonus |
 | `ENTITY_MATCH_BONUS` | `0.40` | Bonus when query mentions known merchant |
 | `TITLE_MATCH_BONUS` | `0.50` | Per-query-word title match bonus |
-| `FAQ_DIRECT_ANSWER_SCORE` | `0.65` | FAQ template shortcut trigger |
-| `OFFER_DIRECT_ANSWER_SCORE` | `0.65` | Offer template shortcut trigger |
-| `MEMORY_BACKEND` | `redis` | `redis` \| `local` (dev only, no Redis needed) |
+| `FAQ_DIRECT_ANSWER_SCORE` | `0.85` | FAQ template shortcut trigger |
+| `OFFER_DIRECT_ANSWER_SCORE` | `0.85` | Offer template shortcut trigger |
+| `DIRECT_ANSWER_MIN_EMBEDDING_SCORE` | `0.55` | Embedding-score floor before FAQ/offer/stock direct answers fire (blocks bonus-inflated `combined_score` from short-circuiting) |
+| `MEMORY_BACKEND` | `redis` | `redis` \| `local` (dev only, no Redis needed) — also drives `SessionManager` (catalog compare) |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
-| `IDENTITY_BACKEND` | `static` | `static` \| `header` \| `session` |
+| `IDENTITY_BACKEND` | `static` | `static` (demo) \| `header` \| `session` \| `auth` (**production-safe**) |
+| `IDENTITY_HEADER` | `X-User-ID` | Identity header name (`header`/`auth` backends) |
+| `SESSION_COOKIE_NAME` | `session_id` | Session cookie/bearer name (`session` backend) |
+| `AUTH_SIGNING_SECRET` | *(empty)* | HMAC secret for `auth` backend; empty ⇒ refuse all personal queries |
+| `AUTH_SIGNATURE_HEADER` | `X-User-Auth` | Signature header (`<expiry>:<hmac>`) for `auth` backend |
+| `AUTH_CLOCK_SKEW_SECONDS` | `300` | Expiry tolerance for `auth` backend tokens |
 | `STATIC_TEST_USER_ID` | `0` | Test user ID for `static` backend |
 | `CLICKHOUSE_HOST` | `localhost` | ClickHouse HTTP host |
 | `CLICKHOUSE_PORT` | `8123` | ClickHouse HTTP port |
-| `PERSONAL_QUERIES_ENABLED` | `true` | Enable live ClickHouse personal queries |
+| `PERSONAL_QUERIES_ENABLED` | `false` | Enable live ClickHouse personal queries (only with a trusted identity backend) |
 | `CATALOG_QUERIES_ENABLED` | `true` | Enable live ClickHouse catalog queries |
-| `WAFFARHA_SECURITY_KEY` | *(required)* | API key for offer fetching scripts |
+| `DIRECT_ANSWER_MIN_EMBEDDING_SCORE` | `0.55` | Floor on raw embedding similarity before FAQ/offer/stock direct answers may fire |
 | `MAX_CONCURRENT_GENERATIONS` | `4` | Max parallel Ollama generation slots |
 | `GENERATION_QUEUE_TIMEOUT` | `30` | Seconds before 503 on queue overflow |
+
+---
+
+## Identity & session memory
+
+**Identity** (`core/identity.py`) is the *only* source of a trusted `user_id`,
+and every "my coupons / my orders" personal query is scoped by whatever it
+resolves — never by client input.
+
+- `IDENTITY_BACKEND=static` — fixed test user. **Demo only.**
+- `IDENTITY_BACKEND=header` — reads `X-User-ID` set by an auth proxy. Only if
+  this service is never exposed directly to clients (no verification).
+- `IDENTITY_BACKEND=session` — resolves a session cookie/bearer token against
+  a server-side Redis session store shared with a login service.
+- `IDENTITY_BACKEND=auth` — **the production-safe option.** The auth layer
+  validates the user's session, then injects two signed headers:
+
+  ```
+  X-User-ID:   <user_id>
+  X-User-Auth: <expiry_unix_ts>:<hex hmac-sha256("<user_id>:<expiry_unix_ts>")>
+  ```
+
+  signed with the shared `AUTH_SIGNING_SECRET` (see `make_auth_headers()` in
+  `core/identity.py`). The app verifies the signature (constant-time) and the
+  expiry, so the endpoint doesn't need to be firewalled away from clients.
+  **Fail-closed:** unset secret, or missing / tampered / expired token ⇒ the
+  personal-data layer simply refuses. Generate a secret with
+  `python -c "import secrets;print(secrets.token_hex(32))"`.
+
+Because personal queries are gated on a trusted identity, `PERSONAL_QUERIES_ENABLED`
+defaults to **off** — enable it explicitly once a real identity backend is
+configured for your deployment.
+
+**Session memory** (offers/FAQs actually shown per session, and recent turns)
+lives in `memory/memory.py` and `session/session_manager.py` (catalog
+comparison). Both honor `MEMORY_BACKEND`:
+
+- `MEMORY_BACKEND=redis` — shared across workers/replicas, survives restarts.
+- `MEMORY_BACKEND=local` — in-process dict, no Redis needed for dev/tests.
+
+Memory keys are namespaced under the resolved `user_id` (`u<uid>:<session_id>`)
+so a client-supplied `session_id` shared across users (same browser/device or
+a guessed string) never leaks another user's remembered offers or turns.
 
 ---
 
@@ -225,43 +276,51 @@ data/
 ├── type_prices.json             # Offer type → price mappings
 ├── faqs_purchasing_status.json  # Purchasing status FAQs
 └── index/                       # Built vector indexes (auto-generated)
-    └── intfloat__multilingual-e5-large/
+    └── BAAI__bge-m3/
         ├── faiss/               # FAISS index
+        ├── qdrant/              # Qdrant collection (embedded folder mode)
         └── bm25.pkl             # BM25 lexical index (if hybrid enabled)
 ```
 
-### Building Indexes
+### Building & Refreshing Indexes (single entry point)
+
+The whole pipeline — fetch every source from ClickHouse, then build/rebuild the
+index and its `index_manifest.json` — is one command (see
+[INGESTION.md](INGESTION.md) for lineage, cadence, and CLI reference):
 
 ```bash
-# Build index (uses EMBEDDING_MODEL + VECTOR_BACKEND from .env)
-python ingestion/loaders/build_index.py
+# Fetch all sources from ClickHouse + build the index
+python ingestion/refresh.py
 
-# Specify backend explicitly
-python ingestion/loaders/build_index.py --backend faiss
-python ingestion/loaders/build_index.py --backend chroma
+# Rebuild from already-fetched data/ files (no ClickHouse connection needed)
+python ingestion/refresh.py --skip-fetch
 
-# Incremental build (only embeds changed docs)
-python ingestion/loaders/build_index_incremental.py
+# Dry-run: show lineage / freshness report, write/change nothing
+python ingestion/refresh.py --plan
+
+# Retired in Phase 4: the mobile-API scrape (ingestion/sources/fetch_offers.py)
+# and the dead sync tool (ingestion/sync_clickhouse.py) are gone -- all index
+# sources come from ClickHouse.
+# Note: ingestion/sources/get_customers_offers.py is a DIAGNOSTIC script for
+# per-user coupon debugging, NOT an index source; it is not part of refresh.py.
 ```
 
-Indexes are written to `data/index/<embedding_model>/<backend>/`.
-
-### Refreshing Offers
+Under the hood `refresh.py` drives the individual steps, which you can also run
+standalone:
 
 ```bash
-# Fetch fresh offers from Waffarha mobile API (requires WAFFARHA_SECURITY_KEY)
-python ingestion/sources/fetch_offers.py
-
-# Or use ClickHouse-based fetchers (requires ClickHouse credentials in .env)
-python ingestion/sources/fetch_offers_clickhouse.py
-python ingestion/sources/fetch_partners_clickhouse.py
+python ingestion/sources/fetch_offers_clickhouse.py     # -> data/offers_raw.json
+python ingestion/sources/fetch_partners_clickhouse.py   # -> data/partners/partners.json
 python ingestion/sources/fetch_payment_methods_clickhouse.py
 python ingestion/sources/fetch_purchasing_status_clickhouse.py
 python ingestion/sources/fetch_type_price_clickhouse.py
-python ingestion/sources/get_customers_offers.py
+python ingestion/loaders/build_index.py                 # full rebuild (embeds everything)
+python ingestion/loaders/build_index_incremental.py     # only changed docs
+```
 
-# Sync all ClickHouse data
-python ingestion/transformers/sync_clickhouse.py
+Indexes are written to `data/index/<embedding_model>/<backend>/` with an
+`index_manifest.json` in each directory; `RagEngine` logs a warning at load if
+the stored manifest's model/backend don't match what the engine was asked for.
 
 # Then rebuild index
 python ingestion/loaders/build_index.py
@@ -294,6 +353,28 @@ eval/results/<timestamp>_tag/
 ├── full.json     # Complete per-query results (retrieval scores, generation, assertions)
 └── summary.csv   # Spreadsheet-friendly: id, category, query, pass/fail, latency
 ```
+
+### Retrieval-Only Baseline (Phase 3)
+
+Deterministic, LLM-free checkpoint of pure embedding+search correctness against the
+prebuilt index. No Ollama needed; roughly 3–4 min plus engine load.
+
+```bash
+python -c "import os"  # ensure PYTHONIOENCODING=utf-8 on Windows for Arabic output
+python utils/run_full_eval.py --retrieval-only --queries eval/queries.json --out-dir reports/phase3 --tag phase3_baseline
+```
+
+Fresh baseline (2026-09-14, HEAD aede429): **146/172 checked passed (225 total, 0 errors),
+hit@1=0.333, hit@k=0.667, mrr=0.468** — output under
+`reports/phase3/20260914_091409_phase3_baseline/`. The `hit@1=0.333` figure
+(open-pair-rerank + combined-score bonuses) is the real retrieval ceiling; the
+historical `80% / 58.1% / 4.1%` numbers predate the current architecture and are
+not reproducible. Phase 3 also fixed direct-answer score inflation: the FAQ/offer/stock
+shortcuts now require an unbonused embedding score ≥ `DIRECT_ANSWER_MIN_EMBEDDING_SCORE`
+(every genuinely confident FAQ match in the baseline sat above 0.55), and the
+unmatched-brand / out-of-scope / PILLAR-3 guardrails run before personal & catalog
+short-circuits instead of after. Post-fix baseline run is identical
+(`reports/phase3/20260914_095745_phase3_after/`): ranking code was untouched.
 
 ### CI Integration
 
@@ -329,6 +410,28 @@ Exit code is **1 if any assertion fails** — wire directly into CI:
 python tests/manual_test_runner.py
 ```
 
+### Agentic Intelligence Layer
+
+Live drivers for the agent (`agent/engine.py` + tools) against the real RAG
+engine. Both need Ollama running (`qwen2.5:3b-instruct`); set
+`AGENT_MODEL_OVERRIDE` to test another model. UTF-8 output requires
+`PYTHONIOENCODING=utf-8` on Windows.
+
+```bash
+# Continuous REPL: per-turn goal/plan/tools/decision trace + latency + SAFE
+# decisions. Session state (history + recent_offers) is preserved turn to turn,
+# so follow-ups like "cheaper than this" resolve against actually shown offers.
+$env:PYTHONIOENCODING="utf-8"; venv\Scripts\python.exe tests\manual_agent.py
+
+# Stage-4 live eval: replays a seeded 12-turn corpus (Arabic/Franco/English,
+# similar, cross-merchant, prompts-injection, sub-15-EGP hard filter) and, per
+# turn, measures budget-exhaustion (tight-vs-wide LLM budget drift + honesty
+# note), unnecessary-tool-call rate, and per-stage latency by
+# (tool_calls, replan_count). Outputs JSON + CSV.
+$env:PYTHONIOENCODING="utf-8"; venv\Scripts\python.exe tests\eval\stage4_agent_eval.py
+#   [--out path\stage4_X.json] [--csv path\stage4_X.csv] [--no-probe] [--limit N]
+```
+
 ---
 
 ## Model Performance Reference
@@ -339,8 +442,8 @@ python tests/manual_test_runner.py
 |-------|------------|------|-------|
 | `intfloat/multilingual-e5-small` | 384 | ~130MB | Fast, decent Arabic |
 | `intfloat/multilingual-e5-base` | 768 | ~430MB | Sweet spot for AR+EN |
-| `intfloat/multilingual-e5-large` | 1024 | ~1.3GB | Best quality (default) |
-| `BAAI/bge-m3` | 1024 | ~2.3GB | Multilingual, hybiud |
+| `intfloat/multilingual-e5-large` | 1024 | ~1.3GB | Best quality |
+| `BAAI/bge-m3` | 1024 | ~2.3GB | Multilingual, hybrid (default) |
 
 ### LLM Models (Ollama)
 
@@ -376,15 +479,14 @@ waffarha-chatbot/
 ├── catalog/
 │   └── catalog_queries.py      # ClickHouse public catalog queries
 ├── ingestion/
+│   ├── refresh.py               # Canonical fetch+build entry point (+ --plan)
 │   ├── loaders/
-│   │   ├── build_index.py      # Build vector indexes
-│   │   └── build_index_incremental.py  # Incremental rebuild
-│   ├── sources/
-│   │   ├── fetch_offers.py     # Mobile API scraper
-│   │   ├── fetch_*_clickhouse.py  # ClickHouse data fetchers
-│   │   └── get_customers_offers.py  # Per-customer offer fetcher
-│   └── transformers/
-│       └── sync_clickhouse.py  # ClickHouse sync utility
+│   │   ├── index_manifest.py            # Shared index-manifest format/helpers
+│   │   ├── build_index.py               # Build vector indexes (+ writes manifest)
+│   │   └── build_index_incremental.py   # Incremental rebuild (+ manifest-aware)
+│   └── sources/
+│       ├── fetch_*_clickhouse.py  # ClickHouse data fetchers (offers/partners/…)
+│       └── get_customers_offers.py  # Per-customer diagnostic (not an index source)
 ├── data/
 │   ├── faqs.json
 │   ├── offers_raw.json
@@ -447,7 +549,7 @@ python tests/manual_test_runner.py
 |-------|------------|
 | User Identity | `identity.py` is the only source of `user_id` — never trust client input |
 | Personal Queries | All SQL scoped by trusted `user_id`; no raw identifiers from user |
-| API Keys | `WAFFARHA_SECURITY_KEY` only used in ingest scripts, never in chat path |
+| API Keys | Ingest reads ClickHouse with a READ-ONLY service account; DB-level grants are the enforcement layer. Keys (e.g. `JINA_API_KEY`, eval's standalone `WAFFARHA_SECURITY_KEY`) never touch the chat path |
 | CORS | Configured in `core/app.py` — restrict `allow_origins` in production |
 | Rate Limiting | Not built-in — add via nginx/API gateway in production |
 | Secrets | `.env` in `.gitignore`; use Docker secrets / env injection in prod |
@@ -466,4 +568,4 @@ Internal Waffarha project — not for external distribution.
 - **[CLICKHOUSE_LOCAL_SETUP.md](CLICKHOUSE_LOCAL_SETUP.md)** — Local ClickHouse setup for development
 - **[RATE_LIMIT_FIX.md](RATE_LIMIT_FIX.md)** — Rate limiting implementation notes
 - **[EVALUATION_REPORT.md](../EVALUATION_REPORT.md)** — Latest evaluation results
-- **[HALLUCINATION_ANALYSIS.md](../HALLUCINATION_ANALYSIS.md)** — Hallucination audit findings
+- **[HALLUCINATION_ANALYSIS.md](../reports/HALLUCINATION_ANALYSIS.md)** — Hallucination audit findings

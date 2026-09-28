@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "focus": ["egyptian", "saudi", "msa", "code-switch"],
+    "note": "Waffarha is Egyptian deals platform. EG first, SA second, MSA baseline, AR-EN code-switch real-world."
+  },
+  "sentences": [
+    {"id": "eg1", "dialect": "egyptian", "text": "انا عايز بيتزا من مية لميتين جنيه، ايه العروض الموجودة دلوقتي؟", "use": "tts_prompt+stt_ref"},
+    {"id": "eg2", "dialect": "egyptian", "text": "ايه عروض رمضان طيب؟ ولو فيه خصم على كنتاكي قولي.", "use": "tts_prompt+stt_ref"},
+    {"id": "eg3", "dialect": "egyptian", "text": "انا رايح الشغل دلوقتي وهكلمك اول ما اوصل.", "use": "tts_prompt+stt_ref"},
+    {"id": "eg4", "dialect": "egyptian", "text": "بكام الاشتراك ده؟ وهل فيه توصيل للبيت؟", "use": "tts_prompt+stt_ref"},
+    {"id": "sa1", "dialect": "saudi_najdi", "text": "ابغى اغير الاشتراك تبعي، وش الخيارات المتوفرة؟", "use": "tts_prompt+stt_ref"},
+    {"id": "sa2", "dialect": "saudi_najdi", "text": "كم سعر الباقة؟ وهل فيه توصيل للبيت؟", "use": "tts_prompt+stt_ref"},
+    {"id": "sa3", "dialect": "saudi_najdi", "text": "وش عروض اليوم الوطني؟ ابغى شي رخيص وزين.", "use": "tts_prompt+stt_ref"},
+    {"id": "sa4", "dialect": "saudi_gulf", "text": "الله يعطيك العافية، وين اقرب فرع عندكم؟", "use": "tts_prompt+stt_ref"},
+    {"id": "msa1", "dialect": "msa", "text": "مرحبا بك في وفرها، كيف يمكنني مساعدتك اليوم؟", "use": "tts_prompt+stt_ref"},
+    {"id": "msa2", "dialect": "msa", "text": "جميع العروض متاحة حتى نهاية شهر رمضان المبارك.", "use": "tts_prompt+stt_ref"},
+    {"id": "cs1", "dialect": "code-switch", "text": "ابغى اغير السبسكريپشن تبعي واعرف الديسكاونت على الاوردر الجاي.", "use": "tts_prompt+stt_ref"},
+    {"id": "cs2", "dialect": "code-switch", "text": "عايز اعمل اردر من KFC بس عايز اعرف الدليفري فيز كام.", "use": "tts_prompt+stt_ref"},
+    {"id": "fr1", "dialect": "franco", "text": "ezay a2dr ashof el orders bta3ty, 3ayez koshary", "use": "tts_prompt+stt_ref"},
+    {"id": "fr2", "dialect": "franco", "text": "ebgha aghyer el eshterak teb3y, wesh el khayarat el mota7a?", "use": "tts_prompt+stt_ref"}
+  ]
+}

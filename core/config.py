@@ -23,6 +23,17 @@ CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))  # clickhouse-connec
 # not the CLICKHOUSE_USER this originally assumed.
 CLICKHOUSE_USERNAME = os.getenv("CLICKHOUSE_USERNAME", "default")
 CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "main")
+
+
+def ch_table(name: str) -> str:
+    """Fully-qualified ClickHouse table for the configured database.
+
+    New phase uses `main_eg` (see data/database-sctructure-main-eg.csv);
+    legacy installs use `main`. All SQL must go through this helper --
+    never hardcode `main.` -- so tomorrow's live-DB switch is a pure
+    `.env` change (CLICKHOUSE_DATABASE=main_eg) with zero code edits.
+    """
+    return f"{CLICKHOUSE_DATABASE}.{name.strip()}"
 # CHANGED: was a flat "false" default. Port 443 is the standard HTTPS port
 # for ClickHouse's HTTP interface (e.g. clickhouse-test.waffarha.tech runs
 # on 443) -- defaulting secure=False against a 443 host would just fail the
@@ -56,6 +67,23 @@ def get_clickhouse_client():
         database=CLICKHOUSE_DATABASE,
         secure=CLICKHOUSE_SECURE,
     )
+
+# NEW: public hosting. Comma-separated extra origins for CORS, e.g.
+# ALLOWED_ORIGINS=https://chat.waffarha.com,https://waffarha.com
+# Localhost entries are always kept for dev; PUBLIC_URL documents the
+# canonical public address shown in logs/health.
+def _parse_origins(raw: str) -> list:
+    return [o.strip() for o in (raw or "").split(",") if o.strip()]
+
+
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").strip()
+ALLOWED_ORIGINS = [
+    "https://eng-zakaria.github.io",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:8001",
+    "http://127.0.0.1:8001",
+] + _parse_origins(os.getenv("ALLOWED_ORIGINS", ""))
 
 LANGS = ["en", "ar"]
 
@@ -465,6 +493,15 @@ STATIC_TEST_USER_ID = int(os.getenv("STATIC_TEST_USER_ID", "0") or "0")
 # is required for public catalog data.
 CATALOG_QUERIES_ENABLED = os.getenv("CATALOG_QUERIES_ENABLED", "true").lower() == "true"
 
+# NEW (main_eg customer-service phase): unified support queries (vouchers,
+# refunds, bp/medical/trip/gift orders, order problems). Public catalog
+# lookups need no auth; per-user order/voucher/refund lookups reuse the
+# PERSONAL_QUERIES_ENABLED + identity gate (see support/support_queries.py).
+# Enabled by default so tomorrow's live-DB switch only needs
+# CLICKHOUSE_DATABASE=main_eg + credentials, not a code deploy.
+SUPPORT_QUERIES_ENABLED = os.getenv("SUPPORT_QUERIES_ENABLED", "true").lower() == "true"
+SUPPORT_ORDER_LIMIT = int(os.getenv("SUPPORT_ORDER_LIMIT", "5") or "5")
+
 # NEW: structured-first faceted routing (merchant / category / product /
 # superlative / price-range) on top of the fully offline in-memory offer
 # catalog. Falls back to hybrid retrieval when nothing resolves.
@@ -473,6 +510,17 @@ FACETED_ROUTING_ENABLED = os.getenv("FACETED_ROUTING_ENABLED", "true").lower() =
 FACETED_PRODUCT_TOP_PER_MERCHANT = int(os.getenv("FACETED_PRODUCT_TOP_PER_MERCHANT", "2") or "2")
 # Max offers per merchant in a faceted merchant answer.
 FACETED_MERCHANT_TOP_K = int(os.getenv("FACETED_MERCHANT_TOP_K", "6") or "6")
+
+# NEW: voice agent bridge (core/voice.py -> voice lab service on :8002).
+# The chatbot holds no audio models itself; the lab owns VRAM/model loading.
+# TTS default is Chatterbox-Egyptian per real-test results (fast MSA fallback:
+# Nabra-82M; STT default fw-small for speed, dialectal-Whisper for accuracy).
+VOICE_ENABLED = os.getenv("VOICE_ENABLED", "false").lower() == "true"
+VOICE_LAB_URL = os.getenv("VOICE_LAB_URL", "http://127.0.0.1:8002").rstrip("/")
+VOICE_STT_MODEL = os.getenv("VOICE_STT_MODEL", "fw-small")
+VOICE_TTS_MODEL = os.getenv("VOICE_TTS_MODEL", "chatterbox-eg")
+VOICE_TIMEOUT = float(os.getenv("VOICE_TIMEOUT", "600"))
+VOICE_TTS_MAX_CHARS = int(os.getenv("VOICE_TTS_MAX_CHARS", "350"))
 
 # NEW: identity backend configuration
 # IDENTITY_BACKEND=static: fixed test user. LOCAL DEV / DEMO ONLY.

@@ -103,7 +103,10 @@ class RetrieveFaqTool(Tool):
 
     def run(self, ctx: ToolContext, args: dict) -> ToolResult:
         facade = ctx.facade
-        query = (args.get("query") or ctx.query or "").strip()
+        # ctx.query is the user's own sanitized message; planner paraphrases in
+        # args['query'] routinely drop the exact dialect words the deterministic
+        # topic router keys on (e.g. "ازاي اشتري"), so the user's text wins.
+        query = (ctx.query or args.get("query") or "").strip()
         if not query:
             return ToolResult(
                 ok=False, summary="retrieve_faq needs a query", error="missing query")
@@ -179,15 +182,18 @@ def _faq_meta(faq_id, answer: str) -> dict:
 
 class CompareOffersTool(Tool):
     """Compare >=2 offers side by side (multi-card render). The offers come
-    from stored session state (offer_ids) or from one resolved merchant."""
+    from stored session state (offer_ids), from one resolved merchant, or
+    from two named merchants (merchants=[A, B] -> top offer of each)."""
 
     name = "compare_offers"
     purpose = ("Compare two or more offers side by side. Pass offer_ids that "
-               "reference offers already discussed this session, or a merchant "
-               "whose top 2 offers should be compared.")
+               "reference offers already discussed this session, a single merchant "
+               "whose top 2 offers should be compared, or merchants=[A, B] with "
+               "two merchant names to compare their best offers head to head.")
     input_schema: ClassVar[dict] = {
         "offer_ids": {"type": "str_list", "optional": True},
         "merchant": {"type": "str", "optional": True},
+        "merchants": {"type": "str_list", "optional": True},
         "limit": {"type": "int", "optional": True},
     }
 
@@ -203,21 +209,47 @@ class CompareOffersTool(Tool):
                     entries.append(hit)
             origin = "ids:" + ",".join(ids)
 
-        if len(entries) < 2 and args.get("merchant"):
+        if len(entries) < 2:
+            wanted = [str(x) for x in (args.get("merchants") or []) if str(x).strip()]
+            if args.get("merchant"):
+                wanted = [str(args["merchant"]).strip()] + wanted
             faceted = getattr(facade, "faceted", None)
-            merchant = str(args["merchant"]).strip()
-            if faceted is not None:
-                try:
-                    resolved = faceted.resolve_merchants(merchant) or []
-                    scope = resolved[0] if len(resolved) == 1 else None
-                    if scope is None and (faceted.merchants or {}) and merchant in faceted.merchants:
-                        scope = merchant
-                    if scope:
+            if wanted and faceted is not None:
+                per_merchant = []
+                unknown = []
+                for name in wanted[:2]:
+                    try:
+                        resolved = faceted.resolve_merchants(name) or []
+                        scope = resolved[0] if len(resolved) == 1 else None
+                        if scope is None and (faceted.merchants or {}) and name in faceted.merchants:
+                            scope = name
+                    except Exception:  # noqa: BLE001, S110 -- resolver must never crash the tool
+                        scope = None
+                    if not scope:
+                        unknown.append(name)
+                        continue
+                    try:
+                        got = faceted.offers_for_merchant(scope, ctx.reply_lang, 1)
+                    except Exception:  # noqa: BLE001, S110
+                        got = []
+                    if got:
+                        per_merchant.append(got[0])
+                if unknown and not per_merchant:
+                    return ToolResult(
+                        ok=True, items=[], summary=f"no known merchant '{unknown[0]}'",
+                        note={"kind": "unknown_merchant", "merchant": unknown[0]})
+                if len(per_merchant) >= 2:
+                    entries = per_merchant[:2]
+                    origin = "merchants:" + ",".join(wanted[:2])
+                elif len(per_merchant) == 1 and len(wanted) == 1:
+                    # single named merchant -> its top 2 offers.
+                    try:
+                        scope = faceted.resolve_merchants(wanted[0])[0]
                         entries = faceted.offers_for_merchant(
                             scope, ctx.reply_lang, min(int(args.get("limit") or 2), 2))
-                        origin = f"merchant:{scope}"
-                except Exception:  # noqa: BLE001, S110 -- resolver must never crash the tool
-                    pass
+                    except Exception:  # noqa: BLE001, S110
+                        entries = per_merchant
+                    origin = f"merchant:{wanted[0]}"
         if not entries:
             entries = ctx.recent_offers and ctx.recent_offers[:2] or []
             origin = origin or "session:top2"

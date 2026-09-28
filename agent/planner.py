@@ -14,7 +14,8 @@ import json
 import re
 
 _KNOWN_TOOLS = ("search_offers", "get_offer", "retrieve_faq",
-                "compare_offers", "superlative_offer", "catalog")
+                "compare_offers", "superlative_offer", "catalog",
+                "support_lookup")
 _KNOWN_FIELDS = (
     "tool", "args", "goal", "entities", "constraints", "intent",
     "references", "known_information", "missing_information",
@@ -51,6 +52,17 @@ def build_plan_prompt(query: str, params: dict, tool_names: list,
         ctx_lines.append(f"- known_personal_subjects: {params['personal_subjects']}")
     if params.get("identity"):
         ctx_lines.append(f"- identity: {params['identity']}")
+    ctx_lines.append(
+        "- knowledge_domains: offers+prices (search_offers/get_offer/compare_offers/"
+        "superlative_offer), purchase how-to + payments + refund-policy "
+        "meanings + cashback + account (retrieve_faq), own coupons (catalog scope=personal), "
+        "own vouchers/orders/refunds/problems across bill/medical/trip/gift/deals "
+        "(support_lookup -- needs signed-in user, use for order ids, voucher codes, "
+        "refund status, failed payments)")
+    ctx_lines.append(
+        "- sales_flow: discovery -> price/options -> how-to-buy -> payment-method -> "
+        "coupon-use -> refund/status. The conversation history above may already "
+        "answer an earlier step; use known_information instead of re-asking.")
     ctx_block = "\n".join(ctx_lines) if ctx_lines else "(no context supplied)"
 
     return (
@@ -70,8 +82,10 @@ def build_plan_prompt(query: str, params: dict, tool_names: list,
         '  "args": object of arguments for that tool -- the tool schema decides which keys '
         "(search_offers/catalog: query, merchant, category, product, price_range as [min,max], "
         "exclude as list of ids, limit as int; get_offer: id and source; retrieve_faq: query; "
+        "support_lookup: query plus optional order_id/voucher_sn; "
         "compare_offers: offer_ids (ids from the already_discussed_offers context "
-        "block ONLY) or merchant; "
+        "block ONLY), merchants=[A, B] (two merchant names for a head-to-head "
+        "compare), or merchant (one name -> its top 2); "
         "superlative_offer: direction cheapest|most_expensive|highest_discount plus optional "
         "merchant/category; use a tool only if you can fill its required args from the query or "
         "context)\n"
@@ -79,7 +93,7 @@ def build_plan_prompt(query: str, params: dict, tool_names: list,
         '  "entities": object — merchant/product/category names mentioned, e.g. '
         '{"merchant": ["KFC"]}\n'
         '  "constraints": object — {"price_range": [min, max], "exclude": [ids], "limit": n}\n'
-        '  "intent": one of "catalog", "comparison", "personal", "anchored", '
+        '  "intent": one of "catalog", "comparison", "personal", "support", "anchored", '
         '"quality", "faq", "greeting", "closing", "out_of_scope", '
         '"unclear", "other"\n'
         '  "references": list of strings — phrases that reference an offer/coupon mentioned '
@@ -114,11 +128,23 @@ def build_plan_prompt(query: str, params: dict, tool_names: list,
         "is in already_discussed_offers -- never invent an id, merchant, price, or ordinal from "
         "conversation. A follow-up (\"the second one\", \"ده\", \"compare the two\") resolves to "
         "those stored ids or the deterministic reference pass drops it.\n"
-        "- Tool guidance: retrieve_faq for how-to/policy/status questions ('how', 'policy', "
-        "'refund', 'يعني ايه'); superlative_offer for 'cheapest/highest discount/most expensive'; "
+        "- Tool guidance: retrieve_faq for GENERAL how-to/policy questions with no "
+        "user data ('how do I buy', 'what is the refund policy', 'يعني ايه', 'ازاي ادفع'); "
+        "when identity is 'known customer' and the question is about THEIR OWN vouchers, "
+        "orders, refunds, or failures ('my ...', 'my last ...', 'where is my ...', 'I applied "
+        "for ... but ...', 'طلبى', 'قسيمتي', 'فلوسي'), choose support_lookup -- NEVER "
+        "retrieve_faq (the FAQ corpus has no user data); "
+        "live_catalog for city/place questions ('offers in Cairo', 'عروض اسكندرية') "
+        "and time questions ('ending soon', 'starting soon', 'هيخلص قريب') -- the offline "
+        "index cannot see place_id or expiry windows; "
+        "superlative_offer for 'cheapest/highest discount/most expensive'; "
         "compare_offers for 'compare/difference between/which is better'; catalog with "
         "scope=personal only when the user asks about THEIR OWN coupons/account; search_offers "
-        "otherwise.\n"
+        "otherwise. When the user asks about the price, variants, or options of an "
+        "ALREADY-SHOWN offer ('بكام ده', 'ايه الاختيارات', 'what options'), use get_offer "
+        "with that offer's id from already_discussed_offers -- its card lists every "
+        "pricing option. A 'how do I buy/pay/use this' follow-up about a shown offer is a "
+        "retrieve_faq question; the purchase steps come from the FAQ answer.\n"
         "- Assigned role: flow only. User anonymous: assume public persona.\n"
         '- If a merchant was mentioned and you are not sure it exists, still plan search_offers '
         'with "merchant" set — the tool reports unknown merchants deterministically.\n'

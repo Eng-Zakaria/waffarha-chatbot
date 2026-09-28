@@ -29,6 +29,7 @@ from core.rag_perfection import (
 from vectorstores.vectorstores import get_store  # CHANGED
 from personal.personal_queries import is_personal_query, PERSONAL_ERROR
 from catalog.catalog_queries import is_catalog_query, CatalogQueryService, CATALOG_ERROR
+from support.support_queries import is_support_query, SupportQueryService, SUPPORT_ERROR
 from core.faceted import FacetedCatalog
 from core.greetings import (  # A2 re-export shims (design section 2 + Gap 3)
     GREETING_PHRASES,
@@ -1961,6 +1962,7 @@ class RagEngine:
         self._current_session_id = None
         # NEW: Lazy-initialized services
         self._personal = None
+        self._support = None
         self._catalog = None
 
     def set_session_id(self, session_id: str):
@@ -2059,6 +2061,11 @@ class RagEngine:
             from personal.personal_queries import PersonalQueryService
             self._personal = PersonalQueryService()
         return self._personal
+
+    def _get_support_service(self):
+        if getattr(self, "_support", None) is None:
+            self._support = SupportQueryService()
+        return self._support
 
     def _get_catalog_service(self):
         if self._catalog is None:
@@ -4073,6 +4080,29 @@ class RagEngine:
         if _validity_answer is not None:
             yield _validity_answer
             return
+
+        # NEW (main_eg CS phase): support queries (vouchers, refunds,
+        # bp/medical/trip/gift orders, order problems) are answered from live
+        # ClickHouse scoped to the resolved user_id. Takes precedence over
+        # the legacy personal path for refund/order-id/voucher-specific
+        # questions; generic "my coupons" still goes to personal below.
+        if user_id is not None and getattr(config, "SUPPORT_QUERIES_ENABLED", True) and is_support_query(query):
+            try:
+                from support.support_queries import extract_identifiers as _ids
+                _has_ids = bool(_ids(query).get("order_id") or _ids(query).get("voucher_sn"))
+            except Exception:  # noqa: BLE001
+                _has_ids = False
+            ql = (query or "").lower()
+            _is_refund_like = any(k in ql for k in ("refund", "استرجاع", "استرداد", "ريفند", "فلوسي"))
+            if _is_refund_like or _has_ids or not is_personal_query(query):
+                try:
+                    result = self._get_support_service().handle(query, user_id, detect_lang(query))
+                except Exception as e:
+                    log.warning("support query failed for user_id=%s query=%r: %s", user_id, query, e)
+                    result = {"answer": SUPPORT_ERROR.get(detect_lang(query), SUPPORT_ERROR["en"]), "sources": []}
+                if result and result.get("answer"):
+                    yield result["answer"]
+                return
 
         # NEW: personal-data queries ("my coupons", "my orders") are answered
         # from live ClickHouse (fct_coupons) scoped to the resolved user_id,

@@ -1,0 +1,10 @@
+# Caddy reverse proxy for public hosting.
+# Replace the first line with your real domain (same as PUBLIC_URL in .env).
+# Caddy fetches/renews the TLS cert automatically on first request.
+# :8000 serves the cascade widget, :8001 the agent widget; /api/agent/* is
+# also mounted on :8000 so one public host covers both engines.
+:80 {
+	# Redirect to HTTPS in production; Caddy handles this automatically
+	# when the site address is a domain. Keep explicit for IP-based testing.
+	reverse_proxy app:8000
+}

@@ -28,6 +28,7 @@ import queue as pyqueue
 import random
 import re
 import threading
+from contextlib import asynccontextmanager
 from typing import List, Optional
 from core.identity import get_identity_resolver
 
@@ -57,12 +58,24 @@ from pydantic import BaseModel
 
 from core import config
 from core.rag_engine import RagEngine, detect_lang, _strip_scaffolding_leaks, _offer_url, _section_category
+from core.voice import voice_router
 from memory import MemoryStore
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("waffarha-app")
 
-app = FastAPI(title="Waffarha Assistant")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Loads RagEngine at startup instead of the first request (see
+    _warm_up_engine below)."""
+    log.info("Warming up RagEngine at startup...")
+    await get_engine_async()
+    log.info("RagEngine warm and ready.")
+    yield
+
+
+app = FastAPI(title="Waffarha Assistant", lifespan=lifespan)
 
 # ---------------------------------------------------------------------------
 # Session memory: the last few offers/FAQs actually shown to each
@@ -143,15 +156,10 @@ def _memory_session_key(session_id: str, user_id: Optional[int]) -> str:
 # than this backend (e.g. GitHub Pages at eng-zakaria.github.io calling a
 # backend on Render/Fly/a VPS). Same-origin setups (app.py serving
 # static/index.html itself, as below) don't need this at all, but it's
-# harmless to leave on. Lock ALLOWED_ORIGINS down to your real Pages URL
-# before going further than local testing -- "*" accepts requests from any
-# website, which is fine for a public read-mostly FAQ/offers bot but worth
-# knowing about.
-ALLOWED_ORIGINS = [
-    "https://eng-zakaria.github.io",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
+# harmless to leave on. Extra public origins come from ALLOWED_ORIGINS in
+# .env (see core/config.py) -- set it to your public URL before exposing
+# this to the internet.
+ALLOWED_ORIGINS = list(config.ALLOWED_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -241,6 +249,11 @@ def get_agent_engine():
             facade = rag_facade(get_engine())
             registry = register_catalog_tools(ToolRegistry())
             register_cascade_tools(registry)
+            try:
+                from agent.tools.support_tools import register_support_tools
+                register_support_tools(registry)
+            except Exception as e:  # noqa: BLE001 -- support tool is additive, never fatal
+                log.warning("support tools not registered: %s", e)
             _agent_engine = AgentEngine(facade, registry)
             log.info("Agentic engine ready (tools=%s).", registry.names())
     return _agent_engine
@@ -250,18 +263,7 @@ async def get_agent_engine_async():
     return await asyncio.to_thread(get_agent_engine)
 
 
-@app.on_event("startup")
-async def _warm_up_engine():
-    """Loads RagEngine (embedding model + vector index + Ollama check) as
-    soon as the container starts, instead of leaving it to the first real
-    request. Restarting the app container doesn't restart Ollama/Redis --
-    they're already warm -- but this process's own memory is empty on every
-    restart, so someone always used to pay for that first load. Now it's
-    paid during startup (visible in orchestration/health-check timing)
-    instead of by whichever customer happens to send the first message."""
-    log.info("Warming up RagEngine at startup...")
-    await get_engine_async()
-    log.info("RagEngine warm and ready.")
+# Warmup runs via lifespan above.
 
 
 # ---------------------------------------------------------------------------
@@ -798,19 +800,21 @@ def _agent_status_text(engine, reply_lang: str, code: str) -> str:
 def _chunk_text(text: str, size: int = 24):
     """Split one finished answer into small token-sized chunks so the
     frontend's per-token textContent painting still produces a typing feel.
-    word-boundary aware on spaces when possible.
 
-    Every non-final chunk keeps the space that word-splitting removed at the
-    boundary, so `full_text += chunk` reassembly in the SSE loops restores the
-    original inter-word spacing and answers are never glued together (bug 1)."""
-    words = text.split(" ")
+    Whitespace-exact: ``"".join(chunks) == text`` always -- every whitespace
+    run stays attached to the word before it, so spaces, newlines, and blank
+    lines between offer cards survive chunking and answers are never glued
+    together. Shared contract with ``core.agent_server._chunk_text``.
+    """
+    words = re.findall(r"\S+\s*|\s+", text or "")
     chunks, cur = [], ""
-    for w in words:
-        if cur and len(cur + " " + w) > size:
-            chunks.append(cur + " ")
-            cur = w
-        else:
-            cur = (cur + " " + w) if cur else w
+    for tok in words:
+        cur += tok
+        # Flush at line boundaries (keeps cards line-separated live) or when
+        # the visible text exceeds the target size.
+        if cur.endswith("\n") or len(cur.rstrip()) >= size:
+            chunks.append(cur)
+            cur = ""
     if cur:
         chunks.append(cur)
     return chunks or [""]
@@ -1059,6 +1063,7 @@ def health():
         current = _in_flight
     return {
         "status": "ok",
+        "engine": "cascade",
         "engine_loaded": _engine is not None,
         "memory_connected": _memory is not None,
         "generation_in_flight": current,
@@ -1116,6 +1121,10 @@ async def get_session_history(session_id: str, limit: int = 20, request: Request
         log.warning("Redis unavailable while reading session history: %s", e)
         raise HTTPException(503, "Session memory unavailable")
 
+
+# Voice agent (STT/TTS via the voice lab service). Registered before the
+# static mount so /api/voice/* is never shadowed by index.html.
+app.include_router(voice_router)
 
 # Serves static/index.html at "/" and static/favicon.* alongside it.
 # Registered last so it doesn't shadow the /api/* routes above.

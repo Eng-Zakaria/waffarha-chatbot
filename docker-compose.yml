@@ -85,6 +85,8 @@ services:
         EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
     ports:
       - "8000:8000"
+      - "8001:8001"
+    command: ["python", "run_servers.py"]
     environment:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b-instruct}
@@ -95,6 +97,22 @@ services:
       WAFFARHA_SECURITY_KEY: ${WAFFARHA_SECURITY_KEY:-}
       REDIS_URL: redis://redis:6379/0
       EMBEDDING_DEVICE: cpu
+      # Live-DB + CS phase: must be visible inside the container or catalog/
+      # personal/support queries fall back to localhost/defaults. Set them in
+      # .env on the VM (see .env.example: CLICKHOUSE_DATABASE=main_eg).
+      CLICKHOUSE_HOST: ${CLICKHOUSE_HOST:-}
+      CLICKHOUSE_PORT: ${CLICKHOUSE_PORT:-443}
+      CLICKHOUSE_SECURE: ${CLICKHOUSE_SECURE:-true}
+      CLICKHOUSE_USERNAME: ${CLICKHOUSE_USERNAME:-}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-}
+      CLICKHOUSE_DATABASE: ${CLICKHOUSE_DATABASE:-main_eg}
+      PERSONAL_QUERIES_ENABLED: ${PERSONAL_QUERIES_ENABLED:-false}
+      IDENTITY_BACKEND: ${IDENTITY_BACKEND:-static}
+      STATIC_TEST_USER_ID: ${STATIC_TEST_USER_ID:-0}
+      AUTH_SIGNING_SECRET: ${AUTH_SIGNING_SECRET:-}
+      CATALOG_QUERIES_ENABLED: ${CATALOG_QUERIES_ENABLED:-true}
+      SUPPORT_QUERIES_ENABLED: ${SUPPORT_QUERIES_ENABLED:-true}
+      SUPPORT_ORDER_LIMIT: ${SUPPORT_ORDER_LIMIT:-5}
       # Must match ollama's OLLAMA_NUM_PARALLEL above -- see app.py's
       # _generation_semaphore comment for why these two are a pair, not
       # independent settings.

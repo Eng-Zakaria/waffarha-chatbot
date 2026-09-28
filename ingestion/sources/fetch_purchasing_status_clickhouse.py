@@ -44,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from core import config  # noqa: E402
 
 _COLUMNS = ["pur_status_id", "pur_status_name", "pur_status_status", "pur_status_name_ar"]
-_QUERY = f"SELECT {', '.join(_COLUMNS)} FROM main.dim_purchasing_status"
+_QUERY = f"SELECT {', '.join(_COLUMNS)} FROM {config.CLICKHOUSE_DATABASE}.dim_purchasing_status"
 
 _TEST_MARKERS = ("test",)
 

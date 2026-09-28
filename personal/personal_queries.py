@@ -213,10 +213,13 @@ def _currency(lang: str) -> str:
 
 
 def _title(row, lang: str) -> str:
+    # Live main_eg: mobile_offer_title_* is ~always NULL; offer_brief_* is the title.
     if lang == "ar":
         return (row.get("mobile_offer_title_ar") or row.get("mobile_offer_title_en")
+                or row.get("offer_brief_ar") or row.get("offer_brief_en")
                 or row.get("merchant_name") or f"كوبون {row.get('coupon_id')}")
     return (row.get("mobile_offer_title_en") or row.get("mobile_offer_title_ar")
+            or row.get("offer_brief_en") or row.get("offer_brief_ar")
             or row.get("merchant_name") or f"Coupon {row.get('coupon_id')}")
 
 
@@ -250,54 +253,62 @@ class PersonalQueryService:
     def _rows(self, sql, params):
         return [dict(r) for r in self._get_client().query(sql, parameters=params).named_results()]
 
-    _COUPON_SELECT = """
+    def _coupon_select(self) -> str:
+        db = config.CLICKHOUSE_DATABASE
+        return f"""
         SELECT c.coupon_id, c.offer_id, c.voucher_sn, c.merchant_name,
                c.coupon_status, c.coupon_sold_price, c.discount, c.total_price,
                c.created_at, c.active_at, c.expire_at, c.payment_name_en,
                c.status_v2,
                p.pur_status_name, p.pur_status_name_ar,
                o.mobile_offer_title_en, o.mobile_offer_title_ar,
+               o.offer_brief_en, o.offer_brief_ar,
                o.offer_fineprint_en, o.offer_fineprint_ar,
                o.waffarha_advice_en, o.waffarha_advice_ar,
-               o.part_address_en, o.part_address_ar,
-               o.part_tel, o.part_tel2,
-               o.part_website, o.part_facebook,
+               pt.part_address_en, pt.part_address_ar,
+               pt.part_tel, pt.part_tel2,
+               pt.part_website, pt.part_facebook,
                pm.payment_name_en AS payment_method_name_en,
-               pm.payment_name_ar AS payment_method_name_ar
-        FROM main.fct_coupons c
-        LEFT JOIN main.dim_purchasing_status p ON p.pur_status_id = c.coupon_status
-        LEFT JOIN main.dim_offers o ON o.offer_id = c.offer_id
-        LEFT JOIN main.dim_partners pt ON pt.part_id = o.part_id
-        LEFT JOIN main.dim_payment_methods pm ON pm.payment_id = c.coupon_payment_method
+               pm.payment_name AS payment_method_name_ar
+        FROM {db}.fct_coupons c
+        LEFT JOIN {db}.dim_purchasing_status p ON p.pur_status_id = c.coupon_status
+        LEFT JOIN {db}.dim_offers o ON o.offer_id = c.offer_id
+        LEFT JOIN {db}.dim_partners pt ON pt.part_id = o.part_id
+        LEFT JOIN {db}.dim_payment_methods pm ON pm.payment_id = c.coupon_payment_method
         WHERE c.user_id = %(uid)s
     """
 
+    # Backward-compat alias (was a class-level constant with hardcoded main.).
+    @property
+    def _COUPON_SELECT(self) -> str:
+        return self._coupon_select()
+
     def list_coupons(self, user_id, limit=10):
         return self._rows(
-            self._COUPON_SELECT + " ORDER BY c.created_at DESC LIMIT %(lim)s",
+            self._coupon_select() + " ORDER BY c.created_at DESC LIMIT %(lim)s",
             {"uid": user_id, "lim": limit},
         )
 
     def count_coupons(self, user_id):
         rows = self._rows(
-            "SELECT COUNT(*) AS n FROM main.fct_coupons WHERE user_id = %(uid)s",
+            f"SELECT COUNT(*) AS n FROM {config.ch_table('fct_coupons')} WHERE user_id = %(uid)s",
             {"uid": user_id},
         )
         return rows[0]["n"] if rows else 0
 
     def spending(self, user_id):
         rows = self._rows(
-            """SELECT COUNT(*) AS n, COALESCE(SUM(total_price),0) AS total,
+            f"""SELECT COUNT(*) AS n, COALESCE(SUM(total_price),0) AS total,
                       COALESCE(SUM(discount),0) AS saved
-               FROM main.fct_coupons WHERE user_id = %(uid)s""",
+               FROM {config.ch_table('fct_coupons')} WHERE user_id = %(uid)s""",
             {"uid": user_id},
         )
         return rows[0] if rows else {"n": 0, "total": 0, "saved": 0}
 
     def by_merchant(self, user_id, limit=5):
         return self._rows(
-            """SELECT merchant_name AS m, COUNT(*) AS n
-               FROM main.fct_coupons
+            f"""SELECT merchant_name AS m, COUNT(*) AS n
+               FROM {config.ch_table('fct_coupons')}
                WHERE user_id = %(uid)s AND merchant_name != ''
                GROUP BY merchant_name ORDER BY n DESC LIMIT %(lim)s""",
             {"uid": user_id, "lim": limit},

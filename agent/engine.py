@@ -264,7 +264,15 @@ class AgentEngine:
         # gates can claim the query as a failed offer lookup. It only fires
         # when a FAQ-topic signal exists (_route_faq_topic is the router) and
         # the planner picked anything but retrieve_faq.
-        if self._facade_faq_topic(params.get("query") or ""):
+        #
+        # EXCEPTION (main_eg CS phase): a signed-in user asking about THEIR
+        # OWN vouchers/orders/refunds ("my last voucher isn't working", "my
+        # refund never arrived") also trips the topic router ("voucher",
+        # "refund" words) -- but that turn needs live user data, not the
+        # generic how-to FAQ. Per-user data wins over the FAQ override.
+        _faq_topic = self._facade_faq_topic(params.get("query") or "")
+        if _faq_topic and not self._is_signed_in_data_question(
+                params.get("query") or "", params.get("user_id")):
             if plan.get("tool") != "retrieve_faq" and "retrieve_faq" in self._registry.names():
                 plan["tool"] = "retrieve_faq"
                 # A rerouted FAQ turn answers from the FAQ corpus only: drop
@@ -521,6 +529,24 @@ class AgentEngine:
             return route_fn(query, nq) or None
         except Exception:  # noqa: BLE001 -- a router miss must not crash a turn
             return None
+
+    def _is_signed_in_data_question(self, query: str, user_id) -> bool:
+        """True when a signed-in user asks about their OWN data (vouchers,
+        orders, refunds, troubleshooting). Those turns must reach the
+        user-scoped tools, never the generic FAQ override."""
+        if user_id is None:
+            return False
+        try:
+            from support.support_queries import is_support_query
+            if is_support_query(query):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from personal.personal_queries import is_personal_query
+            return bool(is_personal_query(query))
+        except Exception:  # noqa: BLE001
+            return False
 
     def _message_corroborates_facet(self, params) -> bool:
         """True when the user's own words name a category or product that the

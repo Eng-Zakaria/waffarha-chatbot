@@ -157,3 +157,16 @@ scratch/
 # =============================================================================
 CLAUDE.md
 AGENTS.md
+
+# =============================================================================
+# Heavy generated/large artifacts (local only, never commit)
+# =============================================================================
+data/bench/
+*.npy
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+eval/voice_eval/weights/
+eval/voice_eval/outputs/
+eval/voice_eval/espeak-ng/

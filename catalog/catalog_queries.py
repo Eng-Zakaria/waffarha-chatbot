@@ -141,6 +141,121 @@ _COMPARE_PATTERNS = [
 ]
 _COMPARE_RE = [re.compile(p, re.IGNORECASE) for p in _COMPARE_PATTERNS]
 
+# --- Places (main_eg dim_place, verified live 2026-09-28) --------------------
+# {place_id: (name_en, name_ar)}. dim_offers.place_id -> dim_place.place_id.
+# Live catalog today is ~all Cairo, but the filter is general so answers stay
+# honest as coverage diversifies. Inactive places (status 0) kept for matching
+# so "Mansoura" resolves then honestly reports no live offers.
+PLACES = {
+    1: ("Cairo", "القاهرة"), 2: ("Alexandria", "الاسكندرية"),
+    3: ("Alex-Cairo", "القاهرة - اسكندرية"), 4: ("Beni Suef", "بني سويف"),
+    5: ("Suez", "السويس"), 6: ("Sharkeya", "الشرقية"),
+    7: ("Beheira", "البحيرة"), 8: ("Sharm Sheikh", "شرم الشيخ"),
+    9: ("Abo Zaabal", "ابو زعبل"), 10: ("Sohag", "سوهاج"),
+    11: ("Port Said", "بورسعيد"), 12: ("Garbeya", "الغربية"),
+    13: ("Benha", "بنها"), 14: ("Mansoura", "المنصورة"),
+    15: ("Delta", "الدلتا"), 16: ("Hurghada", "الغردقة"),
+    17: ("Damietta", "دمياط"), 18: ("Fayoum", "الفيوم"),
+    19: ("Assiut", "أسيوط"), 20: ("Minya", "المنيا"),
+    21: ("Ismailia", "الاسماعيلية"), 22: ("Mersa Matruh", "مرسى مطروح"),
+    23: ("Online Store", "أونلاين ستور"), 24: ("Shibin El Kom", "شبين الكوم"),
+    25: ("Seasonal branches", "فروع موسمية"), 26: ("Kafr El-Sheikh", "كفر الشيخ"),
+    27: ("Qena", "قنا"), 28: ("Monofiya", "المنوفية"),
+    29: ("Qalubiya", "القليوبية"), 30: ("Luxor", "الأقصر"),
+    31: ("All Egypt Branches", "جميع فروع مصر"), 32: ("Dakahlia", "الدقهلية"),
+    33: ("South Sinai", "جنوب سيناء"), 34: ("Aswan", "أسوان"),
+    35: ("Red Sea", "البحر الأحمر"), 36: ("Tanta", "طنطا"),
+    37: ("Siwa", "سيوة"), 38: ("New Capital", "العاصمة الإدارية"),
+    39: ("Cairo test", "القاهرة تيست"), 40: ("North Coast", "الساحل الشمالي"),
+    41: ("Giza", "الجيزة"),
+}
+
+# Neighborhood (dim_location) -> place_id for the districts customers actually
+# name. dim_location has 278 rows with no FK to offers, so this map is for
+# *understanding* ("I live in Maadi" -> Cairo) while filtering stays on place_id.
+# EN + AR spellings verified against live dim_location 2026-09-28.
+NEIGHBORHOOD_TO_PLACE = {
+    # Cairo districts
+    "maadi": 1, "المعادي": 1, "zamalek": 1, "الزمالك": 1,
+    "heliopolis": 1, "مصر الجديدة": 1, "nasr city": 1, "مدينة نصر": 1,
+    "new cairo": 1, "القاهرة الجديدة": 1, "5th settlement": 1, "التجمع الخامس": 1,
+    "sheikh zayed": 1, "الشيخ زايد": 1, "mohandessin": 1, "mohandissen": 1,
+    "المهندسين": 1, "dokki": 1, "الدقى": 1, "agouza": 1, "العجوزة": 1,
+    "october": 1, "أكتوبر": 1, "6th of october": 1, "السادس من أكتوبر": 1,
+    "shoubra": 1, "شبرا": 1, "helwan": 1, "hilwan": 1, "حلوان": 1,
+    "ain shams": 1, "عين شمس": 1, "matareya": 1, "المطرية": 1,
+    "rehab": 1, "الرحاب": 1, "madinaty": 1, "مدينتى": 1, "shorouk": 1, "الشروق": 1,
+    "mokattam": 1, "المقطم": 1, "haram": 1, "الهرم": 1, "faisal": 1, "فيصل": 1,
+    "giza": 41, "الجيزة": 41,
+    # Alexandria districts
+    "smouha": 2, "سموحة": 2, "miami": 2, "ميامى": 2, "montaza": 2, "montazah": 2,
+    "المنتزة": 2, "المنتزه": 2, "sidi gaber": 2, "سيدى جابر": 2,
+    "stanley": 2, "stanly": 2, "ستانلى": 2, "agamy": 2, "العجمي": 2,
+    "raml station": 2, "محطة الرمل": 2, "bahari": 2, "بحري": 2,
+    "mandara": 2, "المندرة": 2, "asafra": 2, "العصافرة": 2,
+}
+
+
+def _ar_contains(name: str, q: str) -> bool:
+    """Arabic match tolerant of the definite article on either side:
+    'الاسكندرية' matches 'اسكندرية' and vice versa."""
+    n = (name or "").strip()
+    if not n:
+        return False
+    if n in q:
+        return True
+    stem = n[2:] if n.startswith("ال") and len(n) > 3 else n
+    if stem and stem in q:
+        return True
+    return ("ال" + n) in q
+
+
+def _detect_place(query: str):
+    """Returns (place_id, name_en, name_ar) or None. AR names match by
+    substring; short EN names need token boundaries (same rule as merchants)."""
+    q = query or ""
+    ql = q.lower()
+    for pid, (en, ar) in PLACES.items():
+        if _ar_contains(ar, q):
+            return (pid, en, ar)
+        enl = en.lower()
+        if len(enl) <= 5:
+            if re.search(r"(?<![a-z])" + re.escape(enl) + r"(?![a-z])", ql):
+                return (pid, en, ar)
+        elif enl in ql:
+            return (pid, en, ar)
+    for name, pid in NEIGHBORHOOD_TO_PLACE.items():
+        if any("\u0600" <= ch <= "\u06ff" for ch in name):
+            hit = _ar_contains(name, q)
+        else:
+            hit = name.lower() in ql
+        if hit:
+            en, ar = PLACES[pid]
+            return (pid, en, ar)
+    return None
+
+
+# Place intent: "offers in Cairo", "عروض اسكندرية", "near Maadi", "in Giza"
+_PLACE_PATTERNS = [
+    r"(?:offers?|deals?|coupons?|عروض|خصومات)\s+(?:in|at|near|around|فى|في|قريب من)\s+(.+)",
+    r"(?:in|at|near|around|فى|في)\s+(.+?)\s+(?:offers?|deals?|عروض)",
+    r"^(?:any|anywhere|فيه|فى|عايز|عاوز|محتاج)\b.*\b(?:in|فى|في)\b(.+)",
+]
+_PLACE_RE = [re.compile(p, re.IGNORECASE) for p in _PLACE_PATTERNS]
+
+# Time intent: ending soon / starting soon / expiring
+_ENDING_SOON_PATTERNS = [
+    r"\bending\s+soon\b", r"\bexpires?\s+soon\b", r"\blast\s+chance\b",
+    r"\bthis\s+week\b", r"هيخلص\s+قريب|هتخلص\s+قريب|عروض\s+بتنتهي|قربت\s+تخلص|آخر\s+فرصة",
+]
+_ENDING_SOON_RE = [re.compile(p, re.IGNORECASE) for p in _ENDING_SOON_PATTERNS]
+
+_STARTING_SOON_PATTERNS = [
+    r"\bstarting\s+soon\b", r"\bcoming\s+soon\b", r"\bupcoming\b", r"\bnew\s+offers\b",
+    r"هيبدأ\s+قريب|هتبدأ\s+قريب|عروض\s+جديدة|عروض\s+جاية",
+]
+_STARTING_SOON_RE = [re.compile(p, re.IGNORECASE) for p in _STARTING_SOON_PATTERNS]
+
 # --- Unsupported patterns (honestly refused) ---
 _UNSUPPORTED_PATTERNS = [
     r"\b(my\s+(coupons?|orders?|purchases?|account|wallet|cashback|balance|points))\b",
@@ -214,6 +329,14 @@ def is_catalog_query(query: str) -> bool:
     if any(r.search(q) for r in _SUPERLATIVE_RE):
         return True
 
+    # FAST PATH: time-sensitive queries are ALWAYS catalog queries
+    if any(r.search(q) for r in _ENDING_SOON_RE + _STARTING_SOON_RE):
+        return True
+
+    # Place queries ("offers in Cairo", "عروض اسكندرية") need live data
+    if _detect_place(query) is not None:
+        return True
+
     # Explicitly NOT catalog: FAQ/how-to questions
     if any(r.search(q) for r in _FAQ_RE):
         return False
@@ -222,7 +345,7 @@ def is_catalog_query(query: str) -> bool:
     return any(
         r.search(q) for r in
         _MERCHANT_RE + _PRICE_CEILING_RE + _PRICE_FLOOR_RE + _PRICE_RANGE_RE +
-        _SUPERLATIVE_RE + _LOCATION_RE + _TAG_RE + _COMPARE_RE
+        _SUPERLATIVE_RE + _LOCATION_RE + _TAG_RE + _COMPARE_RE + _PLACE_RE
     )
 
 
@@ -244,7 +367,52 @@ def _detect_intent(query: str) -> dict:
         "direction": None,  # "min", "max", "max_discount"
         "tag": None,
         "location": None,
+        "place_id": None,  # dim_place id for "offers in <city>" queries
+        "days": None,  # time window for ending_soon
     }
+
+    # Time-sensitive queries first (never hijacked by FAQ/merchant guards)
+    for re_obj in _ENDING_SOON_RE:
+        if re_obj.search(q):
+            intent["type"] = "ending_soon"
+            intent["days"] = 7
+            return intent
+    for re_obj in _STARTING_SOON_RE:
+        if re_obj.search(q):
+            intent["type"] = "starting_soon"
+            return intent
+
+    # Place queries ("offers in Cairo", "عروض اسكندرية") before merchant
+    # (city names can overlap merchant text; the place wins when the query
+    # is offer-seeking and names a known city/district).
+    _place = _detect_place(q)
+    if _place is not None and (
+        any(r.search(q) for r in _PLACE_RE + _LOCATION_RE)
+        or re.search(r"offers?|deals?|coupons?|عروض|خصومات|كوبونات", q, re.IGNORECASE)
+    ):
+        # "KFC offers in Cairo" names both: keep the merchant intent and
+        # carry the city as a filter instead of dropping the merchant.
+        # A merchant capture that IS the city name (ال-tolerant) is not a
+        # merchant at all — fall through to the place intent below.
+        _pen, _par = PLACES[_place[0]]
+
+        def _norm(s: str) -> str:
+            s = (s or "").strip().lower()
+            return s[2:] if s.startswith("ال") and len(s) > 3 else s
+
+        _city_names = {_norm(_pen), _norm(_par)}
+        for re_obj in _MERCHANT_RE:
+            m = re_obj.search(q)
+            if m:
+                merchant = re.sub(r"[؟?!.,،;:\s]+$", "", m.group(1).strip()).strip()
+                if merchant and _norm(merchant) not in _city_names:
+                    intent["type"] = "merchant"
+                    intent["merchant"] = merchant
+                    intent["place_id"] = _place[0]
+                    return intent
+        intent["type"] = "place"
+        intent["place_id"] = _place[0]
+        return intent
 
     # Check comparison intent first
     for re_obj in _COMPARE_RE:
@@ -342,10 +510,15 @@ def _detect_intent(query: str) -> dict:
 
 
 # --- SQL Query Builders ----------------------------------------------------
+# NOTE (main_eg phase): table names go through config.ch_table() so
+# CLICKHOUSE_DATABASE=main_eg works with zero code changes. Never hardcode
+# `main.` in new queries.
 
-_BASE_SELECT = """
+def _base_select() -> str:
+    db = config.CLICKHOUSE_DATABASE
+    return f"""
     SELECT
-        o.offer_id, o.part_id, o.section_id,
+        o.offer_id, o.part_id, o.section_id, o.place_id,
         o.mobile_offer_title_en, o.mobile_offer_title_ar,
         o.offer_brief_en, o.offer_brief_ar,
         o.actual_value, o.offer_value, o.offer_discount,
@@ -361,13 +534,19 @@ _BASE_SELECT = """
         p.instagram, p.twitter, p.youtube,
         p.part_glat, p.part_glng,
         p.work_time_en, p.work_time_ar,
-        p.location_en, p.location_ar
-    FROM main.dim_offers o
-    LEFT JOIN main.dim_partners p ON o.part_id = p.part_id
+        p.location_en, p.location_ar,
+        pl.place_name_en, pl.place_name_ar
+    FROM {db}.dim_offers o
+    LEFT JOIN {db}.dim_partners p ON o.part_id = p.part_id
+    LEFT JOIN {db}.dim_place pl ON pl.place_id = o.place_id
     WHERE o.deleted_at IS NULL
       AND o.offer_status = 'active'
       AND (p.status = 'active' OR p.status IS NULL)
 """
+
+
+# Kept for backward compat (tests import it); resolved dynamically.
+_BASE_SELECT = _base_select()
 
 def _build_merchant_filter(merchant: str, lang: str) -> tuple[str, dict]:
     """Builds WHERE clause for merchant filter with fuzzy/alias matching."""
@@ -423,7 +602,7 @@ def _build_superlative_query(direction: str, limit: int = 1) -> tuple[str, dict]
     else:  # max
         order_by = "ORDER BY o.actual_value DESC NULLS LAST"
 
-    sql = _BASE_SELECT + f" {order_by} LIMIT %(limit)s"
+    sql = _base_select() + f" {order_by} LIMIT %(limit)s"
     return sql, {"limit": limit}
 
 
@@ -509,7 +688,7 @@ class CatalogQueryService:
                 "SELECT offer_id, type_price_name, type_price_name_ar, "
                 "type_price_price, type_price_price_before_discount, type_price_discount, "
                 "start_date, expire_date "
-                "FROM main.dim_type_price "
+                f"FROM {config.ch_table('dim_type_price')} "
                 f"WHERE status = 1 AND offer_id IN ({placeholders})"
             )
             for r in self._rows_raw(sql, params):
@@ -550,14 +729,29 @@ class CatalogQueryService:
         self._attach_tiers(rows)
         return rows
 
+    # LIMIT applies in SQL before _live_rows drops expired rows, so a plain
+    # LIMIT n can return n expired rows and an empty page even when live rows
+    # exist (proven live 2026-09-28: top-discount Cairo rows are 2013 relics).
+    # Over-fetch, then filter, then slice at the answer layer.
+    _OVERFETCH = 5
+
+    def _rows_live(self, sql: str, params: dict, limit: int, session_id: Optional[str] = None) -> list[dict]:
+        params = dict(params or {})
+        params["lim"] = min(int(limit) * self._OVERFETCH, 50)
+        rows = _live_rows(self._rows(sql, params))
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
+        return rows
+
     def _get_active_merchants(self) -> set:
         """Fetch and cache active merchant names from dim_partners."""
         if self._merchant_cache is None:
-            sql = """
+            db = config.CLICKHOUSE_DATABASE
+            sql = f"""
                 SELECT DISTINCT part_name_en, part_name_ar
-                FROM main.dim_partners
+                FROM {db}.dim_partners
                 WHERE status = 'active'
-                  AND part_id IN (SELECT DISTINCT part_id FROM main.dim_offers WHERE deleted_at IS NULL AND offer_status = 'active')
+                  AND part_id IN (SELECT DISTINCT part_id FROM {db}.dim_offers WHERE deleted_at IS NULL AND offer_status = 'active')
             """
             rows = self._rows(sql, {})
             merchants = set()
@@ -600,36 +794,31 @@ class CatalogQueryService:
 
     # -- Query Methods -------------------------------------------------------
 
-    def list_by_merchant(self, merchant: str, lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
+    def list_by_merchant(self, merchant: str, lang: str, limit: int = 10, session_id: Optional[str] = None, place_id: Optional[int] = None) -> list[dict]:
         merchant = self._resolve_merchant(merchant)
         where, params = _build_merchant_filter(merchant, lang)
-        sql = _BASE_SELECT + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
-        params["lim"] = limit
-        rows = self._rows(sql, params)
-        if session_id:
-            self.session_manager.add_offers_to_session(session_id, rows)
-        return _live_rows(rows)
+        if place_id is not None:
+            where += " AND o.place_id = %(pid)s"
+            params["pid"] = place_id
+        sql = _base_select() + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
+        return self._rows_live(sql, params, limit, session_id)
 
     def list_by_price_range(self, price_min: Optional[float], price_max: Optional[float], lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
         where, params = _build_price_filter(price_min, price_max)
-        sql = _BASE_SELECT + where + " ORDER BY o.actual_value ASC NULLS LAST LIMIT %(lim)s"
-        params["lim"] = limit
-        rows = self._rows(sql, params)
-        if session_id:
-            self.session_manager.add_offers_to_session(session_id, rows)
-        return _live_rows(rows)
+        sql = _base_select() + where + " ORDER BY o.actual_value ASC NULLS LAST LIMIT %(lim)s"
+        return self._rows_live(sql, params, limit, session_id)
 
     def get_superlative(self, direction: str, lang: str, session_id: Optional[str] = None) -> list[dict]:
-        sql, params = _build_superlative_query(direction, limit=1)
-        rows = self._rows(sql, params)
+        sql, params = _build_superlative_query(direction, limit=5)
+        rows = _live_rows(self._rows(sql, params))
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
-        return _live_rows(rows)
+        return rows[:1]
 
     def get_merchant_location(self, merchant: str, lang: str, session_id: Optional[str] = None) -> list[dict]:
         merchant = self._resolve_merchant(merchant)
         where, params = _build_merchant_filter(merchant, lang)
-        sql = _BASE_SELECT + where + " LIMIT 5"
+        sql = _base_select() + where + " LIMIT 5"
         rows = self._rows(sql, params)
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
@@ -637,12 +826,53 @@ class CatalogQueryService:
 
     def list_by_tag(self, tag: str, lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
         where, params = _build_tag_filter(tag)
-        sql = _BASE_SELECT + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
-        params["lim"] = limit
-        rows = self._rows(sql, params)
+        sql = _base_select() + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
+        return self._rows_live(sql, params, limit, session_id)
+
+    def list_by_place(self, place_id: int, lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
+        """Offers valid in one city/place (dim_offers.place_id)."""
+        sql = (_base_select() + " AND o.place_id = %(pid)s"
+               " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s")
+        return self._rows_live(sql, {"pid": place_id}, limit, session_id)
+
+    def list_ending_soon(self, lang: str, days: int = 7, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
+        """Live offers expiring within `days` (last-chance questions)."""
+        sql = (_base_select() + " AND o.offer_expire_date BETWEEN now() AND now() + INTERVAL %(days)s DAY"
+               " ORDER BY o.offer_expire_date ASC NULLS LAST LIMIT %(lim)s")
+        rows = self._rows(sql, {"days": days, "lim": limit})
         if session_id:
             self.session_manager.add_offers_to_session(session_id, rows)
         return _live_rows(rows)
+
+    def list_starting_soon(self, lang: str, limit: int = 10, session_id: Optional[str] = None) -> list[dict]:
+        """Active offers whose sale window opens in the future."""
+        sql = (_base_select() + " AND o.offer_start_date > now()"
+               " ORDER BY o.offer_start_date ASC NULLS LAST LIMIT %(lim)s")
+        rows = self._rows(sql, {"lim": limit})
+        if session_id:
+            self.session_manager.add_offers_to_session(session_id, rows)
+        return _live_rows(rows)
+
+    def live_places(self) -> list[dict]:
+        """Cities/places that actually have live offers right now (for honest
+        'nothing in X, try Y' answers). Cached per process."""
+        if getattr(self, "_live_places_cache", None) is not None:
+            return self._live_places_cache
+        db = config.CLICKHOUSE_DATABASE
+        try:
+            rows = self._rows_raw(
+                f"""SELECT o.place_id AS pid, pl.place_name_en AS en, pl.place_name_ar AS ar,
+                           count() AS n
+                    FROM {db}.dim_offers o
+                    LEFT JOIN {db}.dim_place pl ON pl.place_id = o.place_id
+                    WHERE o.deleted_at IS NULL AND o.offer_status = 'active'
+                      AND o.offer_expire_date > now()
+                    GROUP BY o.place_id, pl.place_name_en, pl.place_name_ar
+                    ORDER BY n DESC""", {})
+        except Exception:  # noqa: BLE001
+            rows = []
+        self._live_places_cache = rows
+        return rows
 
     def list_multi_merchant(self, merchants: list[str], lang: str, limit_per_merchant: int = 3, session_id: Optional[str] = None) -> list[dict]:
         """Fetch offers for multiple merchants (e.g., 'KFC and Pizza Hut')."""
@@ -650,9 +880,8 @@ class CatalogQueryService:
         for merchant in merchants:
             merchant = self._resolve_merchant(merchant)
             where, params = _build_merchant_filter(merchant, lang)
-            sql = _BASE_SELECT + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
-            params["lim"] = limit_per_merchant
-            rows = self._rows(sql, params)
+            sql = _base_select() + where + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT %(lim)s"
+            rows = self._rows_live(sql, params, limit_per_merchant)
             for r in rows:
                 r["_matched_merchant"] = merchant
             all_results.extend(rows)
@@ -663,11 +892,15 @@ class CatalogQueryService:
     # -- Formatting Helpers --------------------------------------------------
 
     def _title(self, row: dict, lang: str) -> str:
+        # Live main_eg: mobile_offer_title_* is NULL for ~all live offers
+        # (verified 2026-09-28: 1/658 has it); the real title is offer_brief_*.
         if lang == "ar":
             return (row.get("mobile_offer_title_ar") or row.get("mobile_offer_title_en")
+                    or row.get("offer_brief_ar") or row.get("offer_brief_en")
                     or row.get("part_name_ar") or row.get("part_name_en")
                     or f"كوبون {row.get('offer_id')}")
         return (row.get("mobile_offer_title_en") or row.get("mobile_offer_title_ar")
+                or row.get("offer_brief_en") or row.get("offer_brief_ar")
                 or row.get("part_name_en") or row.get("part_name_ar")
                 or f"Coupon {row.get('offer_id')}")
 
@@ -787,6 +1020,10 @@ class CatalogQueryService:
         if expiry_str:
             parts.append(f"valid until {expiry_str}" if lang == "en" else f"صالح حتى {expiry_str}")
 
+        place = row.get(f"place_name_{lang}") or row.get("place_name_en")
+        if place:
+            parts.append(f"📍 {self._clean_text(place)}")
+
         if include_location:
             loc_parts = []
             address = row.get(f"part_address_{lang}") or row.get("part_address_en")
@@ -832,6 +1069,13 @@ class CatalogQueryService:
                 "highest_discount": "Here's the offer with the highest discount right now:",
                 "location_header": "Here are the details for {merchant}:",
                 "tag_header": "Here are the current {tag} offers:",
+                "place_header": "Here are the current offers in {place}:",
+                "place_empty": ("I don't see any live offers in {place} right now. "
+                                "Live offers are currently in: {live_places}."),
+                "ending_soon_header": "These offers end within {days} days — last chance:",
+                "ending_soon_empty": "Nothing is expiring in the next {days} days.",
+                "starting_soon_header": "These offers start soon:",
+                "starting_soon_empty": "No upcoming offers are announced right now.",
                 "multi_merchant_header": "Here are offers from {merchants}:",
                 "compare_header": "Here's a comparison of offers from {merchants}:",
                 "compare_no_offers": "I don't have any offers from {merchants} in your recent history to compare.",
@@ -846,6 +1090,13 @@ class CatalogQueryService:
                 "highest_discount": "ده العرض اللي عليه أعلى خصم دلوقتي:",
                 "location_header": "تفاصيل {merchant}:",
                 "tag_header": "دي عروض {tag} الحالية:",
+                "place_header": "دي العروض الحالية في {place}:",
+                "place_empty": ("مفيش عروض شغالة في {place} دلوقتي. "
+                                "العروض الشغالة حاليا في: {live_places}."),
+                "ending_soon_header": "العروض دي هتخلص خلال {days} أيام — آخر فرصة:",
+                "ending_soon_empty": "مفيش حاجة هتخلص خلال {days} أيام.",
+                "starting_soon_header": "العروض دي هتبدأ قريب:",
+                "starting_soon_empty": "مفيش عروض جاية معلنة دلوقتي.",
                 "multi_merchant_header": "عروض من {merchants}:",
                 "compare_header": "مقارنة بين عروض {merchants}:",
                 "compare_no_offers": "مفيش عروض من {merchants} في سجلك الحديث للمقارنة.",
@@ -871,7 +1122,14 @@ class CatalogQueryService:
                 return self._answer_multi_merchant(mentioned, lang, session_id)
 
             if intent["type"] == "merchant":
-                return self._answer_merchant(intent["merchant"], lang, session_id)
+                return self._answer_merchant(intent["merchant"], lang, session_id,
+                                             place_id=intent.get("place_id"))
+            elif intent["type"] == "place":
+                return self._answer_place(intent["place_id"], lang, session_id)
+            elif intent["type"] == "ending_soon":
+                return self._answer_ending_soon(intent.get("days") or 7, lang, session_id)
+            elif intent["type"] == "starting_soon":
+                return self._answer_starting_soon(lang, session_id)
             elif intent["type"] == "price_ceiling":
                 return self._answer_price_ceiling(intent["price_max"], lang, session_id)
             elif intent["type"] == "price_floor":
@@ -893,8 +1151,8 @@ class CatalogQueryService:
             log.warning("catalog query failed for query=%r: %s", query, e)
             return {"answer": CATALOG_ERROR.get(lang, CATALOG_ERROR["en"]), "sources": []}
 
-    def _answer_merchant(self, merchant: str, lang: str, session_id: Optional[str] = None) -> dict:
-        rows = self.list_by_merchant(merchant, lang, limit=10, session_id=session_id)
+    def _answer_merchant(self, merchant: str, lang: str, session_id: Optional[str] = None, place_id: Optional[int] = None) -> dict:
+        rows = self.list_by_merchant(merchant, lang, limit=10, session_id=session_id, place_id=place_id)
         if not rows:
             resolved = self._resolve_merchant(merchant)
             msgs = self._messages(lang)
@@ -902,6 +1160,46 @@ class CatalogQueryService:
 
         msgs = self._messages(lang)
         header = msgs["merchant_header"].format(merchant=rows[0].get("part_name_en") or merchant)
+        lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
+        return {"answer": "\n".join(lines), "sources": []}
+
+    def _place_label(self, place_id: int, lang: str) -> str:
+        en, ar = PLACES.get(place_id, ("", ""))
+        return ar if lang == "ar" else en
+
+    def _live_places_label(self, lang: str) -> str:
+        rows = self.live_places()
+        names = [(r.get("ar") or r.get("en")) if lang == "ar"
+                 else (r.get("en") or r.get("ar")) for r in rows]
+        names = [n for n in names if n]
+        return ", ".join(names[:5]) if names else ("Cairo" if lang == "en" else "القاهرة")
+
+    def _answer_place(self, place_id: int, lang: str, session_id: Optional[str] = None) -> dict:
+        msgs = self._messages(lang)
+        rows = self.list_by_place(place_id, lang, limit=10, session_id=session_id)
+        if not rows:
+            return {"answer": msgs["place_empty"].format(
+                place=self._place_label(place_id, lang),
+                live_places=self._live_places_label(lang)), "sources": []}
+        header = msgs["place_header"].format(place=self._place_label(place_id, lang))
+        lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
+        return {"answer": "\n".join(lines), "sources": []}
+
+    def _answer_ending_soon(self, days: int, lang: str, session_id: Optional[str] = None) -> dict:
+        msgs = self._messages(lang)
+        rows = self.list_ending_soon(lang, days=days, limit=10, session_id=session_id)
+        if not rows:
+            return {"answer": msgs["ending_soon_empty"].format(days=days), "sources": []}
+        header = msgs["ending_soon_header"].format(days=days)
+        lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
+        return {"answer": "\n".join(lines), "sources": []}
+
+    def _answer_starting_soon(self, lang: str, session_id: Optional[str] = None) -> dict:
+        msgs = self._messages(lang)
+        rows = self.list_starting_soon(lang, limit=10, session_id=session_id)
+        if not rows:
+            return {"answer": msgs["starting_soon_empty"], "sources": []}
+        header = msgs["starting_soon_header"]
         lines = [header] + [self._format_offer(r, lang) for r in rows[:5]]
         return {"answer": "\n".join(lines), "sources": []}
 
@@ -1069,7 +1367,7 @@ class CatalogQueryService:
 
     def _answer_generic(self, lang: str, session_id: Optional[str] = None) -> dict:
         """Fallback: show a few top active offers."""
-        sql = _BASE_SELECT + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT 5"
+        sql = _base_select() + " ORDER BY o.offer_discount DESC NULLS LAST LIMIT 5"
         rows = _live_rows(self._rows(sql, {}))
         if not rows:
             msgs = self._messages(lang)

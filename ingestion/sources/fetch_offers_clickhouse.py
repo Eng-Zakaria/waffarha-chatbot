@@ -103,14 +103,19 @@ _PARTNER_COLUMNS = {
     "work_time_ar": "work_time_ar",
 }
 
-_QUERY = f"""
+def _query() -> str:
+    db = config.CLICKHOUSE_DATABASE
+    return f"""
 SELECT {', '.join(f'o.{c}' for c in _OFFER_COLUMNS)},
        p.part_name_en, p.part_name_ar,
        {', '.join(f'p.{col} AS {alias}' for col, alias in _PARTNER_COLUMNS.items())}
-FROM main.dim_offers AS o
-LEFT JOIN main.dim_partners AS p ON o.part_id = p.part_id
+FROM {db}.dim_offers AS o
+LEFT JOIN {db}.dim_partners AS p ON o.part_id = p.part_id
 WHERE o.deleted_at IS NULL
 """
+
+
+_QUERY = _query()
 # NOTE: deliberately NOT filtering `offer_status = 'active'` here -- the
 # JSON-API pipeline doesn't pre-filter at fetch time either; load_offers()
 # applies config.OFFER_ACTIVE_VALUES itself, so filtering happens in exactly
@@ -243,7 +248,7 @@ def _row_to_lang_offer(row: dict, lang: str) -> dict:
 
 def fetch_all_offers() -> list:
     client = config.get_clickhouse_client()
-    result = client.query(_QUERY)
+    result = client.query(_query())
     rows = result.named_results()  # list of dict-like rows
 
     offers = []
@@ -256,8 +261,9 @@ def fetch_all_offers() -> list:
 
 def run_debug():
     client = config.get_clickhouse_client()
-    print("Running query:\n", _QUERY)
-    result = client.query(_QUERY + " LIMIT 3")
+    q = _query()
+    print("Running query:\n", q)
+    result = client.query(q + " LIMIT 3")
     rows = list(result.named_results())
     print(f"\nFetched {len(rows)} sample row(s).")
     if not rows:

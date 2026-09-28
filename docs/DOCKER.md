@@ -51,10 +51,9 @@ cp .env.example .env
 
 | Variable | Required? | Description |
 |----------|-----------|-------------|
-| `WAFFARHA_SECURITY_KEY` | **YES** | API key for offer fetching (ingest scripts only) |
 | `OLLAMA_MODEL` | No | Default: `qwen2.5:3b-instruct` — change to rebuild ollama image |
-| `EMBEDDING_MODEL` | No | Default: `intfloat/multilingual-e5-base` — change to rebuild app image |
-| `CLICKHOUSE_*` | If using ClickHouse fetchers | ClickHouse connection for data ingestion |
+| `EMBEDDING_MODEL` | No | Default: `BAAI/bge-m3` (same as `docker-compose.yml`) — change to rebuild app image |
+| `CLICKHOUSE_*` | If running `ingestion/refresh.py` | ClickHouse connection for data ingestion (the app itself reads a prebuilt index; the machine that runs fetch can be different) |
 
 ### 3. Optional Overrides
 

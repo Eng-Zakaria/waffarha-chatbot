@@ -308,6 +308,15 @@
   }
   .send-btn:hover:not(:disabled){ transform:scale(1.05); background:var(--orange-dark); }
   .send-btn:disabled{ background:var(--orange-soft); cursor:not-allowed; opacity:.6; }
+  .voice-btn{
+    width:40px; height:40px; border-radius:13px; border:1.5px solid var(--peach-line); background:var(--surface);
+    display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;
+    transition:transform .12s ease, border-color .15s ease; color:var(--ink);
+  }
+  .voice-btn:hover{ transform:scale(1.05); border-color:var(--orange-soft); }
+  .voice-btn.active{ border-color:var(--orange); color:var(--orange); }
+  .voice-btn.recording{ border-color:#d33; color:#d33; animation:pulse 1s infinite; }
+  @keyframes pulse{ 50%{ opacity:.5; } }
   .composer-hint{ text-align:center; font-size:11px; color:var(--ink-soft); margin-top:9px; }
 
   .backdrop{ display:none; position:fixed; inset:0; background:rgba(42,33,24,0.35); z-index:5; }
@@ -492,6 +501,12 @@
     <div class="composer-wrap">
       <div class="composer">
         <textarea id="composerInput" rows="1" placeholder="Ask about deals, cashback, orders..."></textarea>
+        <button class="voice-btn" id="micBtn" title="Voice input" aria-label="Voice input" style="display:none">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><rect x="9" y="3" width="6" height="11" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
+        <button class="voice-btn" id="speakBtn" title="Spoken replies" aria-label="Spoken replies" style="display:none">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 9v6h4l5 4V5L8 9H4z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path class="spk-waves" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
         <button class="send-btn" id="sendBtn" disabled>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M4 12l16-8-6 8 6 8-16-8z" fill="white"/></svg>
         </button>
@@ -908,6 +923,7 @@ function finalizeBotBubble(row, bubbleEl, fullText, sources, suggestions, time, 
   timeEl.textContent = formatTime(time);
   wrap.appendChild(timeEl);
   chatScroll.scrollTop = chatScroll.scrollHeight;
+  voiceSpeakReply(fullText);
   const chat = chats.find(c=>c.id===activeChatId);
   if(chat){
     chat.messages.push({ role:'bot', text: fullText, sources: sources || [], time });
@@ -1193,6 +1209,7 @@ async function streamBotMessageLive(userText){
 async function submitMessage(text){
   if(!text || !text.trim()) return;
   if(!activeChatId) startNewChat(false);
+  if(typeof voiceStopAudio === 'function') voiceStopAudio();  // halt reply audio on new turn
 
   if(chatInner.querySelector('.welcome')){
     chatInner.innerHTML = '';
@@ -1308,6 +1325,89 @@ composerInput.addEventListener('keydown', (e)=>{
   }
 });
 sendBtn.addEventListener('click', ()=> submitMessage(composerInput.value));
+
+/* ============================================================
+   Voice agent (STT mic input + Chatterbox TTS spoken replies)
+   Bridges to /api/voice/* on this origin, which proxies the
+   voice lab service. Buttons stay hidden unless the backend
+   reports voice enabled + lab reachable.
+   ============================================================ */
+const micBtn = document.getElementById('micBtn');
+const speakBtn = document.getElementById('speakBtn');
+let voiceSpeakOn = localStorage.getItem('waffarha_voice_speak') === '1';
+let voiceRecorder = null, voiceChunks = [], voiceAudio = null;
+
+function voiceStopAudio(){
+  if(voiceAudio){ try{ voiceAudio.pause(); }catch(e){} voiceAudio = null; }
+}
+function voiceRefreshSpeakBtn(){
+  speakBtn.classList.toggle('active', voiceSpeakOn);
+  speakBtn.style.opacity = voiceSpeakOn ? '1' : '.45';
+}
+async function voiceInit(){
+  voiceRefreshSpeakBtn();
+  try{
+    const r = await fetch('/api/voice/status');
+    if(!r.ok) return;
+    const s = await r.json();
+    if(s.enabled && s.lab_reachable){
+      micBtn.style.display = ''; speakBtn.style.display = '';
+    }
+  }catch(e){ /* voice stays hidden when backend/lab is down */ }
+}
+speakBtn.addEventListener('click', ()=>{
+  voiceSpeakOn = !voiceSpeakOn;
+  localStorage.setItem('waffarha_voice_speak', voiceSpeakOn ? '1' : '0');
+  if(!voiceSpeakOn) voiceStopAudio();
+  voiceRefreshSpeakBtn();
+});
+micBtn.addEventListener('click', async ()=>{
+  if(voiceRecorder){ voiceRecorder.stop(); return; }  // second tap stops
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    composerHint.textContent = 'Voice input not supported in this browser.';
+    return;
+  }
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    voiceChunks = [];
+    voiceRecorder = new MediaRecorder(stream);
+    voiceRecorder.ondataavailable = (e)=>{ if(e.data.size) voiceChunks.push(e.data); };
+    voiceRecorder.onstop = async ()=>{
+      micBtn.classList.remove('recording');
+      stream.getTracks().forEach(t=>t.stop());
+      voiceRecorder = null;
+      const blob = new Blob(voiceChunks, { type: voiceRecorder?.mimeType || 'audio/webm' });
+      if(!blob.size) return;
+      composerHint.textContent = 'Transcribing voice...';
+      try{
+        const fd = new FormData();
+        fd.append('file', blob, 'mic.webm');
+        const r = await fetch('/api/voice/stt', { method: 'POST', body: fd });
+        const j = await r.json();
+        composerHint.textContent = 'Waffarha Assistant can make mistakes. Verify important info.';
+        if(r.ok && j.text && j.text.trim()) submitMessage(j.text.trim());
+        else composerHint.textContent = 'Could not transcribe voice. Try again.';
+      }catch(e){ composerHint.textContent = 'Voice service unavailable.'; }
+    };
+    voiceRecorder.start();
+    micBtn.classList.add('recording');
+  }catch(e){ composerHint.textContent = 'Microphone permission denied.'; }
+});
+async function voiceSpeakReply(fullText){
+  if(!voiceSpeakOn || !fullText || !fullText.trim()) return;
+  voiceStopAudio();
+  try{
+    const r = await fetch('/api/voice/tts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: fullText.slice(0, 350) }),
+    });
+    if(!r.ok) return;
+    const blob = await r.blob();
+    voiceAudio = new Audio(URL.createObjectURL(blob));
+    voiceAudio.play().catch(()=>{});
+  }catch(e){ /* silent: voice must never break text chat */ }
+}
+voiceInit();
 
 /* ============================================================
    Sidebar / mobile

@@ -33,8 +33,14 @@ def test_roundtrip_empty_string():
 
 def test_every_chunk_within_size_bounds():
     text = "عرض ليك وفئة مختلفة وأحسن عرض النهارده من كنتاكي"
-    for chunk in _chunk_text(text):
-        assert len(chunk) <= 24
+    size = 24
+    # Whitespace-exact chunking (shared core.app/agent_server contract) may
+    # overshoot `size` by one token since whitespace stays attached to the
+    # preceding word -- bound by size + longest single token instead of strict
+    # size, so long words/newlines never force a mid-word split.
+    longest = max(len(tok) for tok in text.split())
+    for chunk in _chunk_text(text, size=size):
+        assert len(chunk) <= size + longest
 
 def test_all_non_final_chunks_keep_trailing_space():
     text = "لم أجد عروضاً مطابقة الآن. جرب تاجراً أو فئة مختلفة."

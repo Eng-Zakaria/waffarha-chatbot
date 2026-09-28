@@ -44,7 +44,7 @@ _PAYMENT_COLUMNS = [
     "min", "max", "with_wallet", "type", "provider",
 ]
 
-_QUERY = f"SELECT {', '.join(_PAYMENT_COLUMNS)} FROM main.dim_payment_methods"
+_QUERY = f"SELECT {', '.join(_PAYMENT_COLUMNS)} FROM {config.CLICKHOUSE_DATABASE}.dim_payment_methods"
 
 
 def _clean(v):

@@ -18,11 +18,14 @@ import asyncio
 import json
 import logging
 import queue as pyqueue
+from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+import core.app as _shared
 from core import config
 from core.app import (
     ChatRequest,
@@ -32,7 +35,6 @@ from core.app import (
     _agent_identity,
     _agent_status_text,
     _build_suggestions,
-    _chunk_text,
     _memory_session_key,
     _offer_cards,
     _release_generation_slot,
@@ -42,13 +44,58 @@ from core.app import (
     get_memory_store_async,
 )
 from core.rag_engine import _strip_scaffolding_leaks, detect_lang
+from core.voice import voice_router
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("waffarha-agent")
 
-app = FastAPI(title="Waffarha Agent Assistant")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log.info("Agent server: warming up AgentEngine (loads shared RagEngine)...")
+    await get_agent_engine_async()
+    log.info("Agent server: AgentEngine ready.")
+    yield
+
+
+app = FastAPI(title="Waffarha Agent Assistant", lifespan=lifespan)
+
+# Same CORS contract as core/app.py so a hosted frontend can call :8001
+# directly. Extra public origins come from ALLOWED_ORIGINS in .env.
+ALLOWED_ORIGINS = list(config.ALLOWED_ORIGINS)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type"],
+)
 
 SSE_HEARTBEAT = "\n\n"
+
+
+def _chunk_text(text: str, size: int = 24):
+    """Whitespace-exact streaming chunker: ``"".join(chunks) == text`` always,
+    so streamed words and card line-breaks are never glued.
+
+    Shared contract with ``core.app._chunk_text`` (same implementation).
+    """
+    import re
+    if not text:
+        return [""]
+    # Every whitespace run stays attached to the word before it, so spaces,
+    # newlines, and blank lines between offer cards survive chunking.
+    tokens = re.findall(r"\S+\s*|\s+", text)
+    chunks, cur = [], ""
+    for tok in tokens:
+        cur += tok
+        # Flush at line boundaries (keeps cards line-separated live) or when
+        # the visible text exceeds the target size.
+        if cur.endswith("\n") or len(cur.rstrip()) >= size:
+            chunks.append(cur)
+            cur = ""
+    if cur:
+        chunks.append(cur)
+    return chunks or [""]
 
 # Import RedisError with fallback (same pattern as core/app.py)
 try:
@@ -102,17 +149,13 @@ def _session_remember(session, raw_sources, query, bot_answer):
 
 
 # ---------------------------------------------------------------------------
-# Warm the engine at startup (same as core/app.py) so the first request
-# doesn't pay for model + index loading.
+# Warmup runs via lifespan above so the first request doesn't pay for
+# model + index loading.
 # ---------------------------------------------------------------------------
-@app.on_event("startup")
-async def _warm_up():
-    log.info("Agent server: warming up AgentEngine (loads shared RagEngine)...")
-    await get_agent_engine_async()
-    log.info("Agent server: AgentEngine ready.")
 
 
 @app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/agent/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     user_id, query, session, recent_offers, history, reply_lang = (
         await _resolve_request_context(req)
@@ -164,6 +207,7 @@ async def chat(req: ChatRequest):
 
 
 @app.post("/api/chat/stream")
+@app.post("/api/agent/chat/stream")
 async def chat_stream(req: ChatRequest):
     user_id, query, session, recent_offers, history, reply_lang = (
         await _resolve_request_context(req)
@@ -261,11 +305,56 @@ async def chat_stream(req: ChatRequest):
     )
 
 
-# /api/health for the agent server
+# /api/health for the agent server -- same contract as :8000 plus the
+# engine marker, so monitoring can use either port interchangeably.
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "engine": "agent"}
+    with _shared._in_flight_lock:
+        current = _shared._in_flight
+    return {
+        "status": "ok",
+        "engine": "agent",
+        "engine_loaded": _shared._agent_engine is not None,
+        "memory_connected": _shared._memory is not None,
+        "generation_in_flight": current,
+        "generation_capacity": _shared.MAX_CONCURRENT_GENERATIONS,
+    }
 
+
+@app.get("/api/session/{session_id}/history")
+async def get_session_history(session_id: str, limit: int = 20, request: Request = None):
+    """Same contract as :8000 -- restore conversation history from
+    server-side session memory (most-recent-first reversed to chronological
+    for rendering). Memory is namespaced under the resolved user when one
+    is known, so a guessed session_id never leaks another user's turns."""
+    user_id = None
+    if config.PERSONAL_QUERIES_ENABLED and request is not None:
+        try:
+            user_id = await asyncio.to_thread(get_identity().resolve, request)
+        except Exception as e:  # noqa: BLE001
+            log.warning("identity resolution failed: %s", e)
+            user_id = None
+    try:
+        memory_store = await get_memory_store_async()
+    except RedisError as e:
+        log.warning("Redis unavailable while reading session history: %s", e)
+        raise HTTPException(503, "Session memory unavailable")
+
+    session = memory_store.get(_memory_session_key(session_id, user_id)) if memory_store else None
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    try:
+        turns = await asyncio.to_thread(session.get_turns, limit)
+        turns = list(reversed(turns))  # oldest first for rendering
+        return {"history": turns}
+    except RedisError as e:
+        log.warning("Redis unavailable while reading session history: %s", e)
+        raise HTTPException(503, "Session memory unavailable")
+
+
+# Voice agent (same shared bridge as :8000, before the static mount).
+app.include_router(voice_router)
 
 # Static files — registered last so it doesn't shadow /api/* routes.
 # Serves the same static/index.html, widget calls /api/chat relative to

@@ -312,8 +312,67 @@ class GetOfferTool(Tool):
         )
 
 
+class LiveCatalogTool(Tool):
+    """Answer city/place and time-sensitive offer questions from LIVE
+    ClickHouse (dim_offers + dim_place), not the static index.
+
+    Use for 'offers in Cairo', 'عروض اسكندرية', 'ending soon', 'starting
+    soon', and merchant+city combos. The offline search_offers tool cannot
+    see place_id or expiry windows, so it must not handle these."""
+
+    name = "live_catalog"
+    purpose = ("Find live Waffarha offers by city/place or time window "
+                "(ending soon, starting soon) from the live catalog, "
+                "with honest empty answers when a city has no live offers.")
+    input_schema: ClassVar[dict] = {
+        "query": {"type": "str", "optional": True},
+    }
+
+    def run(self, ctx: ToolContext, args: dict) -> ToolResult:
+        from catalog.catalog_queries import (
+            CatalogQueryService, _detect_intent, _detect_place,
+            _ENDING_SOON_RE, _STARTING_SOON_RE,
+        )
+        import re as _re
+        query = (args.get("query") or ctx.query or "").strip()
+        if not query:
+            return ToolResult(
+                ok=False, summary="live_catalog needs a query", error="missing query")
+        intent = _detect_intent(query)
+        if intent.get("type") not in ("place", "ending_soon", "starting_soon",
+                                      "merchant"):
+            return ToolResult(
+                ok=True, items=[],
+                summary="not a live-catalog (place/time) question",
+                note={"kind": "not_live", "provenance": "live_catalog:none"})
+        if intent.get("type") == "merchant" and intent.get("place_id") is None:
+            # Merchant-only questions belong to the offline search; live data
+            # adds nothing unless a city filter is attached.
+            if _detect_place(query) is None and not any(
+                    r.search(query) for r in _ENDING_SOON_RE + _STARTING_SOON_RE):
+                return ToolResult(
+                    ok=True, items=[],
+                    summary="merchant-only question, use search_offers",
+                    note={"kind": "not_live", "provenance": "live_catalog:none"})
+        try:
+            out = CatalogQueryService().handle(query, ctx.reply_lang)
+        except Exception:  # noqa: BLE001
+            return ToolResult(
+                ok=False, summary="live catalog query failed", error="live_error")
+        text = str((out or {}).get("answer") or "").strip()
+        if not text:
+            return ToolResult(ok=True, items=[], summary="no live offers",
+                              note={"kind": "no_match", "provenance": "live_catalog:none"})
+        return ToolResult(
+            ok=True, items=[{"metadata": {"source": "live_catalog",
+                                          "id": "live", "answer": text}}],
+            summary="live catalog answer",
+            note={"kind": "live", "provenance": "live_catalog", "text": text})
+
+
 def register_catalog_tools(registry):
     """Register the Stage-2 offline catalog tools on a ToolRegistry."""
     registry.register(SearchOffersTool())
     registry.register(GetOfferTool())
+    registry.register(LiveCatalogTool())
     return registry

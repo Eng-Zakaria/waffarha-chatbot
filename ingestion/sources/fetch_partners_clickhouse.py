@@ -67,12 +67,17 @@ _PARTNER_COLUMNS = [
 # -- dim_partners likely has dead/test rows the same way dim_payment_methods
 # did, and there's no point profiling field coverage on rows nothing links
 # to. Distinct on part_id since one partner can have many offers.
-_QUERY = f"""
+def _query() -> str:
+    db = config.CLICKHOUSE_DATABASE
+    return f"""
 SELECT DISTINCT {', '.join(f'p.{c}' for c in _PARTNER_COLUMNS)}
-FROM main.dim_partners AS p
-INNER JOIN main.dim_offers AS o ON o.part_id = p.part_id
+FROM {db}.dim_partners AS p
+INNER JOIN {db}.dim_offers AS o ON o.part_id = p.part_id
 WHERE o.deleted_at IS NULL
 """
+
+
+_QUERY = _query()
 
 
 def _clean(v):
@@ -95,8 +100,8 @@ def _is_present(v) -> bool:
 
 def run_debug():
     client = config.get_clickhouse_client()
-    print("Running query:\n", _QUERY, "\n")
-    rows = [dict(r) for r in client.query(_QUERY).named_results()]
+    print("Running query:\n", _query(), "\n")
+    rows = [dict(r) for r in client.query(_query()).named_results()]
     print(f"Fetched {len(rows)} distinct partner(s) linked to a non-deleted offer.\n")
 
     if not rows:
@@ -143,19 +148,24 @@ def run_debug():
     )
 
 
-_SNAPSHOT_QUERY = """
+def _snapshot_query() -> str:
+    db = config.CLICKHOUSE_DATABASE
+    return f"""
 SELECT DISTINCT part_id, part_name_en, part_name_ar, status
-FROM main.dim_partners AS p
-INNER JOIN main.dim_offers AS o ON o.part_id = p.part_id
+FROM {db}.dim_partners AS p
+INNER JOIN {db}.dim_offers AS o ON o.part_id = p.part_id
 WHERE o.deleted_at IS NULL
 """
+
+
+_SNAPSHOT_QUERY = _snapshot_query()
 
 
 def run_snapshot(path: str):
     """Writes the merchant-identity snapshot FacetedCatalog loads at chat
     time. One row per partner; names/status cleaned to '' / 'unknown'."""
     client = config.get_clickhouse_client()
-    rows = client.query(_SNAPSHOT_QUERY).named_results()
+    rows = client.query(_snapshot_query()).named_results()
     out = []
     for r in rows:
         en = _clean(r.get("part_name_en")) or ""

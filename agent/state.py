@@ -91,9 +91,12 @@ class AgentState:
     def add_evidence(self, items: list):
         if not items:
             return
-        seen = set(self.evidence)
+        seen = set()
+        for e in self.evidence:
+            m = e.get("metadata", {}) if isinstance(e, dict) else {}
+            seen.add((m.get("source"), m.get("id")))
         for it in items:
-            meta = it.get("metadata", {})
+            meta = it.get("metadata", {}) if isinstance(it, dict) else {}
             key = meta.get("source") if meta else None
             oid = meta.get("id") if meta else None
             ident = (key, oid) if (key is not None and oid is not None) else None

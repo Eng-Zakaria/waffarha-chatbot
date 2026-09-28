@@ -24,6 +24,7 @@ The script maintains a manifest file (index_manifest.json) that tracks:
 - Last sync timestamp
 """
 import argparse
+import json
 import os
 import pickle
 import re

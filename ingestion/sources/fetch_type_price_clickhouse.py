@@ -46,7 +46,7 @@ _COLUMNS = [
     "status", "type_price_commission", "notes", "start_date", "expire_date",
 ]
 
-_QUERY = f"SELECT {', '.join(_COLUMNS)} FROM main.dim_type_price"
+_QUERY = f"SELECT {', '.join(_COLUMNS)} FROM {config.CLICKHOUSE_DATABASE}.dim_type_price"
 
 
 def _clean(v):
