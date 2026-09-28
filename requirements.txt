@@ -30,10 +30,12 @@ requests>=2.31
 google
 
 # --- Evaluation & Comparison ---
-# For Gemini comparison (pip install google-genai)
+# Local-vs-cloud comparison lives in eval/compare_local_vs_cloud.py
+# (branch exp/free-cloud-llm) and needs no extra dependency -- the Gemini
+# provider uses plain HTTPS via `requests` above. The commented packages
+# below are only for other ad-hoc eval experiments:
 # For semantic similarity (pip install scikit-learn)
-# Uncomment if you want to run compare_llms.py:
-# google-genai>=1.0
+# Uncomment if you want to run similarity-scored evals:
 # scikit-learn>=1.3
 
 # --- Dev / test ---

@@ -225,7 +225,8 @@ def call_planner(client, model: str, prompt: str, tools: list,
     """Run the single structured planning call. Returns
     {"raw":..., "plan":{...}} or raises PlanParseError on failure.
 
-    `client` is an ollama.Client or None; a None client (offline) raises
+    `client` is an LLM provider (see core.llm_providers -- same .chat()
+    contract as ollama.Client) or None; a None client (offline) raises
     PlanParseError so the engine degrades to deterministic fallback."""
     if client is None:
         raise PlanParseError("no planner client available")

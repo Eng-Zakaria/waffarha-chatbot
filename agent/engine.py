@@ -80,9 +80,11 @@ class AgentEngine:
         self._client = self._new_client()
 
     def _new_client(self):
+        # exp/free-cloud-llm: provider client (local Ollama or free-tier
+        # Gemini) following config.LLM_PROVIDER, exposing the same .chat().
         try:
-            from ollama import Client
-            return Client(host="http://localhost:11434")
+            from core.llm_providers import get_llm_provider
+            return get_llm_provider()
         except Exception:  # noqa: BLE001
             return None
 

@@ -375,6 +375,28 @@ PARTNERS_SNAPSHOT_PATH = os.path.join(INDEX_DIR, "partners", "partners.json")
 PARTNERS_STATUS_LIVE = {"active"}
 
 
+# NEW (exp/free-cloud-llm): which LLM backend serves generation (answer
+# drafting, agent planning, intent judge). "ollama" = local model via
+# OLLAMA_HOST (unchanged default behavior). "gemini" = Google's Gemini API
+# on its free tier -- needs GEMINI_API_KEY (free at
+# https://aistudio.google.com/apikey). One switch flips every LLM call site
+# (RagEngine, agent planner, intent judge); embeddings/retrieval stay local.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").lower()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Free-tier-friendly default. If the API 404s on this name, list the models
+# your key can use and set GEMINI_MODEL to one of them (see docs/CLOUD_LLM.md).
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_BASE = os.getenv(
+    "GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta")
+GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "60"))
+
+
+def _default_provider_model() -> str:
+    """Generation-model default matching LLM_PROVIDER, so a stale Ollama tag
+    is never sent to Gemini (or vice versa) unless explicitly overridden."""
+    return GEMINI_MODEL if LLM_PROVIDER == "gemini" else OLLAMA_MODEL
+
+
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 
@@ -383,7 +405,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b-instruct")
 # can be sized per stage (e.g. AGENT_MODEL=qwen2.5:1.5b-instruct for a cheaper
 # planner once planning quality is validated). Defaults to the same local
 # Ollama generation model so the agent works with zero extra setup.
-AGENT_MODEL = os.getenv("AGENT_MODEL", OLLAMA_MODEL)
+AGENT_MODEL = os.getenv("AGENT_MODEL", _default_provider_model())
 # Hard budgets so the agent can never loop unbounded: max structured LLM
 # calls and max tool executions per turn (see agent/engine.py).
 MAX_AGENT_LLM_CALLS = int(os.getenv("MAX_AGENT_LLM_CALLS", "3"))
@@ -397,7 +419,7 @@ AGENT_PLAN_NUM_PREDICT = int(os.getenv("AGENT_PLAN_NUM_PREDICT", "600"))
 # falling back to the keyword verdict on any failure. Disable entirely with
 # INTENT_LLM_JUDGE_ENABLED=false to rely only on the keyword lists.
 INTENT_LLM_JUDGE_ENABLED = os.getenv("INTENT_LLM_JUDGE_ENABLED", "true").lower() == "true"
-INTENT_LLM_JUDGE_MODEL = os.getenv("INTENT_LLM_JUDGE_MODEL", OLLAMA_MODEL)
+INTENT_LLM_JUDGE_MODEL = os.getenv("INTENT_LLM_JUDGE_MODEL", _default_provider_model())
 INTENT_LLM_JUDGE_TIMEOUT = int(os.getenv("INTENT_LLM_JUDGE_TIMEOUT", "12") or "12")
 
 # NEW: Jina AI hosted embeddings API settings (used by the ``jina:`` model

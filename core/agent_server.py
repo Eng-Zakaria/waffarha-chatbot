@@ -167,7 +167,7 @@ async def chat(req: ChatRequest):
         log.error("Index not found: %s", e)
         raise HTTPException(503, str(e))
     except RuntimeError as e:
-        log.error("Ollama unreachable: %s", e)
+        log.error("LLM backend unreachable: %s", e)
         raise HTTPException(503, str(e))
 
     try:
@@ -219,7 +219,7 @@ async def chat_stream(req: ChatRequest):
         log.error("Index not found: %s", e)
         raise HTTPException(503, str(e))
     except RuntimeError as e:
-        log.error("Ollama unreachable: %s", e)
+        log.error("LLM backend unreachable: %s", e)
         raise HTTPException(503, str(e))
 
     try:

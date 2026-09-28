@@ -516,8 +516,8 @@ async def chat(req: ChatRequest):
         log.error("Index not found: %s", e)
         raise HTTPException(503, str(e))
     except RuntimeError as e:
-        # RagEngine.__init__ raises this if it can't reach Ollama.
-        log.error("Ollama unreachable: %s", e)
+        # RagEngine.__init__ raises this if it can't reach the LLM backend.
+        log.error("LLM backend unreachable: %s", e)
         raise HTTPException(503, str(e))
 
     try:
@@ -652,7 +652,7 @@ async def chat_stream(req: ChatRequest):
         log.error("Index not found: %s", e)
         raise HTTPException(503, str(e))
     except RuntimeError as e:
-        log.error("Ollama unreachable: %s", e)
+        log.error("LLM backend unreachable: %s", e)
         raise HTTPException(503, str(e))
 
     try:
@@ -850,7 +850,7 @@ async def agent_chat(req: AgentChatRequest):
         log.error("Index not found: %s", e)
         raise HTTPException(503, str(e))
     except RuntimeError as e:
-        log.error("Ollama unreachable: %s", e)
+        log.error("LLM backend unreachable: %s", e)
         raise HTTPException(503, str(e))
 
     try:
@@ -936,7 +936,7 @@ async def agent_chat_stream(req: AgentChatRequest):
         log.error("Index not found: %s", e)
         raise HTTPException(503, str(e))
     except RuntimeError as e:
-        log.error("Ollama unreachable: %s", e)
+        log.error("LLM backend unreachable: %s", e)
         raise HTTPException(503, str(e))
 
     try:

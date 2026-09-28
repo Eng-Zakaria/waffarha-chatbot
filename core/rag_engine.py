@@ -15,9 +15,8 @@ import pickle
 import random
 import re
 
-import ollama
-
 from core import config
+from core.llm_providers import get_llm_provider, default_model_for  # exp/free-cloud-llm
 from core.embedding_providers import get_embedding_provider, canonical_model_key  # CHANGED
 from core.rag_perfection import (
     normalize_arabizi_and_arabic,
@@ -852,17 +851,16 @@ _intent_judge_disabled = False
 
 
 def _intent_judge_client_get():
-    """Lazy singleton Ollama client for the intent judge. Cheap to create
+    """Lazy singleton LLM client for the intent judge. Cheap to create
     (no I/O until a call); remembered-disabled after a failure so a down
-    Ollama can't slow every ambiguous query."""
+    backend can't slow every ambiguous query. Follows config.LLM_PROVIDER
+    (local Ollama or free-tier Gemini) like every other call site."""
     global _intent_judge_client, _intent_judge_disabled
     if _intent_judge_disabled:
         return None
     if _intent_judge_client is None:
         try:
-            _intent_judge_client = ollama.Client(
-                host=config.OLLAMA_HOST,
-                timeout=config.INTENT_LLM_JUDGE_TIMEOUT)
+            _intent_judge_client = get_llm_provider()
         except Exception:  # noqa: BLE001
             _intent_judge_disabled = True
             return None
@@ -1809,12 +1807,15 @@ class RagEngine:
 
     def __init__(self, embedding_model: str = None, backend: str = None,
                  llm_model: str = None, index_dir: str = None, llm_options: dict = None,
-                 require_llm: bool = True, force_llm_generation: bool = False, no_retrieval: bool = False):
+                 require_llm: bool = True, force_llm_generation: bool = False, no_retrieval: bool = False,
+                 llm_provider: str = None):
         """
         CHANGED (was: only read config.py):
           embedding_model -- sentence-transformers model id. Defaults to config.EMBEDDING_MODEL.
           backend          -- vector store backend. Defaults to config.VECTOR_STORE_BACKEND.
-          llm_model         -- Ollama model tag. Defaults to config.OLLAMA_MODEL.
+          llm_model         -- generation model tag for the active provider.
+                                Defaults to config.OLLAMA_MODEL, or config.GEMINI_MODEL
+                                when llm_provider="gemini" (see below).
           index_dir         -- directory holding this (embedding_model, backend) combo's
                                 docs.pkl [+ index.faiss]. Defaults to the layout written by
                                 ingestion/loaders/build_index.py
@@ -1834,19 +1835,28 @@ class RagEngine:
           no_retrieval -- NEW: If True, skip retrieval entirely. The LLM generates answers
                                 purely from its pre-trained knowledge with NO retrieval context.
                                 This is the "LLM-only" mode for comparison against RAG.
+          llm_provider -- NEW (exp/free-cloud-llm): "ollama" (default) or "gemini".
+                                Overrides config.LLM_PROVIDER for THIS engine instance only,
+                                so eval/compare scripts can run local-vs-cloud side by side
+                                in one process. The default model tag follows the provider.
         """
         # CHANGED: canonicalized so a bare Ollama tag ("qwen3-embedding:0.6b")
         # and its "ollama:" prefixed form resolve to the same index directory.
         self.embedding_model_name = canonical_model_key(embedding_model or config.EMBEDDING_MODEL)
         self.backend = backend or config.VECTOR_STORE_BACKEND
-        self.llm_model = llm_model or config.OLLAMA_MODEL
+        # NEW (exp/free-cloud-llm): provider-resolved model. An explicit
+        # llm_model always wins (lets compare scripts pin exact tags).
+        self.llm_provider_name = (llm_provider or config.LLM_PROVIDER or "ollama").lower()
+        self.llm_model = llm_model or default_model_for(self.llm_provider_name)
         self.llm_options = llm_options or {}  # NEW
         self.force_llm_generation = force_llm_generation
         self.no_retrieval = no_retrieval
         self.require_llm = require_llm  # Store for compat with run_full_eval.py
 
-        # NEW: Initialize Ollama client with host from config
-        self.client = ollama.Client(host=config.OLLAMA_HOST)
+        # NEW (exp/free-cloud-llm): provider client (local Ollama or free-tier
+        # Gemini) exposing the same .chat() contract, so every call site below
+        # works unchanged regardless of backend.
+        self.client = get_llm_provider(self.llm_provider_name)
         
 
         if index_dir is None:
