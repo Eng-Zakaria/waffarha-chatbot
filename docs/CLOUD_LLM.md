@@ -17,7 +17,21 @@ Ollama-shaped dicts. `core/llm_providers.py` implements it twice:
   (`requests`, already a dependency — no new SDK to install).
 
 `LLM_PROVIDER` in `.env` picks the backend. One switch flips every call
-site; embeddings and retrieval stay local either way.
+site; embeddings and retrieval stay local either way. Supported values:
+`ollama` (default), `gemini`, `pollinations`.
+
+## No-signup option: pollinations
+
+`LLM_PROVIDER=pollinations` needs **no key and no account** — it uses the
+pollinations.ai anonymous tier (`POLLINATIONS_MODEL`, default `openai`).
+Verified working, but with honest caveats observed while building this
+branch: the anonymous tier is flaky (intermittent HTTP 500/402 from some
+networks), only the `openai` alias works anonymously (the old `mistral` /
+`qwen` / `deepseek` / `llama` aliases are retired), and requests carrying a
+separate `system` role fail — the provider folds system instructions into
+the first user turn and falls back to the legacy GET endpoint on `/openai`
+outages automatically. Fine for zero-friction smoke tests; prefer Gemini
+(free key, much more reliable) for any serious comparison.
 
 ## Setup (free, ~2 minutes)
 

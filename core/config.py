@@ -390,6 +390,13 @@ GEMINI_API_BASE = os.getenv(
     "GEMINI_API_BASE", "https://generativelanguage.googleapis.com/v1beta")
 GEMINI_TIMEOUT = float(os.getenv("GEMINI_TIMEOUT", "60"))
 
+# NEW (exp/free-cloud-llm): pollinations.ai anonymous tier -- free, NO signup,
+# NO key. Model roster changes over time; "openai" tracks their default alias.
+POLLINATIONS_MODEL = os.getenv("POLLINATIONS_MODEL", "openai")
+POLLINATIONS_API_BASE = os.getenv(
+    "POLLINATIONS_API_BASE", "https://text.pollinations.ai")
+POLLINATIONS_TIMEOUT = float(os.getenv("POLLINATIONS_TIMEOUT", "90"))
+
 
 def _default_provider_model() -> str:
     """Generation-model default matching LLM_PROVIDER, so a stale Ollama tag
