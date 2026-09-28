@@ -104,9 +104,12 @@ answer_format.py
 check_bidi.py
 merchant_debug.txt
 
-# Old evaluation scripts (replaced by utils/run_full_eval.py)
+# Old evaluation scripts (replaced by utils/run_full_eval.py).
+# NOTE: compare_*.py is root-anchored on purpose -- eval/compare_*.py
+# scripts are current (e.g. eval/compare_local_vs_cloud.py) and must stay
+# committable. A bare "compare_*.py" would match at any depth.
 benchmark_embeddings.py
-compare_*.py
+/compare_*.py
 run_eval.py
 run_full_eval.py
 
