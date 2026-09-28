@@ -659,6 +659,9 @@ class SupportQueryService:
                 return self._answer_order(user_id, oid, lang)
             if any(r.search(q) for r in _TROUBLE_RE):
                 return self._answer_last_voucher(user_id, lang)
+            if (vertical is None and not _is_refund(ql)
+                    and any(r.search(q) for r in _COUPONS_ONLY_RE)):
+                return self._answer_coupons_only(user_id, lang)
             if any(r.search(q) for r in _REFUND_MISSING_RE):
                 return self._answer_refund_timeline(user_id, lang, vertical)
             if _is_refund(ql):
