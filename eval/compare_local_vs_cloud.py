@@ -121,6 +121,11 @@ def main() -> int:
                     help="skip RAG retrieval: pure pre-trained LLM vs LLM")
     ap.add_argument("--force-llm", action="store_true",
                     help="skip direct-answer shortcuts, always generate")
+    ap.add_argument("--backend", default=None,
+                    help="vector backend (default: config.VECTOR_STORE_BACKEND); "
+                         "use 'faiss' when the qdrant folder is locked")
+    ap.add_argument("--embedding-model", default=None,
+                    help="embedding model (default: config.EMBEDDING_MODEL)")
     args = ap.parse_args()
 
     from core import config
@@ -146,6 +151,10 @@ def main() -> int:
 
     common = dict(no_retrieval=args.no_retrieval,
                   force_llm_generation=args.force_llm)
+    if args.backend:
+        common["backend"] = args.backend
+    if args.embedding_model:
+        common["embedding_model"] = args.embedding_model
     rows = [{"query": q} for q in queries]
     meta_models = {}
 
@@ -186,6 +195,8 @@ def main() -> int:
     report = {
         "ts": _dt.datetime.now().isoformat(timespec="seconds"),
         "models": meta_models,
+        "backend": args.backend or config.VECTOR_STORE_BACKEND,
+        "embedding_model": args.embedding_model or config.EMBEDDING_MODEL,
         "no_retrieval": args.no_retrieval,
         "force_llm": args.force_llm,
         "results": rows,
