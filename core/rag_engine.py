@@ -1867,7 +1867,11 @@ class RagEngine:
         index_dir = os.path.abspath(index_dir)
 
         docs_path = os.path.join(index_dir, "docs.pkl")
-        store_path = os.path.join(index_dir, "index.faiss") if backend == "faiss" else index_dir
+        # NOTE: self.backend (config default applied), NOT the raw `backend`
+        # arg -- with backend=None (server default) the old check silently
+        # resolved store_path to the index *directory* and faiss died with
+        # "Permission denied" trying to read_index() a folder.
+        store_path = os.path.join(index_dir, "index.faiss") if self.backend == "faiss" else index_dir
 
         if not os.path.exists(docs_path):
             raise FileNotFoundError(
