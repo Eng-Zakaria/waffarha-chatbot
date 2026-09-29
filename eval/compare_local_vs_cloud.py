@@ -128,6 +128,14 @@ def main() -> int:
                     help="embedding model (default: config.EMBEDDING_MODEL)")
     args = ap.parse_args()
 
+    # Windows consoles (cp1252/cp1256) crash printing Arabic queries --
+    # backslash-escape instead of dying mid-run.
+    for _stream in (sys.stdout, sys.stderr):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:  # noqa: BLE001
+            pass
+
     from core import config
     from core.rag_engine import RagEngine
 
@@ -158,52 +166,57 @@ def main() -> int:
     rows = [{"query": q} for q in queries]
     meta_models = {}
 
-    for name, provider, model in specs:
-        print(f"--- provider: {name} ({provider}:{model}) ---")
-        try:
-            engine = RagEngine(llm_provider=provider, llm_model=model,
-                               **common)
-        except Exception as e:  # noqa: BLE001 -- e.g. missing key/service
-            print(f"  engine build failed: {e}")
-            for row in rows:
-                row[name] = {"answer": "",
-                             "error": f"engine build failed: {str(e)[:200]}",
-                             "seconds": 0, "sources": []}
-            meta_models[name] = f"{model} (BUILD FAILED)"
-            continue
-        meta_models[name] = engine.llm_model
-        for i, (q, row) in enumerate(zip(queries, rows), 1):
-            res = _run_one(engine, q)
-            row[name] = {k: v for k, v in res.items() if k != "sources"}
-            if i == 1 or not row.get("sources"):
-                row["sources"] = res["sources"]
-            flag = "ERR " if res.get("error") else "ok  "
-            print(f"  [{i}/{len(queries)}] {flag} {res['seconds']}s -- "
-                  f"{q[:60]}")
-            if res.get("error"):
-                print(f"           {res['error'][:160]}")
-        del engine
-        gc.collect()
-
-    # One shared sources snapshot per query (retrieval is backend-independent).
-    for row in rows:
-        row.setdefault("sources", [])
-
     out = args.out or os.path.join(
         "eval", "local_vs_cloud_"
         + _dt.datetime.now().strftime("%Y%m%d_%H%M%S") + ".json")
-    report = {
-        "ts": _dt.datetime.now().isoformat(timespec="seconds"),
-        "models": meta_models,
-        "backend": args.backend or config.VECTOR_STORE_BACKEND,
-        "embedding_model": args.embedding_model or config.EMBEDDING_MODEL,
-        "no_retrieval": args.no_retrieval,
-        "force_llm": args.force_llm,
-        "results": rows,
-    }
-    with open(out, "w", encoding="utf-8") as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-    print(f"\nWrote {len(rows)} comparisons -> {out}")
+
+    def _write_report():
+        report = {
+            "ts": _dt.datetime.now().isoformat(timespec="seconds"),
+            "models": meta_models,
+            "backend": args.backend or config.VECTOR_STORE_BACKEND,
+            "embedding_model": args.embedding_model or config.EMBEDDING_MODEL,
+            "no_retrieval": args.no_retrieval,
+            "force_llm": args.force_llm,
+            "results": rows,
+        }
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+        print(f"\nWrote {len(rows)} comparisons -> {out}")
+
+    try:
+        for name, provider, model in specs:
+            print(f"--- provider: {name} ({provider}:{model}) ---")
+            try:
+                engine = RagEngine(llm_provider=provider, llm_model=model,
+                                   **common)
+            except Exception as e:  # noqa: BLE001 -- e.g. missing key/service
+                print(f"  engine build failed: {e}")
+                for row in rows:
+                    row[name] = {"answer": "",
+                                 "error": f"engine build failed: {str(e)[:200]}",
+                                 "seconds": 0, "sources": []}
+                meta_models[name] = f"{model} (BUILD FAILED)"
+                continue
+            meta_models[name] = engine.llm_model
+            for i, (q, row) in enumerate(zip(queries, rows), 1):
+                res = _run_one(engine, q)
+                row[name] = {k: v for k, v in res.items() if k != "sources"}
+                if i == 1 or not row.get("sources"):
+                    row["sources"] = res["sources"]
+                flag = "ERR " if res.get("error") else "ok  "
+                print(f"  [{i}/{len(queries)}] {flag} {res['seconds']}s -- "
+                      f"{q[:60]}")
+                if res.get("error"):
+                    print(f"           {res['error'][:160]}")
+            del engine
+            gc.collect()
+    finally:
+        # One shared sources snapshot per query (retrieval is
+        # backend-independent). Always written, even on mid-run crashes.
+        for row in rows:
+            row.setdefault("sources", [])
+        _write_report()
     return 0
 
 
