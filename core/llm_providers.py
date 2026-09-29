@@ -27,6 +27,27 @@ from core import config
 log = logging.getLogger("waffarha-app")
 
 
+def _parse_json_body(resp):
+    """Decode a JSON response body as UTF-8 explicitly.
+
+    `requests` guesses the encoding when the server omits a charset (and
+    guesses wrong for Arabic -- latin-1 mojibake like "Ù„ÙŠØ³"). The APIs
+    used here always send UTF-8, so decode the raw bytes directly instead
+    of trusting `resp.json()` / `resp.text`.
+    """
+    content = getattr(resp, "content", None)
+    if isinstance(content, (bytes, bytearray)) and content:
+        return json.loads(bytes(content).decode("utf-8"))
+    return resp.json()
+
+
+def _decode_line(raw):
+    """Decode one SSE line as UTF-8 (same mojibake guard as above)."""
+    if isinstance(raw, (bytes, bytearray)):
+        return bytes(raw).decode("utf-8", errors="replace")
+    return raw
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -231,7 +252,7 @@ class GeminiLLMProvider:
             json=body, timeout=self.timeout,
         )
         self._raise_for_status(resp, "generateContent")
-        text, blocked = self._delta_text(resp.json())
+        text, blocked = self._delta_text(_parse_json_body(resp))
         if blocked:
             raise RuntimeError(
                 "Gemini refused the prompt (safety block, no candidates). "
@@ -247,7 +268,8 @@ class GeminiLLMProvider:
         )
         self._raise_for_status(resp, "streamGenerateContent")
         try:
-            for line in resp.iter_lines(decode_unicode=True):
+            for raw in resp.iter_lines(decode_unicode=False):
+                line = _decode_line(raw)
                 if not line or not line.startswith("data:"):
                     continue
                 data = line[5:].strip()
@@ -400,7 +422,7 @@ class PollinationsLLMProvider:
                     "done": True}
         self._raise_for_status(resp)
         try:
-            text = resp.json()["choices"][0]["message"]["content"] or ""
+            text = _parse_json_body(resp)["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError, ValueError) as e:
             raise RuntimeError(
                 f"Pollinations returned an unexpected body: "
@@ -424,7 +446,8 @@ class PollinationsLLMProvider:
             return
         self._raise_for_status(resp)
         try:
-            for line in resp.iter_lines(decode_unicode=True):
+            for raw in resp.iter_lines(decode_unicode=False):
+                line = _decode_line(raw)
                 if not line or not line.startswith("data:"):
                     continue
                 data = line[5:].strip()

@@ -35,6 +35,13 @@ class FakeResponse:
     def text(self):
         return self._text if self._text is not None else json.dumps(self._payload)
 
+    @property
+    def content(self):
+        return self.text.encode("utf-8")
+
+    def json(self):
+        return self._payload
+
     def json(self):
         return self._payload
 
@@ -316,3 +323,58 @@ def test_pollinations_stream_falls_back_to_single_chunk(monkeypatch):
                          stream=True))
     assert [c["message"]["content"] for c in chunks] == ["fallback answer", ""]
     assert chunks[-1]["done"] is True
+
+
+# ---------------------------------------------------------------------------
+# UTF-8 regression: requests misdetects encoding when the server omits a
+# charset (Arabic comes back as latin-1 mojibake via resp.json()/resp.text).
+# Providers must decode resp.content as UTF-8 explicitly.
+# ---------------------------------------------------------------------------
+
+class _MojibakeResponse(FakeResponse):
+    """Behaves like real `requests` with a missing charset: .json()/.text
+    return latin-1 mojibake, .content holds the true UTF-8 bytes."""
+    def _raw(self):
+        if self._text is not None:
+            return self._text
+        return json.dumps(self._payload, ensure_ascii=False)
+
+    @property
+    def content(self):
+        return self._raw().encode("utf-8")
+
+    @property
+    def text(self):
+        return self.content.decode("latin-1")
+
+    def json(self):
+        return json.loads(self.text)
+
+
+def _arabic_payload(text="عروض الفطار"):
+    return {"candidates": [{"content": {"parts": [{"text": text}]},
+                            "finishReason": "STOP"}]}
+
+
+def test_gemini_arabic_not_mojibake(fake_requests):
+    fake_requests.response = _MojibakeResponse(_arabic_payload("عروض الفطار"))
+    p = GeminiLLMProvider(api_key="k", model="m")
+    resp = p.chat("m", [{"role": "user", "content": "x"}])
+    assert resp["message"]["content"] == "عروض الفطار"
+
+
+def test_gemini_stream_bytes_not_mojibake(fake_requests):
+    line = ('data: {"candidates": [{"content": {"parts": '
+            '[{"text": "أهلا"}]}}]}').encode("utf-8")
+    fake_requests.response = FakeResponse(lines=[line])
+    p = GeminiLLMProvider(api_key="k", model="m")
+    chunks = list(p.chat("m", [{"role": "user", "content": "x"}], stream=True))
+    assert chunks[0]["message"]["content"] == "أهلا"
+
+
+def test_pollinations_arabic_not_mojibake(fake_requests):
+    payload = {"choices": [{"message": {"content": "تمام يا فندم"}}]}
+    fake_requests.response = _MojibakeResponse(payload)
+    p = PollinationsLLMProvider(model="openai")
+    resp = p.chat("openai", [{"role": "user", "content": "x"}])
+    assert resp["message"]["content"] == "تمام يا فندم"
