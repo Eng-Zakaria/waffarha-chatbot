@@ -4101,6 +4101,8 @@ class RagEngine:
         # the legacy personal path for refund/order-id/voucher-specific
         # questions; generic "my coupons" still goes to personal below.
         if user_id is not None and getattr(config, "SUPPORT_QUERIES_ENABLED", True) and is_support_query(query):
+            # Hoisted (shared by the FAQ-preemption check below and the
+            # live-lookup gate): identifiers + refund-like intent.
             try:
                 from support.support_queries import extract_identifiers as _ids
                 _has_ids = bool(_ids(query).get("order_id") or _ids(query).get("voucher_sn"))
@@ -4108,6 +4110,28 @@ class RagEngine:
                 _has_ids = False
             ql = (query or "").lower()
             _is_refund_like = any(k in ql for k in ("refund", "استرجاع", "استرداد", "ريفند", "فلوسي"))
+            # FIX (user-tested): a generic how-to/info question ("How do I
+            # use my purchased coupon?", "What is the refund policy?")
+            # contains support keywords but is NOT an account lookup. When
+            # the deterministic FAQ topic router resolves one AND the query
+            # is not itself account-scoped (no ids, not a personal "my…"
+            # query, and not a bare refund-action like "I want a refund"),
+            # serve the FAQ instead of a live-DB lookup -- the lookup both
+            # hides the FAQ and, on a DB without grants, dead-ends with
+            # "trouble reaching your data".
+            _pre_topic = _route_faq_topic(query, normalized_query)
+            _pre_howto = re.search(
+                r"\bhow\b|\bwhat\b|policy|سياسة|شروط|طريقة|كيفية|ازاي|إزاي|"
+                r"يعني|why|شرح|فهمني", ql) is not None
+            if (_pre_topic is not None and not _has_ids
+                    and not is_personal_query(query)
+                    and (not _is_refund_like or _pre_howto)):
+                _pre_answer = self._faq_topic_answer(
+                    _pre_topic[1], _reply_lang(query),
+                    bilingual=_pre_topic[2])
+                if _pre_answer:
+                    yield _pre_answer
+                    return
             if _is_refund_like or _has_ids or not is_personal_query(query):
                 try:
                     result = self._get_support_service().handle(query, user_id, detect_lang(query))
