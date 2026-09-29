@@ -86,6 +86,7 @@ against retrieved context, follow-up resolution, and tokens/sec.
 | `HTTP 404` | wrong `GEMINI_MODEL` for your key (see above) |
 | `HTTP 429` | free-tier quota exhausted — wait, retry, or use flash-lite |
 | Safety-block error | Gemini refused that prompt span — rephrase |
+| Arabic comes back as `Ù„ÙŠØ³`-style mojibake | encoding-guess bug in the HTTP layer — fixed in `core/llm_providers.py` (`_parse_json_body`/`_decode_line` decode `resp.content` as UTF-8 explicitly); if you see it again, the response path bypassed those helpers |
 | Everything falls back to rules | cloud failing → call sites catch and degrade, check logs |
 
 ## Notes / limits of this branch

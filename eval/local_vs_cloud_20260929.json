@@ -1,0 +1,216 @@
+{
+  "ts": "2026-09-29T11:25:47",
+  "models": {
+    "local": "qwen2.5:3b-instruct",
+    "gemini": "gemini-2.5-flash",
+    "pollinations": "openai"
+  },
+  "backend": "faiss",
+  "embedding_model": "BAAI/bge-m3",
+  "no_retrieval": false,
+  "force_llm": false,
+  "results": [
+    {
+      "query": "What breakfast offers do you have under 200 EGP?",
+      "local": {
+        "answer": "We have some great deals for you! Check out our special offers on specialty coffee and pastries from Sira and Espressolab branches.\n\n🏷️ A wide selection of specialty coffee, refreshing drinks & delicious desserts with up to 41% off @Sira branches\nMerchant: Sira\nCategory: Food & Beverage\nPrice: 85 EGP\nWas 130 EGP\n🔥 Save 41%\nValid until 2026-09-30\n📍 🔗 Offer link: https://waffarha.com/en/o-9465\n\n🏷️ Specialty coffee & wide variety of pastries with up to 32% off @Espressolab branches\nMerchant: Espressolab\nCategory: Food & Beverage\nPrice: 85 EGP\nWas 125 EGP\n🔥 Save 32%\nValid until 2026-09-30\n📍 🔗 Offer link: https://waffarha.com/en/o-8981",
+        "seconds": 14.09
+      },
+      "sources": [
+        {
+          "score": 0.5908917188644409,
+          "embedding_score": 0.5908917188644409,
+          "combined_score": 0.8423202902930123,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "offer",
+            "id": 9465,
+            "title": "A wide selection of specialty coffee, refreshing drinks & delicious desserts with up to 41% off @Sira branches",
+            "merchant": "Sira",
+            "price": 85.0,
+            "old_price": 130.0
+          },
+          "text": "Offer: A wide selection of specialty coffee, refreshing drinks & delicious desserts with up to 41% off @Sira branches\nMerchant: Sira\nPrice: 85.0 EGP (was 130.0 EGP), 41% off\nValid until: 2026-09-30\nTags: Delivery available, Hot deal, Limited-time offer\nPricing options:\n- Drink coupon: 85.0 EGP (was "
+        },
+        {
+          "score": 0.5907386541366577,
+          "embedding_score": 0.5907386541366577,
+          "combined_score": 0.842167225565229,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "offer",
+            "id": 8981,
+            "title": "Specialty coffee & wide variety of pastries with up to 32% off @Espressolab branches",
+            "merchant": "Espressolab",
+            "price": 85.0,
+            "old_price": 125.0
+          },
+          "text": "Offer: Specialty coffee & wide variety of pastries with up to 32% off @Espressolab branches\nMerchant: Espressolab\nPrice: 85.0 EGP (was 125.0 EGP), 32% off\nValid until: 2026-09-30\nTags: Hot deal, Limited-time offer\nPricing options:\n- Hot/Iced Coffee coupon: 85.0 EGP (was 125 EGP, 32% off)\n- Premium H"
+        }
+      ],
+      "gemini": {
+        "answer": "Certainly!\n\n🏷️ A wide selection of specialty coffee, refreshing drinks & delicious desserts with up to 41% off @Sira branches\nMerchant: Sira\nCategory: Food & Beverage\nPrice: 85 EGP\nWas 130 EGP\n🔥 Save 41%\nValid until 2026-09-30\n📍 🔗 Offer link: https://waffarha.com/en/o-9465\n\n🏷️ Specialty coffee & wide variety of pastries with up to 32% off @Espressolab branches\nMerchant: Espressolab\nCategory: Food & Beverage\nPrice: 85 EGP\nWas 125 EGP\n🔥 Save 32%\nValid until 2026-09-30\n📍 🔗 Offer link: https://waffarha.com/en/o-8981",
+        "seconds": 2.96
+      },
+      "pollinations": {
+        "answer": "Here are a few options you might enjoy. Take a look and see which one suits your taste!\n\n🏷️ A wide selection of specialty coffee, refreshing drinks & delicious desserts with up to 41% off @Sira branches\nMerchant: Sira\nCategory: Food & Beverage\nPrice: 85 EGP\nWas 130 EGP\n🔥 Save 41%\nValid until 2026-09-30\n📍 🔗 Offer link: https://waffarha.com/en/o-9465\n\n🏷️ Specialty coffee & wide variety of pastries with up to 32% off @Espressolab branches\nMerchant: Espressolab\nCategory: Food & Beverage\nPrice: 85 EGP\nWas 125 EGP\n🔥 Save 32%\nValid until 2026-09-30\n📍 🔗 Offer link: https://waffarha.com/en/o-8981",
+        "seconds": 9.06
+      }
+    },
+    {
+      "query": "Show me KFC offers",
+      "local": {
+        "answer": "We currently don't have any offers from KFC in our catalog.\nIf you need help, please contact Waffarha support at support@waffarha.com.",
+        "seconds": 0.03
+      },
+      "sources": [],
+      "gemini": {
+        "answer": "We currently don't have any offers from KFC in our catalog.\nIf you need help, please contact Waffarha support at support@waffarha.com.",
+        "seconds": 0.02
+      },
+      "pollinations": {
+        "answer": "We currently don't have any offers from KFC in our catalog.\nIf you need help, please contact Waffarha support at support@waffarha.com.",
+        "seconds": 0.03
+      }
+    },
+    {
+      "query": "How do I use my purchased coupon?",
+      "local": {
+        "answer": "How do I use my purchased coupon?\nAfter payment, find the coupon under 'My Orders' > 'Order Details' > 'Show Offer Code'. For dine-in/takeaway: check the list of available branches and provide the coupon number to the merchant. For delivery (check offer terms first to confirm it's available): call the merchant's hotline, provide the coupon numbers, and confirm order details and address. If your location is within the delivery area, pay the delivery fee in cash upon receipt. It's best to contact the merchant before purchasing to confirm delivery availability for your area.",
+        "seconds": 0.04
+      },
+      "sources": [],
+      "gemini": {
+        "answer": "How do I use my purchased coupon?\nAfter payment, find the coupon under 'My Orders' > 'Order Details' > 'Show Offer Code'. For dine-in/takeaway: check the list of available branches and provide the coupon number to the merchant. For delivery (check offer terms first to confirm it's available): call the merchant's hotline, provide the coupon numbers, and confirm order details and address. If your location is within the delivery area, pay the delivery fee in cash upon receipt. It's best to contact the merchant before purchasing to confirm delivery availability for your area.",
+        "seconds": 0.04
+      },
+      "pollinations": {
+        "answer": "How do I use my purchased coupon?\nAfter payment, find the coupon under 'My Orders' > 'Order Details' > 'Show Offer Code'. For dine-in/takeaway: check the list of available branches and provide the coupon number to the merchant. For delivery (check offer terms first to confirm it's available): call the merchant's hotline, provide the coupon numbers, and confirm order details and address. If your location is within the delivery area, pay the delivery fee in cash upon receipt. It's best to contact the merchant before purchasing to confirm delivery availability for your area.",
+        "seconds": 0.04
+      }
+    },
+    {
+      "query": "What payment methods do you accept?",
+      "local": {
+        "answer": "What payment methods are available on the app?\nWaffarha supports: Bank cards (Visa/MasterCard), Bank Installments (major banks), Apple Pay, E-wallets (Vodafone Cash, Etisalat Cash, Orange Cash, and others), payment via reference number (Fawry, Daman, Basata, Geidea, O-pay), ValU, Suhoola, Forsa, Aman, Contact, Premium Card, Mogo, TRU, and Klivvr.",
+        "seconds": 0.01
+      },
+      "sources": [],
+      "gemini": {
+        "answer": "What payment methods are available on the app?\nWaffarha supports: Bank cards (Visa/MasterCard), Bank Installments (major banks), Apple Pay, E-wallets (Vodafone Cash, Etisalat Cash, Orange Cash, and others), payment via reference number (Fawry, Daman, Basata, Geidea, O-pay), ValU, Suhoola, Forsa, Aman, Contact, Premium Card, Mogo, TRU, and Klivvr.",
+        "seconds": 0.02
+      },
+      "pollinations": {
+        "answer": "What payment methods are available on the app?\nWaffarha supports: Bank cards (Visa/MasterCard), Bank Installments (major banks), Apple Pay, E-wallets (Vodafone Cash, Etisalat Cash, Orange Cash, and others), payment via reference number (Fawry, Daman, Basata, Geidea, O-pay), ValU, Suhoola, Forsa, Aman, Contact, Premium Card, Mogo, TRU, and Klivvr.",
+        "seconds": 0.02
+      }
+    },
+    {
+      "query": "عندك عروض بيتزا إيه؟",
+      "local": {
+        "answer": "للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.",
+        "seconds": 0.53
+      },
+      "sources": [],
+      "gemini": {
+        "answer": "للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.",
+        "seconds": 0.57
+      },
+      "pollinations": {
+        "answer": "للأسف مفيش عندي معلومات عن ده حاليًا. يرجى التواصل مع خدمة عملاء وفرها للمساعدة في الموضوع ده.",
+        "seconds": 0.55
+      }
+    },
+    {
+      "query": "إزاي أستلم الأوردر بتاعي؟",
+      "local": {
+        "answer": "عذرًا، لم تذكر في رسالتك ما إذا كنت تقصد الدفع باستخدام فرصة أم طريقة أخرى. سأرجوك أن تحدد الطريقة التي تستخدمها للدفع حتى أتمكن من مساعدتك بشكل أفضل.\n\nإذا كنت تقصد طلب الأوردر بعد الدفع بـ فرصة، الخطوات عادة تكون كالتالي:\n\n1. انتظر رسالة نصية أو إشعار على التطبيق تؤكد أن عملية الدفع قد تم تنفيذها بنجاح.\n2. بمجرد وصول الرسالة، يمكنك متابعة حالة طلبك من خلال زيارة صفحة طلباتي في التطبيق.\n3. ستجد هناك رقم الاتصال للتاجر الذي يمكنه إرسال الأوردر لك.\n\nإذا كنت تقصد طلب الأوردر بعد الدفع باستخدام طريقة أخرى مثل بريميوم كارد أو ڤاليو، الخطوات قد تختلف قليلاً وستحتاج إلى معرفة الطريقة التي تستخدمها للدفع.",
+        "seconds": 9.39
+      },
+      "sources": [
+        {
+          "score": 0.5,
+          "embedding_score": null,
+          "combined_score": 0.8049999999999999,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "faq",
+            "id": "faq_7",
+            "category": "حالة الفاتورة"
+          },
+          "text": "سؤال: ازاي اعرف حالة الفاتورة؟\nإجابة: اضغط على خانة 'حسابي'، اختار خانة 'مدفوعاتك'، اختار الفاتورة اللي محتاج تعرف حالتها وهيظهرلك التفاصيل بالكامل."
+        },
+        {
+          "score": 0.5,
+          "embedding_score": null,
+          "combined_score": 0.8049999999999999,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "faq",
+            "id": "payment_109_info",
+            "category": "الدفع"
+          },
+          "text": "سؤال: إزاي أدفع بـ ڤودافون كاش؟\nإجابة: \"Vodafone Cash: 1. Select the Vodafone Cash payment method - enter your Vodafone Cash wallet number. 2. Once redirected to the payment page, enter your wallet’s (PIN) code. 3. Enter the verification code (OTP) sent to you by Vodafone Cash to complete the paymen"
+        },
+        {
+          "score": 0.5,
+          "embedding_score": null,
+          "combined_score": 0.8049999999999999,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "faq",
+            "id": "payment_48_info",
+            "category": "الدفع"
+          },
+          "text": "سؤال: إزاي أدفع بـ المحافظ الأخرى؟\nإجابة: \"Vodafone Cash: 1. Select the Vodafone Cash payment method - enter your Vodafone Cash wallet number. 2. Once redirected to the payment page, enter your wallet’s (PIN) code. 3. Enter the verification code (OTP) sent to you by Vodafone Cash to complete the pay"
+        },
+        {
+          "score": 0.5,
+          "embedding_score": null,
+          "combined_score": 0.8049999999999999,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "faq",
+            "id": "payment_131_info",
+            "category": "الدفع"
+          },
+          "text": "سؤال: إزاي أدفع بـ ترو؟\nإجابة: اختار طريقة الدفع valU لمشتريات تبدأ من 200 جنيه. سيتم تحويلك أتوماتيك لصفحة الدفع الخاصة بـ valU. استكمل البيانات المطلوبة واختار فترة التقسيط المناسبة وقم بتأكيد العملية عن طريق الكود المرسل في رسالة على رقمك. بعد إكمال الدفع سيتم تحويلك مجددًا على Waffarha. ستظهر ال"
+        },
+        {
+          "score": 0.5,
+          "embedding_score": null,
+          "combined_score": 0.8049999999999999,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "faq",
+            "id": "payment_75_info",
+            "category": "الدفع"
+          },
+          "text": "سؤال: إزاي أدفع بـ بريميوم كارد؟\nإجابة: اختار طريقه الدفع بريميم كارد واضغط اتمام الشراء. الموقع هيحولك أتوماتيك على صفحة الدفع في بريميم كارد. قم بإدخال البيانات المطلوبة فى صفحة الدفع واكمل الدفع. انتظر مكالمة تأكيد من خدمة عملاء بريميم كارد لاتمام الدفع. بمجرد اتمام الدفع هتلاقى الكوبونات دلوقتي "
+        },
+        {
+          "score": 0.5,
+          "embedding_score": null,
+          "combined_score": 0.8049999999999999,
+          "lexical_hits": 1,
+          "metadata": {
+            "source": "faq",
+            "id": "payment_68_info",
+            "category": "الدفع"
+          },
+          "text": "سؤال: إزاي أدفع بـ ڤاليو؟\nإجابة: اختار طريقة الدفع valU لمشتريات تبدأ من 200 جنيه. سيتم تحويلك أتوماتيك لصفحة الدفع الخاصة بـ valU. استكمل البيانات المطلوبة واختار فترة التقسيط المناسبة وقم بتأكيد العملية عن طريق الكود المرسل في رسالة على رقمك. بعد إكمال الدفع سيتم تحويلك مجددًا على Waffarha. ستظهر "
+        }
+      ],
+      "gemini": {
+        "answer": "ليس لدي معلومات حول كيفية استلام الأوردر الخاص بك. يرجى التواصل مع دعم عملاء Waffarha للحصول على المساعدة.",
+        "seconds": null,
+        "note": "rerun after UTF-8 provider fix (original run returned latin-1 mojibake); timing not recorded"
+      },
+      "pollinations": {
+        "answer": "عذرًا، لا يوجد في المعلومات المتوفرة تفاصيل حول كيفية استلام الطلب. يُفضَّل التواصل مع دعم Waffarha مباشرةً للحصول على المساعدة.",
+        "seconds": 27.9
+      }
+    }
+  ],
+  "notes": "gemini q6 replaced by post-fix rerun; see docs/LLM_COMPARISON_20260929.md"
+}
